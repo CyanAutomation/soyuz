@@ -1,30 +1,20 @@
-import { IdempotencyKeySchema, RunRequestSchema, type RunRequest } from "../contracts/run-request";
-import { CONTRACT_VERSION, type QueuedRun } from "../contracts/queue-message";
-import { RUN_STATUSES, canTransition, type RunStatus } from "../domain/run-state-machine";
 import {
-  findRunEvent,
-  getRun,
-  getRunByIdempotencyKey,
-  insertRun,
-  listRunEvents,
-  listRuns,
+  createRun,
+  listRunsPage,
+  readRun,
+  readRunEventsPage,
+  requestRunCancellation,
+  RunApplicationError,
+} from "../application/runs";
+import {
   parseEventPayload,
   parseRequest,
   parseResult,
-  transitionRun,
-  RunNotFoundError,
-  RunTransitionError,
-  type RunCursor,
-  type RunEventInput,
   type RunEventRow,
   type RunRow,
 } from "../db/runs";
 import type { Env } from "../env";
-import { sha256Hex, stableStringify } from "../lib/json";
-import { createRunId } from "../lib/uuidv7";
-import { ApiError, errorResponse, parseJsonBody, successResponse, validationDetails } from "./http";
-
-const MAX_QUEUE_MESSAGE_BYTES = 96 * 1024;
+import { ApiError, errorResponse, parseJsonBody, successResponse } from "./http";
 
 export async function handleClientRuns(request: Request, env: Env, url: URL, requestId: string): Promise<Response | null> {
   const segments = url.pathname.split("/").filter(Boolean);
@@ -54,230 +44,67 @@ export async function handleClientRuns(request: Request, env: Env, url: URL, req
 async function submitRun(request: Request, env: Env, requestId: string): Promise<Response> {
   try {
     const body = await parseJsonBody(request, requestId);
-    const parsed = RunRequestSchema.safeParse(body);
-    if (!parsed.success) {
-      throw new ApiError(422, "INVALID_RUN_REQUEST", "Run request failed validation", validationDetails(parsed.error.issues));
-    }
-
-    let runRequest = parsed.data as RunRequest;
-    if (runRequest.idempotencyKey) {
-      runRequest = { ...runRequest, idempotencyKey: runRequest.idempotencyKey.toLowerCase() };
-    }
-    const headerKey = request.headers.get("idempotency-key");
-    if (headerKey) {
-      const normalizedHeaderKey = headerKey.toLowerCase();
-      if (!IdempotencyKeySchema.safeParse(normalizedHeaderKey).success) {
-        throw new ApiError(400, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key must be a UUID");
-      }
-      if (runRequest.idempotencyKey && runRequest.idempotencyKey.toLowerCase() !== normalizedHeaderKey) {
-        throw new ApiError(400, "IDEMPOTENCY_KEY_MISMATCH", "Body idempotencyKey must match the Idempotency-Key header");
-      }
-      runRequest = { ...runRequest, idempotencyKey: normalizedHeaderKey };
-    }
-
-    const idempotencyKey = runRequest.idempotencyKey ?? null;
-    const requestHash = await runRequestFingerprint(runRequest);
-    if (idempotencyKey) {
-      const existing = await getRunByIdempotencyKey(env.DB, idempotencyKey);
-      if (existing) return replayOrConflict(existing, requestHash, requestId);
-    }
-
-    const now = new Date().toISOString();
-    const runId = createRunId();
-    const correlationId = runRequest.tracing?.correlationId ?? requestId;
-    const traceRequestId = runRequest.tracing?.requestId ?? requestId;
-    try {
-      await insertRun(env.DB, {
-        id: runId,
-        request: runRequest,
-        requestHash,
-        idempotencyKey,
-        correlationId,
-        requestId: traceRequestId,
-        createdAt: now,
-      });
-    } catch {
-      if (idempotencyKey) {
-        const raced = await getRunByIdempotencyKey(env.DB, idempotencyKey);
-        if (raced) return replayOrConflict(raced, requestHash, requestId);
-      }
-      throw new ApiError(503, "RUN_PERSISTENCE_UNAVAILABLE", "Soyuz could not persist the run request");
-    }
-
-    const queuedRun: QueuedRun = {
-      contractVersion: CONTRACT_VERSION,
-      runId,
-      createdAt: now,
-      correlationId,
-      requestId: traceRequestId,
-      request: runRequest,
-    };
-    if (new TextEncoder().encode(JSON.stringify(queuedRun)).byteLength > MAX_QUEUE_MESSAGE_BYTES) {
-      await failAdmission(env, runId, now, "queue_message_too_large", "Queue message exceeds the configured size limit");
-      throw new ApiError(422, "RUN_REQUEST_TOO_LARGE", "Run request is too large for the queue contract", { runId });
-    }
-
-    try {
-      await env.RUN_QUEUE.send(queuedRun, { contentType: "json" });
-    } catch {
-      // A send exception can mean that Queue accepted the message but its response was lost.
-      // Keep the run admitting so reconciliation can safely retry with the same run ID.
-      throw new ApiError(503, "QUEUE_PUBLISH_UNCERTAIN", "Soyuz could not confirm Queue publication; the run remains pending and will be reconciled. Retry with the same idempotency key", { runId });
-    }
-
-    const queuedAt = new Date().toISOString();
-    let row: RunRow;
-    try {
-      row = await transitionRun(env.DB, runId, "queued", { queued_at: queuedAt }, {
-        eventId: "system:admission:queued",
-        type: "run.queued",
-        occurredAt: queuedAt,
-        recordedAt: queuedAt,
-        payload: { queue: "soyuz-runs" },
-      });
-    } catch {
-      const current = await getRun(env.DB, runId).catch(() => null);
-      if (current?.status === "cancelled") return successResponse(requestId, publicRun(current), 202);
-      throw new ApiError(503, "RUN_ADMISSION_PENDING", "Run publication succeeded but canonical status is being reconciled; retry with the same idempotency key", { runId });
-    }
-    return successResponse(requestId, publicRun(row), 202);
+    const admission = await createRun(env, body, requestId, request.headers.get("idempotency-key"));
+    return successResponse(requestId, publicRun(admission.row), admission.statusCode);
   } catch (error) {
-    if (error instanceof ApiError) return error.toResponse(requestId);
-    return errorResponse(requestId, 503, "RUN_ADMISSION_UNAVAILABLE", "Soyuz could not complete run admission");
+    return applicationErrorResponse(error, requestId);
   }
-}
-
-async function runRequestFingerprint(request: RunRequest): Promise<string> {
-  const { idempotencyKey: _key, tracing: _tracing, ...executionRequest } = request;
-  return sha256Hex(stableStringify(executionRequest));
-}
-
-function replayOrConflict(row: RunRow, requestHash: string, requestId: string): Response {
-  if (row.request_hash !== requestHash) {
-    return errorResponse(requestId, 409, "IDEMPOTENCY_KEY_REUSED", "Idempotency key was already used with a different run request", { details: { runId: row.id } });
-  }
-  if (row.status === "admitting") {
-    return errorResponse(requestId, 503, "RUN_ADMISSION_PENDING", "Run admission is still being reconciled; retry with the same idempotency key", { details: { runId: row.id } });
-  }
-  return successResponse(requestId, publicRun(row), 200);
-}
-
-async function failAdmission(env: Env, runId: string, now: string, failureClass: string, failureMessage: string): Promise<void> {
-  await transitionRun(env.DB, runId, "admission_failed", {
-    completed_at: now,
-    failure_class: failureClass,
-    failure_message: failureMessage,
-  }, {
-    eventId: "system:admission:failed",
-    type: "run.admission_failed",
-    occurredAt: now,
-    recordedAt: now,
-    payload: { failureClass },
-  });
 }
 
 async function listRunRoute(url: URL, env: Env, requestId: string): Promise<Response> {
-  const limitValue = url.searchParams.get("limit") ?? "25";
-  const limit = Number(limitValue);
-  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
-    return errorResponse(requestId, 400, "INVALID_LIMIT", "limit must be an integer from 1 to 100");
-  }
-
-  const rawStatus = url.searchParams.get("status");
-  let status: RunStatus | undefined;
-  if (rawStatus) {
-    if (!(RUN_STATUSES as readonly string[]).includes(rawStatus)) {
-      return errorResponse(requestId, 400, "INVALID_STATUS_FILTER", "status is not a supported run state");
-    }
-    status = rawStatus as RunStatus;
-  }
-
-  const rawCursor = url.searchParams.get("cursor");
-  let cursor: RunCursor | undefined;
-  if (rawCursor) {
-    cursor = decodeCursor(rawCursor);
-    if (!cursor) return errorResponse(requestId, 400, "INVALID_CURSOR", "cursor is malformed");
-  }
-
   try {
-    const rows = await listRuns(env.DB, limit + 1, status, cursor);
-    const hasMore = rows.length > limit;
-    const page = rows.slice(0, limit);
-    return successResponse(requestId, {
-      runs: page.map(publicRunSummary),
-      nextCursor: hasMore && page.length > 0 ? encodeCursor(page[page.length - 1]) : null,
+    const page = await listRunsPage(env, {
+      limit: url.searchParams.get("limit"),
+      status: url.searchParams.get("status"),
+      cursor: url.searchParams.get("cursor"),
     });
-  } catch {
-    return errorResponse(requestId, 503, "RUN_LIST_UNAVAILABLE", "Soyuz could not read run history");
+    return successResponse(requestId, {
+      runs: page.rows.map(publicRunSummary),
+      nextCursor: page.nextCursor,
+    });
+  } catch (error) {
+    return applicationErrorResponse(error, requestId);
   }
 }
 
 async function getRunRoute(runId: string, env: Env, requestId: string): Promise<Response> {
   try {
-    const row = await getRun(env.DB, runId);
-    if (!row) return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
-    return successResponse(requestId, publicRun(row));
-  } catch {
-    return errorResponse(requestId, 503, "RUN_READ_UNAVAILABLE", "Soyuz could not read the run");
+    return successResponse(requestId, publicRun(await readRun(env, runId)));
+  } catch (error) {
+    return applicationErrorResponse(error, requestId);
   }
 }
 
 async function getRunEventsRoute(runId: string, url: URL, env: Env, requestId: string): Promise<Response> {
-  const afterText = url.searchParams.get("after") ?? "0";
-  const limitText = url.searchParams.get("limit") ?? "100";
-  const after = Number(afterText);
-  const limit = Number(limitText);
-  if (!Number.isSafeInteger(after) || after < 0) return errorResponse(requestId, 400, "INVALID_EVENT_CURSOR", "after must be a non-negative sequence number");
-  if (!Number.isInteger(limit) || limit < 1 || limit > 200) return errorResponse(requestId, 400, "INVALID_LIMIT", "limit must be an integer from 1 to 200");
-
   try {
-    const run = await getRun(env.DB, runId);
-    if (!run) return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
-    const events = await listRunEvents(env.DB, runId, after, limit);
-    return successResponse(requestId, { events: events.map(publicEvent), nextAfter: events.at(-1)?.sequence ?? after });
-  } catch {
-    return errorResponse(requestId, 503, "RUN_EVENTS_UNAVAILABLE", "Soyuz could not read run events");
+    const page = await readRunEventsPage(env, runId, {
+      after: url.searchParams.get("after"),
+      limit: url.searchParams.get("limit"),
+    });
+    return successResponse(requestId, {
+      events: page.events.map(publicEvent),
+      nextAfter: page.nextAfter,
+    });
+  } catch (error) {
+    return applicationErrorResponse(error, requestId);
   }
 }
 
 async function cancelRun(runId: string, env: Env, requestId: string): Promise<Response> {
   try {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const row = await getRun(env.DB, runId);
-      if (!row) return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
-      if (row.status === "cancel_requested" || row.status === "cancelled") {
-        return successResponse(requestId, publicRun(row), 200);
-      }
-      if (!canTransition(row.status, "cancelled") && !canTransition(row.status, "cancel_requested")) {
-        return errorResponse(requestId, 409, "RUN_ALREADY_TERMINAL", `Run in ${row.status} state cannot be cancelled`);
-      }
-
-      const now = new Date().toISOString();
-      const target: RunStatus = row.status === "running" ? "cancel_requested" : "cancelled";
-      const event: RunEventInput = {
-        eventId: `system:cancel:${target}`,
-        type: target === "cancel_requested" ? "run.cancel_requested" : "run.cancelled",
-        occurredAt: now,
-        recordedAt: now,
-        payload: { requestedBy: "client" },
-      };
-      try {
-        const updated = await transitionRun(env.DB, runId, target, {
-          cancel_requested_at: now,
-          ...(target === "cancelled" ? { completed_at: now, claim_expires_at: null } : {}),
-        }, event, { expectedStatus: row.status });
-        return successResponse(requestId, publicRun(updated), 202);
-      } catch (error) {
-        if (!(error instanceof RunTransitionError) || attempt === 2) throw error;
-        // Re-read and choose the cancellation transition from the new canonical state.
-      }
-    }
-    return errorResponse(requestId, 409, "INVALID_STATE_TRANSITION", "Run changed before cancellation completed");
+    const result = await requestRunCancellation(env, runId);
+    return successResponse(requestId, publicRun(result.row), result.statusCode);
   } catch (error) {
-    if (error instanceof RunNotFoundError) return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
-    if (error instanceof RunTransitionError) return errorResponse(requestId, 409, "INVALID_STATE_TRANSITION", `Run changed to ${error.current} before cancellation completed`);
-    return errorResponse(requestId, 503, "CANCEL_UNAVAILABLE", "Soyuz could not record the cancellation request");
+    return applicationErrorResponse(error, requestId);
   }
+}
+
+function applicationErrorResponse(error: unknown, requestId: string): Response {
+  if (error instanceof ApiError) return error.toResponse(requestId);
+  if (error instanceof RunApplicationError) {
+    return errorResponse(requestId, error.status, error.code, error.publicMessage, { details: error.details });
+  }
+  return errorResponse(requestId, 503, "RUN_OPERATION_UNAVAILABLE", "Soyuz could not complete the run operation");
 }
 
 export function publicRun(row: RunRow): Record<string, unknown> {
@@ -344,25 +171,6 @@ function publicEvent(row: RunEventRow): Record<string, unknown> {
     recordedAt: row.recorded_at,
     payload: parseEventPayload(row),
   };
-}
-
-function encodeCursor(row: RunRow): string {
-  const value = btoa(`${row.created_at}\n${row.id}`);
-  return value.replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/g, "");
-}
-
-function decodeCursor(value: string): RunCursor | undefined {
-  if (value.length > 512 || !/^[A-Za-z0-9_-]+$/.test(value)) return undefined;
-  try {
-    const base64 = value.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
-    const [createdAt, id, extra] = atob(base64).split("\n");
-    if (extra !== undefined || !createdAt || !isRunId(id)) return undefined;
-    const date = new Date(createdAt);
-    if (Number.isNaN(date.valueOf()) || date.toISOString() !== createdAt) return undefined;
-    return { createdAt, id };
-  } catch {
-    return undefined;
-  }
 }
 
 function isRunId(value: string): boolean {
