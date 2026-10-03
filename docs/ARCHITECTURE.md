@@ -2,14 +2,21 @@
 
 ```mermaid
 flowchart TD
-    Client[CLI, GitHub Actions, UI, integrations] -->|client bearer token| API[ Soyuz Worker API ]
-    API --> D1[(D1: canonical runs and operational events)]
-    API -->|versioned Queue message| Q[Cloudflare Queue]
+    CLI[CLI] -->|REST| REST[REST adapter]
+    UI[Web UI and integrations] -->|REST| REST
+    AI[AI clients] -->|Streamable HTTP at /mcp| MCP[MCP adapter]
+    REST --> App[Shared run application operations]
+    MCP --> App
+    App --> D1[(D1: canonical runs and operational events)]
+    App -->|versioned Queue message| Q[Cloudflare Queue]
     Q -->|HTTP pull, capacity controlled| K[Kaseki host]
-    K -->|worker status reads and callbacks| API
+    K -->|separate worker bearer API| Worker[Private worker routes]
+    Worker --> D1
     K --> Docker[Disposable Docker workers]
     Docker --> Repo[Repository, Pi, validation, publication]
 ```
+
+The REST and MCP adapters call the same run application operations. MCP does not make an internal HTTP request to `/v1`; it uses the same validation, idempotency, D1, Queue, read, event, and cancellation paths directly.
 
 ## Ownership boundary
 
@@ -63,13 +70,13 @@ Kaseki must leave a pulled message unacknowledged while Soyuz still reports `adm
 
 Soyuz generates RFC 9562 UUIDv7 IDs from the current millisecond timestamp and Web Crypto random bytes rather than Kaseki's historical `kaseki-N`. They are URL-safe and lexicographically time-sortable; D1 timestamps remain the source for deterministic history ordering. Callers must treat IDs as opaque strings.
 
-Client and worker APIs have separate bearer secrets. Public health is unauthenticated. This leaves room for Cloudflare Access or a richer identity layer without moving Kaseki's execution code into Soyuz.
+Client and worker APIs have separate bearer secrets. Public health is unauthenticated. The MCP endpoint is client-facing and checks `CLIENT_API_TOKEN`; it does not accept `WORKER_API_TOKEN` or expose worker routes. It cannot claim, start, complete, or otherwise advance a worker run. MCP talks only to Soyuz. Kaseki remains responsible for execution-context safety, Docker, repository access, validation, diagnostics, and publication. See [the MCP interface](MCP.md) for the current bearer-token setup and OAuth follow-up.
 
 The caller migration can be gradual: direct callers may keep using the current Kaseki API while new or selected clients submit to Soyuz. Soyuz and Kaseki remain independently deployable.
 
 ## Cloudflare references
 
-Guidance checked against Cloudflare's current documentation on 2026-10-02:
+Guidance checked against Cloudflare's current documentation on 2026-10-03:
 
 - [Workers](https://developers.cloudflare.com/workers/)
 - [Queue JavaScript APIs](https://developers.cloudflare.com/queues/configuration/javascript-apis/)
@@ -78,3 +85,4 @@ Guidance checked against Cloudflare's current documentation on 2026-10-02:
 - [D1 Worker API and transactional batches](https://developers.cloudflare.com/d1/worker-api/d1-database/)
 - [Workers Vitest integration](https://developers.cloudflare.com/workers/testing/vitest-integration/)
 - [Wrangler commands and type generation](https://developers.cloudflare.com/workers/wrangler/commands/)
+- [Cloudflare Agents stateless MCP servers](https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers/)

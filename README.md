@@ -28,6 +28,7 @@ GET  /v1/runs?limit=25&status=queued
 GET  /v1/runs/:id
 GET  /v1/runs/:id/events?after=0&limit=100
 POST /v1/runs/:id/cancel
+POST /mcp (Streamable HTTP MCP)
 ```
 
 Worker callbacks use a separate `Authorization: Bearer $WORKER_API_TOKEN`:
@@ -43,6 +44,8 @@ POST /v1/worker/runs/:id/cancelled
 ```
 
 All Soyuz↔Kaseki messages carry `contractVersion: "1"`. See [the architecture](docs/ARCHITECTURE.md), [contract](docs/CONTRACT.md), [Kaseki integration plan](docs/KASEKI-INTEGRATION.md), and [Cloudflare setup](docs/DEPLOYMENT.md).
+
+The `/mcp` endpoint exposes the client-facing `create_run`, `list_runs`, `get_run`, `get_run_events`, and `cancel_run` tools over stateless Streamable HTTP. It uses the client bearer token; worker callbacks are not exposed through MCP. See [the MCP interface and security boundary](docs/MCP.md).
 
 ## Provisioning Cloudflare resources
 

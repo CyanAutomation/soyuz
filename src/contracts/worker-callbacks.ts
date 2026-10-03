@@ -33,7 +33,7 @@ export const WorkerEventSchema = z.object({
   stage: z.string().min(1).max(120).optional(),
   step: z.string().min(1).max(160).optional(),
   timestamp: OptionalTimestamp,
-  payload: z.record(z.unknown()).default({}),
+  payload: z.record(z.string(), z.unknown()).default({}),
 }).strict().superRefine((event, context) => {
   if (event.type === "stage.changed" && !event.stage) {
     context.addIssue({
