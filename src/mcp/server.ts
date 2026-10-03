@@ -268,12 +268,17 @@ function mcpRunDetail(row: RunRow): Record<string, unknown> {
 }
 
 function safeUrlForMcp(value: string): string {
-  const url = new URL(value);
-  url.username = "";
-  url.password = "";
-  url.search = "";
-  url.hash = "";
-  return url.toString();
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    // Do not echo malformed persisted values, which may contain embedded secrets.
+    return "about:invalid";
+  }
 }
 
 function mcpRunEvent(row: RunEventRow): Record<string, unknown> {
