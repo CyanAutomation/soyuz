@@ -1,8 +1,10 @@
 import { hasBearerToken } from "./auth/bearer";
+import { authorizeMcpClient } from "./auth/mcp-client";
 import { handleClientRuns } from "./api/runs";
 import { errorResponse, jsonResponse, requestIdFor } from "./api/http";
 import { handleWorkerCallbacks } from "./api/workers";
 import type { Env } from "./env";
+import { createSoyuzMcpHandler } from "./mcp/server";
 import { reconcileAdmissions } from "./queue/reconcile";
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
@@ -16,6 +18,12 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     } catch {
       return jsonResponse(503, { status: "unavailable", requestId });
     }
+  }
+
+  if (url.pathname === "/mcp") {
+    const authFailure = await authorizeMcpClient(request, env, requestId);
+    if (authFailure) return authFailure;
+    return createSoyuzMcpHandler(env).fetch(request);
   }
 
   if (url.pathname.startsWith("/v1/worker/")) {

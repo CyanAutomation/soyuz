@@ -16,7 +16,9 @@
     "db:migrate:remote": "wrangler d1 migrations apply soyuz-runs --remote"
   },
   "dependencies": {
-    "zod": "^3.25.76"
+    "@modelcontextprotocol/server": "^2.0.0",
+    "agents": "^0.26.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.0.0",

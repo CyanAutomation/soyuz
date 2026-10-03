@@ -84,9 +84,12 @@ Lifecycle callback IDs and event IDs must remain stable across retries. Replayin
 | `GET /v1/runs/:id` | Client | Canonical run and normalized request |
 | `GET /v1/runs/:id/events` | Client | Append-only event history |
 | `POST /v1/runs/:id/cancel` | Client | Cancel queued work or record running cancellation intent |
+| `POST /mcp` | Client | Stateless Streamable HTTP MCP tools |
 
 Queued cancellation becomes terminal `cancelled` immediately; a later Queue delivery must be skipped. Claimed-but-not-started cancellation also becomes terminal `cancelled`; the Kaseki adapter must wait for `started` to succeed before launching execution. Running cancellation becomes `cancel_requested`; the worker polls and confirms with `/cancelled`. If execution completes or fails first, that terminal result is retained.
 
 ## Errors
 
 Invalid JSON returns 400; structurally invalid run requests return 422; auth failure returns 401; unknown runs return 404; idempotency conflicts and invalid lifecycle transitions return 409; temporary D1 or Queue admission problems return 503. Internal stack traces and raw binding errors are not returned.
+
+The MCP endpoint exposes only `create_run`, `list_runs`, `get_run`, `get_run_events`, and `cancel_run`. It uses the same client bearer credential and shared run operations as REST. `create_run` defaults an omitted `publishMode` to `none`; REST keeps its existing `pr` default. MCP does not expose `/v1/worker/**` lifecycle operations. See [the MCP interface and security boundary](MCP.md).
