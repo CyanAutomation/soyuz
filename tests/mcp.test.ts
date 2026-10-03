@@ -261,6 +261,35 @@ describe("Soyuz remote MCP interface", () => {
     expect(missing.body.result.structuredContent.error.code).toBe("RUN_NOT_FOUND");
   });
 
+  it("redacts malformed persisted URLs instead of failing MCP reads", async () => {
+    const { bindings } = testEnv();
+    const created = (await createRun(bindings, {
+      idempotencyKey: "00000000-0000-4000-8000-000000000022",
+    })).body.result.structuredContent;
+    const malformedRepoUrl = "not a URL/embedded-repository-secret";
+    const malformedPublishedUrl = "not a URL/embedded-publication-secret";
+    await runtimeEnv.DB.prepare("UPDATE runs SET repo_url = ?, result_json = ? WHERE id = ?")
+      .bind(malformedRepoUrl, JSON.stringify({ publishedUrl: malformedPublishedUrl }), created.runId).run();
+
+    const listed = await rpc(bindings, "tools/call", {
+      name: "list_runs",
+      arguments: { status: "queued" },
+    }, 34);
+    expect(listed.body.result.isError).toBeUndefined();
+    expect(listed.body.result.structuredContent.runs[0].repoUrl).toBe("about:invalid");
+
+    const detail = await rpc(bindings, "tools/call", {
+      name: "get_run",
+      arguments: { runId: created.runId },
+    }, 35);
+    expect(detail.body.result.isError).toBeUndefined();
+    expect(detail.body.result.structuredContent).toMatchObject({
+      repoUrl: "about:invalid",
+      publishedUrl: "about:invalid",
+    });
+    expect(JSON.stringify([listed.body, detail.body])).not.toContain("embedded-");
+  });
+
   it("returns ordered operational events with the existing after cursor semantics", async () => {
     const { bindings } = testEnv();
     const created = (await createRun(bindings, { idempotencyKey: "00000000-0000-4000-8000-000000000040" })).body.result.structuredContent;
