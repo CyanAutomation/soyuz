@@ -75,6 +75,22 @@ export type RunPatch = Partial<Pick<RunRow,
   | "admission_last_attempt_at"
 >>;
 
+const RUN_PATCH_COLUMNS: ReadonlySet<keyof RunPatch> = new Set([
+  "stage",
+  "queued_at",
+  "started_at",
+  "completed_at",
+  "worker_id",
+  "claim_expires_at",
+  "exit_code",
+  "failure_class",
+  "failure_message",
+  "cancel_requested_at",
+  "result_json",
+  "admission_attempts",
+  "admission_last_attempt_at",
+]);
+
 export class RunNotFoundError extends Error {}
 
 export class RunTransitionError extends Error {
@@ -167,6 +183,7 @@ export async function transitionRun(
   const values: Array<string | number | null> = [to, event.recordedAt];
   for (const [column, value] of Object.entries(patch) as Array<[keyof RunPatch, string | number | null]>) {
     if (value === undefined) continue;
+    if (!RUN_PATCH_COLUMNS.has(column)) throw new Error(`Invalid run patch column: ${String(column)}`);
     assignments.push(`${column} = ?`);
     values.push(value);
   }
@@ -177,7 +194,7 @@ export async function transitionRun(
     values.push(guard.claimOwner);
   }
   if (guard?.claimNotExpiredAt) {
-    where += " AND claim_expires_at > ?";
+    where += " AND julianday(claim_expires_at) > julianday(?)";
     values.push(guard.claimNotExpiredAt);
   }
 
@@ -208,7 +225,7 @@ export async function updateStartedRun(
   }
 
   if (current.status === "claimed") {
-    if (!current.claim_expires_at || current.claim_expires_at <= event.recordedAt) {
+    if (!current.claim_expires_at || Date.parse(current.claim_expires_at) <= Date.parse(event.recordedAt)) {
       throw new RunEventError("CLAIM_EXPIRED", "Worker claim expired before the run started");
     }
     try {
@@ -221,7 +238,7 @@ export async function updateStartedRun(
     } catch (error) {
       if (error instanceof RunTransitionError && error.current === "claimed") {
         const latest = await getRun(db, id);
-        if (latest?.claim_expires_at && latest.claim_expires_at <= event.recordedAt) {
+        if (latest?.claim_expires_at && Date.parse(latest.claim_expires_at) <= Date.parse(event.recordedAt)) {
           throw new RunEventError("CLAIM_EXPIRED", "Worker claim expired before the run started");
         }
       }

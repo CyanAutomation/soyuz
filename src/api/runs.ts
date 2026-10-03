@@ -34,7 +34,7 @@ export async function handleClientRuns(request: Request, env: Env, url: URL, req
   if (url.pathname === "/v1/runs" && request.method === "GET") {
     return listRunRoute(url, env, requestId);
   }
-  if (segments[0] !== "v1" || segments[1] !== "runs" || !segments[2]) return null;
+  if (segments.length < 3 || segments[0] !== "v1" || segments[1] !== "runs" || !segments[2]) return null;
 
   const runId = segments[2];
   if (!isRunId(runId)) return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
@@ -205,7 +205,7 @@ async function listRunRoute(url: URL, env: Env, requestId: string): Promise<Resp
     const page = rows.slice(0, limit);
     return successResponse(requestId, {
       runs: page.map(publicRunSummary),
-      nextCursor: hasMore ? encodeCursor(page[page.length - 1]) : null,
+      nextCursor: hasMore && page.length > 0 ? encodeCursor(page[page.length - 1]) : null,
     });
   } catch {
     return errorResponse(requestId, 503, "RUN_LIST_UNAVAILABLE", "Soyuz could not read run history");
