@@ -5,7 +5,8 @@ async function tokenDigest(token: string): Promise<Uint8Array> {
 }
 
 async function constantTimeTokenMatch(expected: string, provided: string): Promise<boolean> {
-  if (expected.length < 32 || provided.length > 1_024) return false;
+  if (!expected || !provided) return false;
+  if (expected.length < 16 || provided.length > 1_024) return false;
   const [expectedDigest, providedDigest] = await Promise.all([
     tokenDigest(expected),
     tokenDigest(provided),
