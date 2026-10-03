@@ -1,7 +1,13 @@
 import { z } from "zod";
 
-const OptionalModel = z.string().min(1).max(200).optional();
+const RepoUrlSchema = z.string().url().max(2_048);
+const TaskPromptSchema = z.string().min(10).max(32_000);
+const RefSchema = z.string().min(1).max(512);
+const ValidationCommandsSchema = z.array(z.string().min(1).max(2_048)).max(50);
+const TaskModeSchema = z.enum(["patch", "inspect"]);
+const PublishModeSchema = z.enum(["auto", "none", "branch", "pr"]);
 const OptionalTimeout = z.number().int().min(60).max(10_800).optional();
+const OptionalModel = z.string().min(1).max(200).optional();
 
 const AutoLintCleanupSchema = z.object({
   enabled: z.boolean().optional(),
@@ -16,16 +22,16 @@ const TracingSchema = z.object({
 export const IdempotencyKeySchema = z.string().uuid();
 
 const RunRequestShape = z.object({
-  repoUrl: z.string().url().max(2_048),
+  repoUrl: RepoUrlSchema,
   projectName: z.string().min(1).max(200).optional(),
-  ref: z.string().min(1).max(512).default("main"),
-  taskPrompt: z.string().min(10).max(32_000).optional(),
+  ref: RefSchema.default("main"),
+  taskPrompt: TaskPromptSchema.optional(),
   changedFilesAllowlist: z.array(z.string().min(1).max(512)).max(500).optional(),
   allowlist: z.object({
     include: z.array(z.string().min(1).max(512)).max(500).optional(),
   }).strict().optional(),
   maxDiffBytes: z.number().int().positive().max(100_000_000).optional(),
-  validationCommands: z.array(z.string().min(1).max(2_048)).max(50).optional(),
+  validationCommands: ValidationCommandsSchema.optional(),
   autoLintCleanup: AutoLintCleanupSchema.optional(),
   validation: z.object({
     commands: z.array(z.string().min(1).max(2_048)).max(50).optional(),
@@ -52,8 +58,8 @@ const RunRequestShape = z.object({
     model: OptionalModel,
     timeoutSeconds: OptionalTimeout,
   }).strict().optional(),
-  taskMode: z.enum(["patch", "inspect"]).default("patch"),
-  publishMode: z.enum(["auto", "none", "branch", "pr"]).default("pr"),
+  taskMode: TaskModeSchema.default("patch"),
+  publishMode: PublishModeSchema.default("pr"),
   startupCheck: z.boolean().optional(),
   startupCheckMode: z.enum(["boot", "baseline-validation"]).optional(),
   tracing: TracingSchema.optional(),
@@ -107,6 +113,20 @@ export const RunRequestSchema = z.preprocess(
     }
   }),
 );
+
+// The MCP adapter intentionally accepts a small, agent-facing subset of the
+// REST contract. Field validators are shared with RunRequestShape so limits
+// and accepted enum values stay in sync.
+export const McpCreateRunInputSchema = z.object({
+  repoUrl: RepoUrlSchema,
+  taskPrompt: TaskPromptSchema,
+  ref: RefSchema.optional(),
+  taskMode: TaskModeSchema.optional(),
+  publishMode: PublishModeSchema.optional(),
+  validationCommands: ValidationCommandsSchema.optional(),
+  timeoutSeconds: OptionalTimeout,
+  idempotencyKey: IdempotencyKeySchema.optional(),
+}).strict();
 
 export type RunRequest = z.infer<typeof RunRequestSchema>;
 
