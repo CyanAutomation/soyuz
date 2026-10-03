@@ -1,0 +1,2 @@
+CLIENT_API_TOKEN=replace-with-a-random-client-token-at-least-32-characters
+WORKER_API_TOKEN=replace-with-a-different-random-worker-token-at-least-32-characters
