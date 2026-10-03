@@ -47,10 +47,11 @@ export class ApiError extends Error {
 }
 
 export async function parseJsonBody(request: Request, requestId: string): Promise<unknown> {
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_JSON_BODY_BYTES) {
+  const buffer = await request.arrayBuffer();
+  if (buffer.byteLength > MAX_JSON_BODY_BYTES) {
     throw new ApiError(413, "REQUEST_TOO_LARGE", "Request body exceeds the 96 KB limit");
   }
+  const text = new TextDecoder().decode(buffer);
   try {
     return JSON.parse(text) as unknown;
   } catch {
