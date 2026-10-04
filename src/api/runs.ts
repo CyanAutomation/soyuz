@@ -104,7 +104,7 @@ function applicationErrorResponse(error: unknown, requestId: string): Response {
   if (error instanceof RunApplicationError) {
     return errorResponse(requestId, error.status, error.code, error.publicMessage, { details: error.details });
   }
-  return errorResponse(requestId, 503, "RUN_OPERATION_UNAVAILABLE", "Soyuz could not complete the run operation");
+  return errorResponse(requestId, 503, "RUN_OPERATION_UNAVAILABLE", "Soyuz could not reach a required service to complete the run operation. Retry shortly; if this continues, contact the service administrator.");
 }
 
 export function publicRun(row: RunRow): Record<string, unknown> {

@@ -314,7 +314,7 @@ async function executeTool(operation: () => Promise<Record<string, unknown>>) {
   } catch (error) {
     const mapped = error instanceof RunApplicationError
       ? error
-      : new RunApplicationError(503, "RUN_OPERATION_UNAVAILABLE", "Soyuz could not complete this operation", undefined, true);
+      : new RunApplicationError(503, "RUN_OPERATION_UNAVAILABLE", "Soyuz could not reach a required service to complete this operation. Retry shortly; if this continues, contact the service administrator.", undefined, true);
     const structuredContent = {
       error: {
         code: mapped.code,

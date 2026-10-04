@@ -124,6 +124,13 @@ describe("Soyuz remote MCP interface", () => {
     expect(collidingWorkerCredential.status).toBe(401);
     expect(send).not.toHaveBeenCalled();
 
+    const missingClientKey = { ...bindings, CLIENT_API_TOKEN: undefined as unknown as string };
+    const serviceMisconfigured = await handleRequest(request("/mcp", {
+      jsonrpc: "2.0", id: 1, method: "tools/list",
+    }), missingClientKey);
+    expect(serviceMisconfigured.status).toBe(503);
+    expect(await serviceMisconfigured.text()).toContain("not configured");
+
     const tools = await initializeAndListTools(bindings);
     expect(tools.response.status).toBe(200);
     const names = tools.body.result.tools.map((tool: { name: string }) => tool.name).sort();
@@ -203,7 +210,7 @@ describe("Soyuz remote MCP interface", () => {
       code: "QUEUE_PUBLISH_UNCERTAIN",
       retryable: true,
     });
-    expect(first.body.result.structuredContent.error.message).toContain("same idempotency key");
+    expect(first.body.result.structuredContent.error.message).toContain("same Idempotency-Key");
 
     const retry = await createRun(bindings, { idempotencyKey });
     expect(retry.body.result.structuredContent.error).toMatchObject({

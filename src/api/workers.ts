@@ -46,7 +46,7 @@ export async function handleWorkerCallbacks(request: Request, env: Env, url: URL
         updatedAt: row.updated_at,
       });
     } catch {
-      return errorResponse(requestId, 503, "RUN_READ_UNAVAILABLE", "Soyuz could not read canonical run state");
+      return errorResponse(requestId, 503, "RUN_READ_UNAVAILABLE", "Soyuz cannot reach its run database to read canonical run state. Retry shortly.");
     }
   }
   if (parts.length !== 5) return null;
@@ -334,7 +334,7 @@ function callbackError(error: unknown, requestId: string): Response {
     const code = error.code === "EVENT_ID_REUSED" ? "CALLBACK_ID_REUSED" : error.code;
     return errorResponse(requestId, 409, code, error.message);
   }
-  return errorResponse(requestId, 503, "CALLBACK_UNAVAILABLE", "Soyuz could not record the worker callback");
+  return errorResponse(requestId, 503, "CALLBACK_UNAVAILABLE", "Soyuz cannot reach its run database to record the worker callback. Retry with the same callback ID.");
 }
 
 function publicEvent(row: RunEventRow): Record<string, unknown> {
