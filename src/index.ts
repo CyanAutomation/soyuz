@@ -1,4 +1,4 @@
-import { hasBearerToken } from "./auth/bearer";
+import { hasBearerToken, isBearerTokenConfigured } from "./auth/bearer";
 import { authorizeMcpClient } from "./auth/mcp-client";
 import { handleClientRuns } from "./api/runs";
 import { errorResponse, jsonResponse, requestIdFor } from "./api/http";
@@ -12,11 +12,22 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   const url = new URL(request.url);
 
   if (url.pathname === "/health" && request.method === "GET") {
+    if (!isBearerTokenConfigured(env.CLIENT_API_TOKEN) || !isBearerTokenConfigured(env.WORKER_API_TOKEN)) {
+      return jsonResponse(503, {
+        status: "unavailable",
+        message: "Soyuz API authentication is not configured. Contact the service administrator.",
+        requestId,
+      });
+    }
     try {
       await env.DB.prepare("SELECT 1 AS healthy").first();
       return jsonResponse(200, { status: "ok", contractVersion: "1", requestId });
     } catch {
-      return jsonResponse(503, { status: "unavailable", requestId });
+      return jsonResponse(503, {
+        status: "unavailable",
+        message: "Soyuz cannot reach its run database. Retry shortly, or contact the service administrator if this continues.",
+        requestId,
+      });
     }
   }
 
@@ -27,16 +38,22 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   }
 
   if (url.pathname.startsWith("/v1/worker/")) {
+    if (!isBearerTokenConfigured(env.WORKER_API_TOKEN)) {
+      return errorResponse(requestId, 503, "AUTHENTICATION_UNAVAILABLE", "Worker API-key authentication is not configured. Contact the service administrator.");
+    }
     if (!(await hasBearerToken(request, env.WORKER_API_TOKEN))) {
-      return errorResponse(requestId, 401, "UNAUTHORIZED", "Worker bearer token is missing or invalid");
+      return errorResponse(requestId, 401, "UNAUTHORIZED", "Worker API key is missing, expired, or invalid. Check that you are using the current worker key.");
     }
     const response = await handleWorkerCallbacks(request, env, url, requestId);
     return response ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
   }
 
   if (url.pathname === "/v1" || url.pathname.startsWith("/v1/")) {
+    if (!isBearerTokenConfigured(env.CLIENT_API_TOKEN)) {
+      return errorResponse(requestId, 503, "AUTHENTICATION_UNAVAILABLE", "Client API-key authentication is not configured. Contact the service administrator.");
+    }
     if (!(await hasBearerToken(request, env.CLIENT_API_TOKEN))) {
-      return errorResponse(requestId, 401, "UNAUTHORIZED", "Client bearer token is missing or invalid");
+      return errorResponse(requestId, 401, "UNAUTHORIZED", "Client API key is missing, expired, or invalid. Check that you are using the current client key.");
     }
     const response = await handleClientRuns(request, env, url, requestId);
     return response ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");

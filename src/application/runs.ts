@@ -117,7 +117,7 @@ export async function createRun(
       throw new RunApplicationError(
         503,
         "RUN_PERSISTENCE_UNAVAILABLE",
-        "Soyuz could not persist the run request",
+        "Soyuz could not save the run request. Retry shortly with the same Idempotency-Key.",
         undefined,
         true,
       );
@@ -147,7 +147,7 @@ export async function createRun(
       throw new RunApplicationError(
         503,
         "QUEUE_PUBLISH_UNCERTAIN",
-        "Soyuz could not confirm Queue publication; the run remains pending and will be reconciled. Retry with the same idempotency key",
+        "Soyuz could not confirm Queue publication. The run remains pending while Soyuz retries. Retry with the same Idempotency-Key to avoid creating duplicate work.",
         { runId },
         true,
       );
@@ -177,7 +177,7 @@ export async function createRun(
     return { row, statusCode: 202 };
   } catch (error) {
     if (error instanceof RunApplicationError) throw error;
-    throw new RunApplicationError(503, "RUN_ADMISSION_UNAVAILABLE", "Soyuz could not complete run admission", undefined, true);
+    throw new RunApplicationError(503, "RUN_ADMISSION_UNAVAILABLE", "Soyuz could not reach a required service to accept the run. Retry shortly; if this continues, contact the service administrator.", undefined, true);
   }
 }
 
@@ -214,7 +214,7 @@ export async function listRunsPage(
       nextCursor: hasMore && page.length > 0 ? encodeCursor(page[page.length - 1]) : null,
     };
   } catch {
-    throw new RunApplicationError(503, "RUN_LIST_UNAVAILABLE", "Soyuz could not read run history", undefined, true);
+    throw new RunApplicationError(503, "RUN_LIST_UNAVAILABLE", "Soyuz cannot reach its run database to read run history. Retry shortly.", undefined, true);
   }
 }
 
@@ -225,7 +225,7 @@ export async function readRun(env: Env, runId: string): Promise<RunRow> {
     return row;
   } catch (error) {
     if (error instanceof RunApplicationError) throw error;
-    throw new RunApplicationError(503, "RUN_READ_UNAVAILABLE", "Soyuz could not read the run", undefined, true);
+    throw new RunApplicationError(503, "RUN_READ_UNAVAILABLE", "Soyuz cannot reach its run database to read this run. Retry shortly.", undefined, true);
   }
 }
 
@@ -252,7 +252,7 @@ export async function readRunEventsPage(
     return { run, events, nextAfter: events.at(-1)?.sequence ?? after };
   } catch (error) {
     if (error instanceof RunApplicationError) throw error;
-    throw new RunApplicationError(503, "RUN_EVENTS_UNAVAILABLE", "Soyuz could not read run events", undefined, true);
+    throw new RunApplicationError(503, "RUN_EVENTS_UNAVAILABLE", "Soyuz cannot reach its run database to read run events. Retry shortly.", undefined, true);
   }
 }
 
@@ -297,7 +297,7 @@ export async function requestRunCancellation(
     if (error instanceof RunTransitionError) {
       throw new RunApplicationError(409, "INVALID_STATE_TRANSITION", `Run changed to ${error.current} before cancellation completed`);
     }
-    throw new RunApplicationError(503, "CANCEL_UNAVAILABLE", "Soyuz could not record the cancellation request", undefined, true);
+    throw new RunApplicationError(503, "CANCEL_UNAVAILABLE", "Soyuz cannot reach its run database to record the cancellation request. Retry shortly.", undefined, true);
   }
 }
 

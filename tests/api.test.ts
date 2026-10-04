@@ -89,6 +89,7 @@ describe("Soyuz Worker API", () => {
     const noAuth = await call(bindings, "/v1/runs", { method: "POST", body: validRequest() });
     expect(noAuth.response.status).toBe(401);
     expect(noAuth.body.error.code).toBe("UNAUTHORIZED");
+    expect(noAuth.body.error.message).toContain("current client key");
 
     const wrongTrust = await call(bindings, "/v1/worker/runs/00000000-0000-4000-8000-000000000013/started", {
       method: "POST",
@@ -104,6 +105,56 @@ describe("Soyuz Worker API", () => {
     });
     expect(invalid.response.status).toBe(422);
     expect(invalid.body.error.code).toBe("INVALID_RUN_REQUEST");
+  });
+
+  it("reports missing server keys and rejects expired or rotated client keys clearly", async () => {
+    const { bindings } = testEnv();
+    const missingClientKey = { ...bindings, CLIENT_API_TOKEN: undefined as unknown as string };
+    const misconfigured = await call(missingClientKey, "/v1/runs", { token: CLIENT_TOKEN });
+    expect(misconfigured.response.status).toBe(503);
+    expect(misconfigured.body.error.code).toBe("AUTHENTICATION_UNAVAILABLE");
+    expect(misconfigured.body.error.message).toContain("not configured");
+
+    const missingWorkerKey = { ...bindings, WORKER_API_TOKEN: undefined as unknown as string };
+    const workerMisconfigured = await call(missingWorkerKey, "/v1/worker/runs/00000000-0000-4000-8000-000000000013", {
+      token: WORKER_TOKEN,
+    });
+    expect(workerMisconfigured.response.status).toBe(503);
+    expect(workerMisconfigured.body.error.code).toBe("AUTHENTICATION_UNAVAILABLE");
+    expect(workerMisconfigured.body.error.message).toContain("not configured");
+
+    const rotated = { ...bindings, CLIENT_API_TOKEN: "rotated-client-key-value-long-enough" };
+    const expired = await call(rotated, "/v1/runs", { token: CLIENT_TOKEN });
+    expect(expired.response.status).toBe(401);
+    expect(expired.body.error.code).toBe("UNAUTHORIZED");
+    expect(expired.body.error.message).toContain("expired");
+    expect(expired.body.error.message).toContain("current client key");
+
+    const rotatedWorker = { ...bindings, WORKER_API_TOKEN: "rotated-worker-key-value-long-enough" };
+    const expiredWorker = await call(rotatedWorker, "/v1/worker/runs/00000000-0000-4000-8000-000000000013", {
+      token: WORKER_TOKEN,
+    });
+    expect(expiredWorker.response.status).toBe(401);
+    expect(expiredWorker.body.error.message).toContain("expired");
+    expect(expiredWorker.body.error.message).toContain("current worker key");
+  });
+
+  it("explains when the run database endpoint is unavailable", async () => {
+    const { bindings } = testEnv();
+    const disconnected = {
+      ...bindings,
+      DB: { prepare: vi.fn(() => { throw new Error("simulated D1 disconnect"); }) } as unknown as Env["DB"],
+    };
+
+    const health = await call(disconnected, "/health");
+    expect(health.response.status).toBe(503);
+    expect(health.body.status).toBe("unavailable");
+    expect(health.body.message).toContain("cannot reach its run database");
+
+    const history = await call(disconnected, "/v1/runs", { token: CLIENT_TOKEN });
+    expect(history.response.status).toBe(503);
+    expect(history.body.error.code).toBe("RUN_LIST_UNAVAILABLE");
+    expect(history.body.error.message).toContain("cannot reach its run database");
   });
 
   it("persists accepted runs and publishes a versioned Queue message", async () => {
@@ -158,6 +209,8 @@ describe("Soyuz Worker API", () => {
     expect(send).toHaveBeenCalledTimes(1);
     expect(result.response.status).toBe(503);
     expect(result.body.error.code).toBe("QUEUE_PUBLISH_UNCERTAIN");
+    expect(result.body.error.message).toContain("The run remains pending");
+    expect(result.body.error.message).toContain("same Idempotency-Key");
     const runId = result.body.error.details.runId as string;
     expect((await getRun(bindings.DB, runId))?.status).toBe("admitting");
 
@@ -169,6 +222,7 @@ describe("Soyuz Worker API", () => {
     expect(send).toHaveBeenCalledTimes(5);
     expect(row?.status).toBe("admission_failed");
     expect(row?.failure_class).toBe("queue_publish_failed");
+    expect(row?.failure_message).toContain("new Idempotency-Key");
   });
 
   it("records started, operational, and terminal worker callbacks idempotently", async () => {
