@@ -59,7 +59,7 @@ export async function reconcileAdmissions(env: Env, at = new Date()): Promise<vo
           await transitionRun(env.DB, row.id, "admission_failed", {
             completed_at: now,
             failure_class: "queue_publish_failed",
-            failure_message: "Queue publication failed after automatic retries",
+            failure_message: "Soyuz could not publish this run to its Queue after five attempts. Check Queue availability or configuration, then submit a new run with a new Idempotency-Key.",
           }, {
             eventId: "system:admission:failed",
             type: "run.admission_failed",
