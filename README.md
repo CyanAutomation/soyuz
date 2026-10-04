@@ -19,7 +19,7 @@ The local Worker uses Wrangler's local D1 database and Queue binding. `.dev.vars
 
 ## API overview
 
-`GET /health` is public and checks that the Worker can read D1. Client endpoints use `Authorization: Bearer $CLIENT_API_TOKEN`:
+`GET /health` is public and checks that the Worker can read D1 and that both API keys are configured. If either check fails, it returns HTTP 503 with a message and request ID. Client endpoints use `Authorization: Bearer $CLIENT_API_TOKEN`:
 
 ```text
 GET  /health
@@ -44,6 +44,8 @@ POST /v1/worker/runs/:id/cancelled
 ```
 
 All Soyuz↔Kaseki messages carry `contractVersion: "1"`. See [the architecture](docs/ARCHITECTURE.md), [contract](docs/CONTRACT.md), [Kaseki integration plan](docs/KASEKI-INTEGRATION.md), and [Cloudflare setup](docs/DEPLOYMENT.md).
+
+Client and worker keys are static bearer secrets; Soyuz does not assign them an automatic expiry time. Rotating or revoking a configured key makes earlier keys invalid. Authentication errors return 401 with guidance to use the current key; a missing server-side key returns 503 so it is distinguishable from a caller credential error.
 
 The `/mcp` endpoint exposes the client-facing `create_run`, `list_runs`, `get_run`, `get_run_events`, and `cancel_run` tools over stateless Streamable HTTP. It uses the client bearer token; worker callbacks are not exposed through MCP. See [the MCP interface and security boundary](docs/MCP.md).
 

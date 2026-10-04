@@ -20,7 +20,7 @@ async function constantTimeTokenMatch(expected: string, provided: string): Promi
 }
 
 export async function hasBearerToken(request: Request, expectedToken: string | undefined): Promise<boolean> {
-  if (!expectedToken) return false;
+  if (!isBearerTokenConfigured(expectedToken)) return false;
   const authorization = request.headers.get("authorization");
   if (!authorization) return false;
   const separator = authorization.indexOf(" ");
@@ -28,4 +28,8 @@ export async function hasBearerToken(request: Request, expectedToken: string | u
   const provided = authorization.slice(separator + 1);
   if (!provided || provided.trim() !== provided) return false;
   return constantTimeTokenMatch(expectedToken, provided);
+}
+
+export function isBearerTokenConfigured(token: string | undefined): token is string {
+  return typeof token === "string" && token.length >= 16 && token.trim() === token;
 }

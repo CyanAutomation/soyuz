@@ -35,7 +35,7 @@ Content-Type: application/json
 
 Fresh admission returns HTTP 202 and an RFC 9562 UUIDv7 run ID. Existing Kaseki clients should not depend on the old `kaseki-N` format.
 
-If `Queue.send()` throws, its outcome may be unknown: Cloudflare could have accepted the message while the response was lost. Soyuz returns 503 `QUEUE_PUBLISH_UNCERTAIN`, keeps the run in `admitting`, and retries the same run ID through its scheduled reconciler. After five unsuccessful attempts, the run becomes `admission_failed`. Callers should retry with the same idempotency key to retrieve the pending run.
+If `Queue.send()` throws, its outcome may be unknown: Cloudflare could have accepted the message while the response was lost. Soyuz returns 503 `QUEUE_PUBLISH_UNCERTAIN`, keeps the run in `admitting`, and retries the same run ID through its scheduled reconciler. After five unsuccessful attempts, the run becomes `admission_failed`; its failure message directs callers to check Queue availability and submit a new run with a new idempotency key. Before then, callers should retry with the same idempotency key to retrieve the pending run.
 
 ## Queue message
 
@@ -90,6 +90,6 @@ Queued cancellation becomes terminal `cancelled` immediately; a later Queue deli
 
 ## Errors
 
-Invalid JSON returns 400; structurally invalid run requests return 422; auth failure returns 401; unknown runs return 404; idempotency conflicts and invalid lifecycle transitions return 409; temporary D1 or Queue admission problems return 503. Internal stack traces and raw binding errors are not returned.
+Invalid JSON returns 400; structurally invalid run requests return 422; an absent, expired, or invalid caller key returns 401; a missing server-side API key returns 503 `AUTHENTICATION_UNAVAILABLE`; unknown runs return 404; idempotency conflicts and invalid lifecycle transitions return 409; temporary D1 or Queue admission problems return 503 with a user-facing message and request ID. Internal stack traces and raw binding errors are not returned. Soyuz keys are static bearer secrets without automatic expiry; rotation or revocation invalidates older values.
 
 The MCP endpoint exposes only `create_run`, `list_runs`, `get_run`, `get_run_events`, and `cancel_run`. It uses the same client bearer credential and shared run operations as REST. `create_run` defaults an omitted `publishMode` to `none`; REST keeps its existing `pr` default. MCP does not expose `/v1/worker/**` lifecycle operations. See [the MCP interface and security boundary](MCP.md).
