@@ -1,8 +1,12 @@
 # Soyuz transport contract
 
+Requirement IDs in this contract are indexed in [the test requirement map](TEST-REQUIREMENTS.md).
+
 All Soyuz↔Kaseki messages use `contractVersion: "1"`, independent from either repository's package version. Unknown versions must be rejected without starting execution. API success responses use `{ "data": ..., "requestId": "..." }`; errors use `{ "error": { "code": ..., "message": ..., "requestId": ... } }` and may include safe validation details.
 
 ## Run request
+
+Requirement IDs: `RUN-VALIDATE-01`, `RUN-IDEMPOTENCY-01`, `RUN-ADMISSION-01`, `QUEUE-RETRY-01`, `QUEUE-RECONCILE-01`.
 
 `POST /v1/runs` accepts a JSON Kaseki execution request. Soyuz preserves the current field names and useful execution options: `repoUrl`, `projectName`, `ref`, `taskPrompt`, `changedFilesAllowlist`/`allowlist`, `maxDiffBytes`, validation commands and lint cleanup, `goalSetting`, `scouting`, `goalCheck`, `runEvaluation`, `taskMode`, `publishMode`, startup check settings, tracing IDs, and timeout. It accepts the current selected snake_case aliases and normalizes them to camelCase. The defaults match Kaseki's API: `ref: "main"`, `taskMode: "patch"`, `publishMode: "pr"`.
 
@@ -39,6 +43,8 @@ If `Queue.send()` throws, its outcome may be unknown: Cloudflare could have acce
 
 ## Queue message
 
+Requirement IDs: `QUEUE-MESSAGE-01`, `QUEUE-RECONCILE-01`.
+
 Soyuz publishes the validated normalized request, not a D1 row:
 
 ```json
@@ -62,6 +68,8 @@ Cloudflare Queues is at-least-once. A consumer must use `runId` as its stable de
 
 ## Worker reads and callbacks
 
+Requirement IDs: `AUTH-REST-01`, `WORKER-READ-01`, `WORKER-CLAIM-01`, `WORKER-START-01`, `WORKER-EVENT-01`, `WORKER-COMPLETE-01`, `WORKER-FAIL-01`, `WORKER-CANCEL-01`, `CALLBACK-IDEMPOTENCY-01`.
+
 Every worker request uses `Authorization: Bearer <WORKER_API_TOKEN>`, distinct from the client token.
 
 - `GET /v1/worker/runs/:id` returns the canonical `status`, `cancelRequestedAt`, `claimExpiresAt`, `workerId`, stage, and update time. Kaseki uses it before start and while running.
@@ -75,6 +83,8 @@ Every worker request uses `Authorization: Bearer <WORKER_API_TOKEN>`, distinct f
 Lifecycle callback IDs and event IDs must remain stable across retries. Replaying the same ID and payload is safe; reusing an ID for different data returns 409. Worker events are event metadata, not stdout/stderr or artifact uploads.
 
 ## Public endpoints
+
+Requirement IDs: `HEALTH-DB-01`, `RUN-READ-REST-01`, `CANCEL-QUEUED-01`, `CANCEL-RUNNING-01`.
 
 | Endpoint | Auth | Purpose |
 | --- | --- | --- |
@@ -90,6 +100,10 @@ Queued cancellation becomes terminal `cancelled` immediately; a later Queue deli
 
 ## Errors
 
-Invalid JSON returns 400; structurally invalid run requests return 422; an absent, expired, or invalid caller key returns 401; a missing server-side API key returns 503 `AUTHENTICATION_UNAVAILABLE`; unknown runs return 404; idempotency conflicts and invalid lifecycle transitions return 409; temporary D1 or Queue admission problems return 503 with a user-facing message and request ID. Internal stack traces and raw binding errors are not returned. Soyuz keys are static bearer secrets without automatic expiry; rotation or revocation invalidates older values.
+Requirement IDs: `AUTH-CONFIG-01`, `AUTH-ROTATE-01`, `HTTP-BODY-01`, `ERRORS-01`.
+
+Request bodies larger than 96 KiB return 413 `REQUEST_TOO_LARGE`.
+
+Invalid JSON returns 400; structurally invalid run requests return 422; an absent or invalid caller key returns 401; a missing server-side API key returns 503 `AUTHENTICATION_UNAVAILABLE`; unknown runs return 404; idempotency conflicts and invalid lifecycle transitions return 409; temporary D1 or Queue admission problems return 503 with a user-facing message and request ID. Internal stack traces and raw binding errors are not returned. Soyuz keys are static bearer secrets without automatic expiry; rotation or revocation invalidates older values.
 
 The MCP endpoint exposes only `create_run`, `list_runs`, `get_run`, `get_run_events`, and `cancel_run`. It uses the same client bearer credential and shared run operations as REST. `create_run` defaults an omitted `publishMode` to `none`; REST keeps its existing `pr` default. MCP does not expose `/v1/worker/**` lifecycle operations. See [the MCP interface and security boundary](MCP.md).

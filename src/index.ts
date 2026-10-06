@@ -42,7 +42,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       return errorResponse(requestId, 503, "AUTHENTICATION_UNAVAILABLE", "Worker API-key authentication is not configured. Contact the service administrator.");
     }
     if (!(await hasBearerToken(request, env.WORKER_API_TOKEN))) {
-      return errorResponse(requestId, 401, "UNAUTHORIZED", "Worker API key is missing, expired, or invalid. Check that you are using the current worker key.");
+      return errorResponse(requestId, 401, "UNAUTHORIZED", "Worker API key is missing or invalid. Check that you are using the current worker key.");
     }
     const response = await handleWorkerCallbacks(request, env, url, requestId);
     return response ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
@@ -53,7 +53,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       return errorResponse(requestId, 503, "AUTHENTICATION_UNAVAILABLE", "Client API-key authentication is not configured. Contact the service administrator.");
     }
     if (!(await hasBearerToken(request, env.CLIENT_API_TOKEN))) {
-      return errorResponse(requestId, 401, "UNAUTHORIZED", "Client API key is missing, expired, or invalid. Check that you are using the current client key.");
+      return errorResponse(requestId, 401, "UNAUTHORIZED", "Client API key is missing or invalid. Check that you are using the current client key.");
     }
     const response = await handleClientRuns(request, env, url, requestId);
     return response ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");

@@ -12,5 +12,5 @@ export async function authorizeMcpClient(request: Request, env: Env, requestId: 
     hasBearerToken(request, env.WORKER_API_TOKEN),
   ]);
   if (isClientToken && !isWorkerToken) return null;
-  return errorResponse(requestId, 401, "UNAUTHORIZED", "Client API key is missing, expired, or invalid. Check that you are using the current client key.");
+  return errorResponse(requestId, 401, "UNAUTHORIZED", "Client API key is missing or invalid. Check that you are using the current client key.");
 }
