@@ -3,17 +3,23 @@ import { parseJsonBody } from "../src/api/http";
 import { hasBearerToken } from "../src/auth/bearer";
 
 describe("HTTP helpers", () => {
-  it("accepts configured bearer tokens that meet the 16-character minimum", async () => {
-    const token = "sixteen-char-key!";
+  it("[AUTH-MINIMUM-01] accepts 16-character configured bearer tokens and rejects shorter keys", async () => {
+    const token = "0123456789abcdef";
     const request = new Request("https://soyuz.test", {
       headers: { authorization: `Bearer ${token}` },
     });
 
     await expect(hasBearerToken(request, token)).resolves.toBe(true);
     await expect(hasBearerToken(request, undefined)).resolves.toBe(false);
+
+    const shortToken = token.slice(0, 15);
+    const shortRequest = new Request("https://soyuz.test", {
+      headers: { authorization: `Bearer ${shortToken}` },
+    });
+    await expect(hasBearerToken(shortRequest, shortToken)).resolves.toBe(false);
   });
 
-  it("parses multibyte JSON and enforces the body limit in bytes", async () => {
+  it("[HTTP-BODY-01] parses multibyte JSON and enforces the body limit in bytes", async () => {
     const parsed = await parseJsonBody(
       new Request("https://soyuz.test", { method: "POST", body: JSON.stringify({ value: "é" }) }),
       "request-id",

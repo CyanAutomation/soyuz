@@ -84,7 +84,7 @@ async function claimRun(env: Env, runId: string, workerId = "docker-host-a", cal
 describe("Soyuz Worker API", () => {
   beforeEach(clearDatabase);
 
-  it("keeps client and worker authentication separate and validates requests", async () => {
+  it("[AUTH-REST-01] requires client authentication and rejects client credentials on worker routes", async () => {
     const { bindings } = testEnv();
     const noAuth = await call(bindings, "/v1/runs", { method: "POST", body: validRequest() });
     expect(noAuth.response.status).toBe(401);
@@ -97,7 +97,10 @@ describe("Soyuz Worker API", () => {
       body: { contractVersion: "1", callbackId: CALLBACK_ID, workerId: "host-a" },
     });
     expect(wrongTrust.response.status).toBe(401);
+  });
 
+  it("[RUN-VALIDATE-01/ERRORS-01] rejects invalid run requests before admission with a stable error", async () => {
+    const { bindings, send } = testEnv();
     const invalid = await call(bindings, "/v1/runs", {
       method: "POST",
       token: CLIENT_TOKEN,
@@ -105,9 +108,12 @@ describe("Soyuz Worker API", () => {
     });
     expect(invalid.response.status).toBe(422);
     expect(invalid.body.error.code).toBe("INVALID_RUN_REQUEST");
+    expect(send).not.toHaveBeenCalled();
+    const count = await bindings.DB.prepare("SELECT COUNT(*) AS count FROM runs").first<{ count: number }>();
+    expect(count?.count).toBe(0);
   });
 
-  it("reports missing server keys and rejects expired or rotated client keys clearly", async () => {
+  it("[AUTH-CONFIG-01] reports unavailable when client or worker server keys are missing", async () => {
     const { bindings } = testEnv();
     const missingClientKey = { ...bindings, CLIENT_API_TOKEN: undefined as unknown as string };
     const misconfigured = await call(missingClientKey, "/v1/runs", { token: CLIENT_TOKEN });
@@ -122,24 +128,27 @@ describe("Soyuz Worker API", () => {
     expect(workerMisconfigured.response.status).toBe(503);
     expect(workerMisconfigured.body.error.code).toBe("AUTHENTICATION_UNAVAILABLE");
     expect(workerMisconfigured.body.error.message).toContain("not configured");
-
-    const rotated = { ...bindings, CLIENT_API_TOKEN: "rotated-client-key-value-long-enough" };
-    const expired = await call(rotated, "/v1/runs", { token: CLIENT_TOKEN });
-    expect(expired.response.status).toBe(401);
-    expect(expired.body.error.code).toBe("UNAUTHORIZED");
-    expect(expired.body.error.message).toContain("expired");
-    expect(expired.body.error.message).toContain("current client key");
-
-    const rotatedWorker = { ...bindings, WORKER_API_TOKEN: "rotated-worker-key-value-long-enough" };
-    const expiredWorker = await call(rotatedWorker, "/v1/worker/runs/00000000-0000-4000-8000-000000000013", {
-      token: WORKER_TOKEN,
-    });
-    expect(expiredWorker.response.status).toBe(401);
-    expect(expiredWorker.body.error.message).toContain("expired");
-    expect(expiredWorker.body.error.message).toContain("current worker key");
   });
 
-  it("explains when the run database endpoint is unavailable", async () => {
+  it("[AUTH-ROTATE-01] rejects old client and worker credentials after key rotation", async () => {
+    const { bindings } = testEnv();
+    const rotated = { ...bindings, CLIENT_API_TOKEN: "rotated-client-key-value-long-enough" };
+    const rotatedClient = await call(rotated, "/v1/runs", { token: CLIENT_TOKEN });
+    expect(rotatedClient.response.status).toBe(401);
+    expect(rotatedClient.body.error.code).toBe("UNAUTHORIZED");
+    expect(rotatedClient.body.error.message).not.toContain("expired");
+    expect(rotatedClient.body.error.message).toContain("current client key");
+
+    const rotatedWorker = { ...bindings, WORKER_API_TOKEN: "rotated-worker-key-value-long-enough" };
+    const rotatedWorkerResponse = await call(rotatedWorker, "/v1/worker/runs/00000000-0000-4000-8000-000000000013", {
+      token: WORKER_TOKEN,
+    });
+    expect(rotatedWorkerResponse.response.status).toBe(401);
+    expect(rotatedWorkerResponse.body.error.message).not.toContain("expired");
+    expect(rotatedWorkerResponse.body.error.message).toContain("current worker key");
+  });
+
+  it("[HEALTH-DB-01] explains when the run database endpoint is unavailable", async () => {
     const { bindings } = testEnv();
     const disconnected = {
       ...bindings,
@@ -157,7 +166,7 @@ describe("Soyuz Worker API", () => {
     expect(history.body.error.message).toContain("cannot reach its run database");
   });
 
-  it("persists accepted runs and publishes a versioned Queue message", async () => {
+  it("[RUN-ADMISSION-01/QUEUE-MESSAGE-01/CONTRACT-VERSION-01/WORKER-READ-01] persists accepted runs and publishes a versioned Queue message", async () => {
     const { bindings, sent } = testEnv();
     const { response, body } = await submit(bindings);
     expect(response.status).toBe(202);
@@ -184,12 +193,16 @@ describe("Soyuz Worker API", () => {
     expect(clientCannotPollAsWorker.response.status).toBe(401);
   });
 
-  it("returns the existing run for equivalent idempotent submissions and rejects key reuse", async () => {
+  it("[RUN-IDEMPOTENCY-01] replays equivalent submissions and rejects key reuse for different work", async () => {
     const { bindings, sent } = testEnv();
     const first = await call(bindings, "/v1/runs", {
       method: "POST",
       token: CLIENT_TOKEN,
-      body: validRequest({ idempotencyKey: CLIENT_KEY.toUpperCase() }),
+      body: {
+        idempotencyKey: CLIENT_KEY.toUpperCase(),
+        taskPrompt: "Update the project documentation and keep the API examples current.",
+        repoUrl: "https://github.com/example/project",
+      },
     });
     const replay = await submit(bindings);
     expect(first.response.status).toBe(202);
@@ -203,7 +216,7 @@ describe("Soyuz Worker API", () => {
     expect(sent).toHaveLength(1);
   });
 
-  it("retries ambiguous Queue publication failures before marking admission_failed", async () => {
+  it("[QUEUE-RETRY-01] retries ambiguous Queue publication failures before marking admission_failed", async () => {
     const { bindings, send } = testEnv({ queueFailure: true });
     const result = await submit(bindings);
     expect(send).toHaveBeenCalledTimes(1);
@@ -225,20 +238,27 @@ describe("Soyuz Worker API", () => {
     expect(row?.failure_message).toContain("new Idempotency-Key");
   });
 
-  it("records started, operational, and terminal worker callbacks idempotently", async () => {
+  it("[WORKER-CLAIM-01] grants an idempotent claim to one worker", async () => {
     const { bindings } = testEnv();
     const created = await submit(bindings);
     const runId = created.body.data.id as string;
     const workerId = "docker-host-a";
-    const now = new Date().toISOString();
-
     const firstClaim = await claimRun(bindings, runId, workerId);
     const claimReplay = await claimRun(bindings, runId, workerId);
     const competingClaim = await claimRun(bindings, runId, "docker-host-b", "00000000-0000-4000-8000-000000000031");
+    expect(firstClaim.response.status).toBe(200);
     expect(firstClaim.body.data.status).toBe("claimed");
     expect(claimReplay.response.status).toBe(200);
     expect(competingClaim.response.status).toBe(409);
+  });
 
+  it("[WORKER-START-01] replays the same started callback without changing running state", async () => {
+    const { bindings } = testEnv();
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-start";
+    await claimRun(bindings, runId, workerId);
+    const now = new Date().toISOString();
     const startedBody = {
       contractVersion: "1",
       callbackId: CALLBACK_ID,
@@ -255,7 +275,19 @@ describe("Soyuz Worker API", () => {
     expect(started.response.status).toBe(200);
     expect(started.body.data.status).toBe("running");
     expect(startedReplay.body.data.status).toBe("running");
+  });
 
+  it("[WORKER-EVENT-01/CALLBACK-IDEMPOTENCY-01] stores one event when the worker retries its callback", async () => {
+    const { bindings } = testEnv();
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-events";
+    await claimRun(bindings, runId, workerId);
+    await call(bindings, `/v1/worker/runs/${runId}/started`, {
+      method: "POST", token: WORKER_TOKEN,
+      body: { contractVersion: "1", callbackId: CALLBACK_ID, workerId },
+    });
+    const now = new Date().toISOString();
     const eventBody = {
       contractVersion: "1",
       eventId: EVENT_ID,
@@ -268,7 +300,36 @@ describe("Soyuz Worker API", () => {
     await call(bindings, `/v1/worker/runs/${runId}/events`, { method: "POST", token: WORKER_TOKEN, body: eventBody });
     const eventReplay = await call(bindings, `/v1/worker/runs/${runId}/events`, { method: "POST", token: WORKER_TOKEN, body: eventBody });
     expect(eventReplay.response.status).toBe(202);
+    const reusedId = await call(bindings, `/v1/worker/runs/${runId}/events`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: { ...eventBody, payload: { source: "different-agent" } },
+    });
+    expect(reusedId.response.status).toBe(409);
+    expect(reusedId.body.error.code).toBe("CALLBACK_ID_REUSED");
 
+    const eventList = await call(bindings, `/v1/runs/${runId}/events?limit=20`, { token: CLIENT_TOKEN });
+    expect(eventList.response.status).toBe(200);
+    expect(eventList.body.data.events.filter((entry: { eventId: string }) => entry.eventId === EVENT_ID)).toHaveLength(1);
+  });
+
+  it("[WORKER-COMPLETE-01] records completion and rejects a late started callback", async () => {
+    const { bindings } = testEnv();
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-complete";
+    await claimRun(bindings, runId, workerId);
+    const now = new Date().toISOString();
+    const startedBody = {
+      contractVersion: "1",
+      callbackId: CALLBACK_ID,
+      workerId,
+      startedAt: now,
+      stage: "prepare",
+    };
+    await call(bindings, `/v1/worker/runs/${runId}/started`, {
+      method: "POST", token: WORKER_TOKEN, body: startedBody,
+    });
     const completedBody = {
       contractVersion: "1",
       callbackId: "00000000-0000-4000-8000-000000000014",
@@ -288,17 +349,13 @@ describe("Soyuz Worker API", () => {
     expect(completed.body.data.result.summary).toBe("Updated documentation.");
     expect(completedReplay.body.data.status).toBe("completed");
 
-    const eventList = await call(bindings, `/v1/runs/${runId}/events?limit=20`, { token: CLIENT_TOKEN });
-    expect(eventList.response.status).toBe(200);
-    expect(eventList.body.data.events.filter((entry: { eventId: string }) => entry.eventId === EVENT_ID)).toHaveLength(1);
-
     const lateStart = await call(bindings, `/v1/worker/runs/${runId}/started`, {
       method: "POST", token: WORKER_TOKEN, body: { ...startedBody, callbackId: "00000000-0000-4000-8000-000000000015" },
     });
     expect(lateStart.response.status).toBe(409);
   });
 
-  it("records queued cancellation and rejects a late start", async () => {
+  it("[CANCEL-QUEUED-01] records queued cancellation and rejects a late start", async () => {
     const { bindings } = testEnv();
     const created = await submit(bindings);
     const runId = created.body.data.id as string;
@@ -317,7 +374,7 @@ describe("Soyuz Worker API", () => {
     expect(lateStart.body.error.code).toBe("RUN_CANCELLED");
   });
 
-  it("keeps a running cancellation pending until the worker confirms it", async () => {
+  it("[CANCEL-RUNNING-01/WORKER-CANCEL-01] keeps cancellation pending until the worker confirms it", async () => {
     const { bindings } = testEnv();
     const created = await submit(bindings);
     const runId = created.body.data.id as string;
@@ -344,7 +401,7 @@ describe("Soyuz Worker API", () => {
     expect(confirmed.body.data.status).toBe("cancelled");
   });
 
-  it("records worker failure and accepts an exact callback retry", async () => {
+  it("[WORKER-FAIL-01] records worker failure and accepts an exact callback retry", async () => {
     const { bindings } = testEnv();
     const created = await submit(bindings);
     const runId = created.body.data.id as string;
@@ -380,7 +437,7 @@ describe("Soyuz Worker API", () => {
     expect(retry.body.data.status).toBe("failed");
   });
 
-  it("does not apply a stale pre-start cancellation after the run starts", async () => {
+  it("[CANCEL-CAS-01] rejects a claimed-state cancellation after the run advances to running", async () => {
     const { bindings } = testEnv();
     const created = await submit(bindings);
     const runId = created.body.data.id as string;
@@ -392,6 +449,7 @@ describe("Soyuz Worker API", () => {
       body: { contractVersion: "1", callbackId: "00000000-0000-4000-8000-000000000034", workerId },
     });
 
+    // Simulate a cancellation update prepared from a stale `claimed` read after start won the race.
     const now = new Date().toISOString();
     await expect(transitionRun(bindings.DB, runId, "cancelled", {
       cancel_requested_at: now,
@@ -404,15 +462,9 @@ describe("Soyuz Worker API", () => {
       recordedAt: now,
       payload: { requestedBy: "client" },
     }, { expectedStatus: "claimed" })).rejects.toBeInstanceOf(RunTransitionError);
-
-    const cancellation = await call(bindings, `/v1/runs/${runId}/cancel`, {
-      method: "POST",
-      token: CLIENT_TOKEN,
-    });
-    expect(cancellation.body.data.status).toBe("cancel_requested");
   });
 
-  it("lists runs, returns canonical state, and reports unknown IDs", async () => {
+  it("[RUN-READ-REST-01] lists runs, returns canonical state, and reports unknown IDs", async () => {
     const { bindings } = testEnv();
     const created = await submit(bindings);
     const runId = created.body.data.id as string;
@@ -428,7 +480,7 @@ describe("Soyuz Worker API", () => {
     expect(missing.body.error.code).toBe("RUN_NOT_FOUND");
   });
 
-  it("reconciles a stale admitting run with the same run ID", async () => {
+  it("[QUEUE-RECONCILE-01] reconciles a stale admitting run with the same run ID", async () => {
     const { bindings, sent } = testEnv();
     const now = new Date();
     const old = new Date(now.getTime() - 3 * 60_000).toISOString();
@@ -458,7 +510,7 @@ describe("Soyuz Worker API", () => {
     expect(stored?.admission_attempts).toBe(2);
   });
 
-  it("expires an abandoned worker claim and republishes the same run ID", async () => {
+  it("[WORKER-CLAIM-RECOVERY-01] expires an abandoned claim and republishes the same run ID", async () => {
     const { bindings, sent } = testEnv();
     const now = new Date();
     const old = new Date(now.getTime() - 5 * 60_000).toISOString();
@@ -507,7 +559,7 @@ describe("Soyuz Worker API", () => {
     expect(stored?.claim_expires_at).toBeNull();
   });
 
-  it("commits only one terminal event when worker outcomes race", async () => {
+  it("[LIFECYCLE-RACE-01] commits only one terminal event when worker outcomes race", async () => {
     const { bindings } = testEnv();
     const now = new Date().toISOString();
     const id = "00000000-0000-4000-8000-000000000050";

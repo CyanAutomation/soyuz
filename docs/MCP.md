@@ -20,6 +20,8 @@ The endpoint uses stateless Streamable HTTP through Cloudflare Agents SDK `agent
 
 ## Authentication and security boundary
 
+Requirement IDs: `MCP-AUTH-01`.
+
 Requests must use `Authorization: Bearer $CLIENT_API_TOKEN`, the existing client-facing credential. MCP authentication is isolated in `src/auth/mcp-client.ts`. `WORKER_API_TOKEN` is not accepted by `/mcp` and is never returned by a tool. Keep the client and worker secrets distinct in local and deployed configuration.
 
 MCP is a client interface to Soyuz's control plane. The private `/v1/worker/**` API remains the Kaseki execution-plane contract. MCP cannot claim, start, complete, fail, or otherwise manipulate worker lifecycle transitions. It does not contact a Kaseki host. Kaseki remains responsible for execution-context safety, host capacity, Docker, repository access, validation, detailed diagnostics, and publication.
@@ -27,6 +29,8 @@ MCP is a client interface to Soyuz's control plane. The private `/v1/worker/**` 
 The current endpoint uses a configured bearer token, not OAuth. Before connecting it as an authenticated ChatGPT MCP integration, implement standards-compliant OAuth 2.1 using Cloudflare's supported Workers OAuth Provider and MCP resource-server primitives. That work needs token issuance and verification, protected-resource and authorization-server metadata, scopes and user authorization, and a deployment-specific client registration/configuration. Do not treat the static client API token as OAuth or put a token in an MCP tool definition or response.
 
 ## V1 tools
+
+Requirement IDs: `MCP-TOOLS-01`, `MCP-CREATE-01`, `MCP-PUBLISH-01`, `MCP-LIST-PAGE-01`, `MCP-READ-01`, `MCP-DATA-01`, `MCP-EVENTS-01`, `MCP-CANCEL-01`, `MCP-URL-REDACT-01`, `MCP-URL-MALFORMED-01`.
 
 | Tool | Inputs | Behavior |
 | --- | --- | --- |
@@ -38,11 +42,13 @@ The current endpoint uses a configured bearer token, not OAuth. Before connectin
 
 `list_runs.status` accepts the current Soyuz states: `admitting`, `queued`, `claimed`, `running`, `cancel_requested`, `cancelled`, `completed`, `failed`, and `admission_failed`.
 
-The three read tools return structured data. Run details omit worker identity and claim lease fields, raw internal database fields, and arbitrary error objects. Repository URLs in MCP results omit user/password, query, and fragment components. Event results contain Soyuz's bounded operational metadata and only allowlisted scalar payload fields; arbitrary event payload keys are omitted. There is no tool for stdout, stderr, raw Pi output, repository contents, files, or Kaseki artifacts.
+The three read tools return structured data. Run details omit worker identity and claim lease fields, raw internal database fields, and arbitrary error objects. Repository URLs in MCP results omit user/password, query, and fragment components; if a persisted URL is malformed, MCP returns `about:invalid` so the read remains available without exposing the stored value. Event results contain Soyuz's bounded operational metadata and only allowlisted scalar payload fields; arbitrary event payload keys are omitted. There is no tool for stdout, stderr, raw Pi output, repository contents, files, or Kaseki artifacts.
 
 `cancel_run` records intent. Queued and claimed runs may become `cancelled` immediately. Running work moves to `cancel_requested`; the Kaseki host observes that state and handles runtime cancellation under the existing worker contract. The tool does not directly terminate a Docker process.
 
 ## Safe creation retries
+
+Requirement IDs: `MCP-IDEMPOTENCY-01`, `MCP-QUEUE-RETRY-01`.
 
 Soyuz's existing UUID `idempotencyKey` mechanism also applies to MCP `create_run`; MCP has no second idempotency store. Supply a fresh UUID for each intended run and reuse that same key with the same normalized execution request when retrying. Soyuz returns the existing run for an equivalent request and returns `IDEMPOTENCY_KEY_REUSED` if the key is reused for different work. Without a key, separate MCP calls can create separate runs. When Queue publication is uncertain, the error says to retry with the same key while Soyuz reconciles the same run ID.
 

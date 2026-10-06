@@ -28,6 +28,8 @@ Messages are typed in Soyuz and carry `contractVersion: "1"`. The repositories d
 
 ## Run lifecycle
 
+Requirement IDs: `LIFECYCLE-TRANSITIONS-01`, `LIFECYCLE-TERMINAL-01`, `CANCEL-CAS-01`, `WORKER-CLAIM-RECOVERY-01`, `LIFECYCLE-RACE-01`.
+
 ```mermaid
 stateDiagram-v2
     [*] --> admitting
@@ -67,6 +69,8 @@ D1 and Queues do not share a transaction. Soyuz writes `admitting` and its event
 Kaseki must leave a pulled message unacknowledged while Soyuz still reports `admitting`. After it reads `queued`, it claims the run with a worker-authenticated compare-and-set. It may execute only after its `started` callback moves the claim to `running`. If it sees a terminal state, it acknowledges and skips the message. A cancellation racing with publication may still leave a Queue message; canonical `cancelled` state makes it harmless.
 
 ## IDs, authentication, and compatibility
+
+Requirement ID: `RUN-ID-UUIDV7-01`.
 
 Soyuz generates RFC 9562 UUIDv7 IDs from the current millisecond timestamp and Web Crypto random bytes rather than Kaseki's historical `kaseki-N`. They are URL-safe and lexicographically time-sortable; D1 timestamps remain the source for deterministic history ordering. Callers must treat IDs as opaque strings.
 
