@@ -32,7 +32,9 @@ npx wrangler secret put WORKER_API_TOKEN
 npm run deploy
 ```
 
-Cloudflare secrets are not checked into the repository. Use the same `WORKER_API_TOKEN` on the Kaseki callback client and status poller. Do not reuse the client token as the worker token. Soyuz does not expire these static secrets automatically; rotate them in Cloudflare and update clients together. A missing Worker-side key makes protected requests return 503 `AUTHENTICATION_UNAVAILABLE`; an outdated client key returns 401 `UNAUTHORIZED`.
+## API token configuration
+
+**[AUTH-MINIMUM-01]** Cloudflare secrets are not checked into the repository. Configure both API tokens with at least 16 characters. Use the same `WORKER_API_TOKEN` on the Kaseki callback client and status poller. Do not reuse the client token as the worker token. Soyuz does not expire these static secrets automatically; rotate them in Cloudflare and update clients together. A missing Worker-side key makes protected requests return 503 `AUTHENTICATION_UNAVAILABLE`; an outdated client key returns 401 `UNAUTHORIZED`.
 
 ## Configure external HTTP pull
 

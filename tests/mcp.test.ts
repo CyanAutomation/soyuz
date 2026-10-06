@@ -101,7 +101,7 @@ async function initializeAndListTools(env: Env) {
 describe("Soyuz remote MCP interface", () => {
   beforeEach(clearDatabase);
 
-  it("requires client authentication, initializes Streamable HTTP, and exposes only the five client tools", async () => {
+  it("[MCP-AUTH-01] requires a dedicated client credential before requests are admitted", async () => {
     const { bindings, send } = testEnv();
     const unauthenticated = await handleRequest(request("/mcp", {
       jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "create_run", arguments: { repoUrl: "https://github.com/example/project", taskPrompt: "Unauthorized work must not be admitted." } },
@@ -112,6 +112,9 @@ describe("Soyuz remote MCP interface", () => {
       jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "create_run", arguments: { repoUrl: "https://github.com/example/project", taskPrompt: "Worker credentials must not admit client work." } },
     }, WORKER_TOKEN), bindings);
     expect(workerCredential.status).toBe(401);
+    const workerCredentialBody = await workerCredential.json() as { error: { message: string } };
+    expect(workerCredentialBody.error.message).toContain("current client key");
+    expect(workerCredentialBody.error.message).not.toContain("expired");
 
     const sameCredentialForBothBoundaries = {
       ...bindings,
@@ -130,7 +133,11 @@ describe("Soyuz remote MCP interface", () => {
     }), missingClientKey);
     expect(serviceMisconfigured.status).toBe(503);
     expect(await serviceMisconfigured.text()).toContain("not configured");
+    expect(send).not.toHaveBeenCalled();
+  });
 
+  it("[MCP-TOOLS-01] initializes Streamable HTTP and exposes only the five client tools", async () => {
+    const { bindings } = testEnv();
     const tools = await initializeAndListTools(bindings);
     expect(tools.response.status).toBe(200);
     const names = tools.body.result.tools.map((tool: { name: string }) => tool.name).sort();
@@ -144,7 +151,7 @@ describe("Soyuz remote MCP interface", () => {
     expect(cancelTool.annotations.destructiveHint).toBe(true);
   });
 
-  it("creates through the shared admission path with a safe publication default and REST-compatible idempotency", async () => {
+  it("[MCP-CREATE-01] creates through shared admission with MCP's safe publication default", async () => {
     const { bindings, sent } = testEnv();
     const key = "00000000-0000-4000-8000-000000000010";
     const first = await createRun(bindings, { idempotencyKey: key });
@@ -163,18 +170,20 @@ describe("Soyuz remote MCP interface", () => {
     const stored = await runtimeEnv.DB.prepare("SELECT status, publish_mode, idempotency_key FROM runs WHERE id = ?")
       .bind(summary.runId).first<{ status: string; publish_mode: string; idempotency_key: string }>();
     expect(stored).toEqual({ status: "queued", publish_mode: "none", idempotency_key: key });
+  });
 
-    const replay = await createRun(bindings, { idempotencyKey: key });
-    expect(replay.body.result.structuredContent.runId).toBe(summary.runId);
-    expect(sent).toHaveLength(1);
-
+  it("[MCP-PUBLISH-01] preserves an explicit MCP publication mode", async () => {
+    const { bindings, sent } = testEnv();
     const explicitPublish = await createRun(bindings, {
       idempotencyKey: "00000000-0000-4000-8000-000000000011",
       publishMode: "branch",
     });
     expect(explicitPublish.body.result.structuredContent.publishMode).toBe("branch");
-    expect(sent[1].request.publishMode).toBe("branch");
+    expect(sent[0].request.publishMode).toBe("branch");
+  });
 
+  it("[MCP-URL-REDACT-01] redacts credentials and query tokens from returned repository URLs", async () => {
+    const { bindings } = testEnv();
     const credentialedUrl = await createRun(bindings, {
       repoUrl: "https://clone-user:embedded-secret@github.com/example/private-project?access_token=embedded-token",
       idempotencyKey: "00000000-0000-4000-8000-000000000012",
@@ -183,7 +192,17 @@ describe("Soyuz remote MCP interface", () => {
     expect(safeSummary.repoUrl).toBe("https://github.com/example/private-project");
     expect(JSON.stringify(safeSummary)).not.toContain("embedded-secret");
     expect(JSON.stringify(safeSummary)).not.toContain("embedded-token");
+  });
 
+  it("[MCP-IDEMPOTENCY-01] reuses equivalent requests and rejects keys reused for different work", async () => {
+    const { bindings, sent } = testEnv();
+    const key = "00000000-0000-4000-8000-000000000010";
+    const first = await createRun(bindings, { idempotencyKey: key });
+    const firstRunId = first.body.result.structuredContent.runId;
+    const replay = await createRun(bindings, { idempotencyKey: key });
+    expect(replay.body.result.isError).toBeUndefined();
+    expect(replay.body.result.structuredContent.runId).toBe(firstRunId);
+    expect(sent).toHaveLength(1);
     const conflict = await createRun(bindings, {
       idempotencyKey: key,
       taskPrompt: "Use the same key for a different request to check admission conflicts.",
@@ -192,16 +211,17 @@ describe("Soyuz remote MCP interface", () => {
     expect(conflict.body.result.structuredContent.error.code).toBe("IDEMPOTENCY_KEY_REUSED");
   });
 
-  it("rejects invalid input safely without creating canonical state or publishing a Queue message", async () => {
+  it("[MCP-VALIDATE-01] rejects invalid input without writing state or publishing a Queue message", async () => {
     const { bindings, send } = testEnv();
     const invalid = await createRun(bindings, { taskPrompt: "short" });
-    expect(invalid.body.error || invalid.body.result?.isError).toBeTruthy();
+    expect(invalid.body.result).toMatchObject({ isError: true });
+    expect(invalid.body.result.content[0].text).toContain("taskPrompt");
     expect(send).not.toHaveBeenCalled();
     const count = await runtimeEnv.DB.prepare("SELECT COUNT(*) AS count FROM runs").first<{ count: number }>();
     expect(count?.count).toBe(0);
   });
 
-  it("maps uncertain Queue admission safely and tells callers to reuse the idempotency key", async () => {
+  it("[MCP-QUEUE-RETRY-01] maps uncertain admission and tells callers to reuse the idempotency key", async () => {
     const { bindings, send } = testEnv({ queueFailure: true });
     const idempotencyKey = "00000000-0000-4000-8000-000000000015";
     const first = await createRun(bindings, { idempotencyKey });
@@ -223,10 +243,14 @@ describe("Soyuz remote MCP interface", () => {
     expect(row?.status).toBe("admitting");
   });
 
-  it("lists bounded summaries and returns canonical detail without internal fields", async () => {
+  it("[MCP-LIST-PAGE-01] returns bounded cursor pages without repeating a run", async () => {
     const { bindings } = testEnv();
     const first = (await createRun(bindings, { idempotencyKey: "00000000-0000-4000-8000-000000000020" })).body.result.structuredContent;
     const second = (await createRun(bindings, { idempotencyKey: "00000000-0000-4000-8000-000000000021" })).body.result.structuredContent;
+    const olderCreatedAt = "2026-01-01T00:00:00.000Z";
+    const newerCreatedAt = "2026-01-02T00:00:00.000Z";
+    await runtimeEnv.DB.prepare("UPDATE runs SET created_at = ? WHERE id = ?").bind(olderCreatedAt, first.runId).run();
+    await runtimeEnv.DB.prepare("UPDATE runs SET created_at = ? WHERE id = ?").bind(newerCreatedAt, second.runId).run();
 
     const listed = await rpc(bindings, "tools/call", {
       name: "list_runs",
@@ -235,6 +259,7 @@ describe("Soyuz remote MCP interface", () => {
     const page = listed.body.result.structuredContent;
     expect(page.runs).toHaveLength(1);
     expect(page.nextCursor).toBeTruthy();
+    expect(page.runs[0]).toMatchObject({ runId: second.runId, createdAt: newerCreatedAt });
     expect(page.runs[0].status).toBe("queued");
     expect(page.runs[0]).not.toHaveProperty("workerId");
     expect(page.runs[0]).not.toHaveProperty("request");
@@ -244,9 +269,15 @@ describe("Soyuz remote MCP interface", () => {
       name: "list_runs",
       arguments: { status: "queued", limit: 1, cursor: page.nextCursor },
     }, 31);
-    expect(next.body.result.structuredContent.runs).toHaveLength(1);
-    expect([first.runId, second.runId]).toContain(next.body.result.structuredContent.runs[0].runId);
+    const nextPage = next.body.result.structuredContent;
+    expect(nextPage.runs).toHaveLength(1);
+    expect(nextPage.runs[0]).toMatchObject({ runId: first.runId, createdAt: olderCreatedAt });
+    expect(nextPage.nextCursor).toBeNull();
+  });
 
+  it("[MCP-READ-01/MCP-DATA-01] returns safe canonical details and a not-found error for unknown IDs", async () => {
+    const { bindings } = testEnv();
+    const first = (await createRun(bindings, { idempotencyKey: "00000000-0000-4000-8000-000000000020" })).body.result.structuredContent;
     const detail = await rpc(bindings, "tools/call", { name: "get_run", arguments: { runId: first.runId } }, 32);
     expect(detail.body.result.structuredContent).toMatchObject({
       runId: first.runId,
@@ -268,7 +299,7 @@ describe("Soyuz remote MCP interface", () => {
     expect(missing.body.result.structuredContent.error.code).toBe("RUN_NOT_FOUND");
   });
 
-  it("redacts malformed persisted URLs instead of failing MCP reads", async () => {
+  it("[MCP-URL-MALFORMED-01] returns about:invalid without exposing malformed stored URLs", async () => {
     const { bindings } = testEnv();
     const created = (await createRun(bindings, {
       idempotencyKey: "00000000-0000-4000-8000-000000000022",
@@ -297,7 +328,7 @@ describe("Soyuz remote MCP interface", () => {
     expect(JSON.stringify([listed.body, detail.body])).not.toContain("embedded-");
   });
 
-  it("returns ordered operational events with the existing after cursor semantics", async () => {
+  it("[MCP-EVENTS-01] returns ordered operational events after the requested cursor", async () => {
     const { bindings } = testEnv();
     const created = (await createRun(bindings, { idempotencyKey: "00000000-0000-4000-8000-000000000040" })).body.result.structuredContent;
     const runId = created.runId as string;
@@ -344,7 +375,7 @@ describe("Soyuz remote MCP interface", () => {
     expect(JSON.stringify(laterEvents)).not.toContain("stdout");
   });
 
-  it("uses canonical cancellation behavior for queued, running, and terminal runs", async () => {
+  it("[MCP-CANCEL-01] uses canonical cancellation behavior for queued, running, and terminal runs", async () => {
     const { bindings } = testEnv();
     const queued = (await createRun(bindings, { idempotencyKey: "00000000-0000-4000-8000-000000000050" })).body.result.structuredContent;
     const queuedCancel = await rpc(bindings, "tools/call", { name: "cancel_run", arguments: { runId: queued.runId } }, 50);
