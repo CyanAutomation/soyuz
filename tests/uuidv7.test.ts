@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createRunId } from "../src/lib/uuidv7";
 
 describe("UUIDv7 run IDs", () => {
-  it("encodes the timestamp and sorts across millisecond boundaries", () => {
+  it("[RUN-ID-UUIDV7-01] encodes the timestamp and sorts across millisecond boundaries", () => {
     const earlierTimestamp = 1_800_000_000_000;
     const earlier = createRunId(earlierTimestamp);
     const later = createRunId(earlierTimestamp + 1);
@@ -13,7 +13,7 @@ describe("UUIDv7 run IDs", () => {
     expect(later > earlier).toBe(true);
   });
 
-  it("rejects timestamps outside the UUIDv7 field", () => {
+  it("[RUN-ID-BOUNDS-01] rejects timestamps outside the UUIDv7 field", () => {
     expect(() => createRunId(-1)).toThrow(RangeError);
     expect(() => createRunId(2 ** 48)).toThrow(RangeError);
   });
