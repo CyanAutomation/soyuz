@@ -22,7 +22,7 @@ npx wrangler queues create soyuz-runs
 
 Copy the D1 `database_id` returned by Wrangler into `wrangler.jsonc`, replacing the all-zero local placeholder. The database name and Queue name should remain `soyuz-runs` unless the bindings are changed in the config at the same time.
 
-Set distinct production Worker secrets before the first deploy. Apply the migration, generate Worker/binding types, then deploy once with an account administrator so the `soyuz` Worker is created:
+Set distinct production Worker secrets before the first deploy. Apply the initial migration as a separately authorized manual operation, generate Worker/binding types, then deploy once with an account administrator so the `soyuz` Worker is created:
 
 ```sh
 npx wrangler secret put CLIENT_API_TOKEN
@@ -31,6 +31,8 @@ npm run db:migrate:remote
 npm run cf:types
 npm run deploy
 ```
+
+`npm run db:migrate:remote` changes production D1 and requires D1 Edit access. Run it only with separate authorization from the Worker deployment. CI/CD never runs production migrations.
 
 ## API token configuration
 
@@ -48,14 +50,16 @@ Create a separate API token for the Kaseki host with Queue read and write permis
 
 ## GitHub Actions deployment
 
-`.github/workflows/ci.yml` runs on pull requests to `main` and pushes to `main`. Pull requests run `npm ci`, `npm run typecheck`, `npm test`, and `npx wrangler deploy --dry-run`. A successful push to `main` applies remote D1 migrations, deploys the Worker, and checks the deployed `/health` endpoint.
+`.github/workflows/ci.yml` runs on pull requests to `main` and pushes to `main`. Pull requests run `npm ci`, `npm run typecheck`, `npm test`, and `npx wrangler deploy --dry-run`. A push to `main` deploys the Worker and checks the deployed `/health` endpoint when both production secrets are configured. The health check exercises D1 through the Worker binding; deployment does not require direct D1 API access.
 
 Create a GitHub environment named `production` and add these environment secrets:
 
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_API_TOKEN`
 
-Use an account-scoped Cloudflare token. After the initial Worker exists, scope it to Workers Editor for `soyuz` and D1 Edit for `soyuz-runs`; the latter is needed for the workflow's remote migration step. Keep `CLIENT_API_TOKEN` and `WORKER_API_TOKEN` as Cloudflare Worker secrets, not GitHub repository files. The first deployment creates the Worker and therefore must be done separately with an account administrator.
+Create `CLOUDFLARE_API_TOKEN` with Workers Editor restricted to the existing `soyuz` Worker. Set a one-year expiry and rotate the token in Cloudflare and GitHub before it expires. Do not grant D1 permissions: the deployed Worker uses its existing D1 binding at runtime, while migrations remain manual. Restrict the `production` environment to deployments from `main`; production deployments do not require an approval gate. Keep `CLIENT_API_TOKEN` and `WORKER_API_TOKEN` as Cloudflare Worker secrets, not GitHub repository files. The first deployment creates the Worker and therefore must be done separately with an account administrator. If the `wrangler deploy` step fails with the Worker-only token, record the exact failing command and Cloudflare error and request only the missing Worker permission; do not add D1 Edit.
+
+For an authorized production migration, run `npm run db:migrate:remote` manually. This invokes `wrangler d1 migrations apply soyuz-runs --remote` and requires D1 Edit. The Cloudflare account token interface currently applies D1 Edit account-wide, so use an administrator-approved manual session or another approved migration path; never add this permission to the CI token.
 
 ## One-time live acceptance check
 
