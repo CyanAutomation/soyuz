@@ -48,14 +48,14 @@ Create a separate API token for the Kaseki host with Queue read and write permis
 
 ## GitHub Actions deployment
 
-`.github/workflows/ci.yml` runs on pull requests to `main` and pushes to `main`. Pull requests run `npm ci`, `npm run typecheck`, `npm test`, and `npx wrangler deploy --dry-run`. A successful push to `main` applies remote D1 migrations, deploys the Worker, and checks the deployed `/health` endpoint.
+`.github/workflows/ci.yml` runs on pull requests to `main` and pushes to `main`. Pull requests run `npm ci`, `npm run typecheck`, `npm test`, and `npx wrangler deploy --dry-run`. A push to `main` applies remote D1 migrations, deploys the Worker, and checks the deployed `/health` endpoint when both production secrets are configured.
 
 Create a GitHub environment named `production` and add these environment secrets:
 
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_API_TOKEN`
 
-Use an account-scoped Cloudflare token. After the initial Worker exists, scope it to Workers Editor for `soyuz` and D1 Edit for `soyuz-runs`; the latter is needed for the workflow's remote migration step. Keep `CLIENT_API_TOKEN` and `WORKER_API_TOKEN` as Cloudflare Worker secrets, not GitHub repository files. The first deployment creates the Worker and therefore must be done separately with an account administrator.
+Use an account-scoped Cloudflare token. The current Cloudflare account token interface can restrict Workers Editor to `soyuz`, but D1 Edit is account-wide and cannot be restricted to `soyuz-runs`; remote migrations require D1 Edit. Create `CLOUDFLARE_API_TOKEN` only if that account-wide D1 access is acceptable. Otherwise leave it unset: pull request checks still run, but pushes to `main` fail the production credential check and do not deploy until an approved credential path is configured. Keep `CLIENT_API_TOKEN` and `WORKER_API_TOKEN` as Cloudflare Worker secrets, not GitHub repository files. The first deployment creates the Worker and therefore must be done separately with an account administrator.
 
 ## One-time live acceptance check
 
