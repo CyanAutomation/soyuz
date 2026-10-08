@@ -71,9 +71,6 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID"
           test -n "$CLOUDFLARE_API_TOKEN"
 
-      - name: Apply remote D1 migrations
-        run: npm run db:migrate:remote
-
       - name: Deploy Worker
         id: deploy
         uses: cloudflare/wrangler-action@v4
