@@ -48,6 +48,8 @@ npx wrangler queues consumer http add soyuz-runs
 
 Create a separate API token for the Kaseki host with Queue read and write permissions. The host needs write permission because it must acknowledge or retry leases. Store that token in the host's secret manager; it is not a Soyuz Worker secret.
 
+Create a separate dead-letter Queue, for example `soyuz-runs-dlq`, and configure the HTTP pull consumer with a finite `max_retries` value (for example, 5) and that DLQ. Verify the consumer settings in Cloudflare before enabling unattended Kaseki polling. Without a DLQ, messages that reach the retry limit are deleted. The host guide explains poison-message review and replay.
+
 ## GitHub Actions deployment
 
 `.github/workflows/ci.yml` runs on pull requests to `main` and pushes to `main`. Pull requests run `npm ci`, `npm run typecheck`, `npm test`, and `npx wrangler deploy --dry-run`. A push to `main` deploys the Worker and checks the deployed `/health` endpoint when both production secrets are configured. The health check exercises D1 through the Worker binding; deployment does not require direct D1 API access.
@@ -103,6 +105,8 @@ curl --fail-with-body --silent --show-error \
 ## Worker configuration
 
 `wrangler.jsonc` declares the Worker entry point, compatibility date, D1 binding and database ID, Queue producer binding, required secret names, observability, and the one-minute admission reconciliation cron. Queue pull mode remains an external consumer configuration. The D1 ID is a resource identifier; account IDs and production credentials are not committed here.
+
+The Kaseki integration adds migration `0002_run_liveness.sql`. Before deploying code that reads the new heartbeat and operational-health columns, apply all pending migrations with the separately authorized `npm run db:migrate:remote` procedure above. This task has not applied production migrations or deployed the Worker.
 
 Generate runtime and binding types after changing Wrangler bindings:
 

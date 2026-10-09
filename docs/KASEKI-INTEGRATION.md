@@ -1,39 +1,37 @@
-# Kaseki integration follow-up
+# Kaseki integration
 
-This follow-up is required before Soyuz can dispatch real runs. The current repository implements only the Soyuz side; no `kaseki-agent` files were changed here.
+Milestones 2–4 implement the opt-in Kaseki host adapter in [`kaseki-agent`](https://github.com/CyanAutomation/kaseki-agent/tree/main/src/integrations/soyuz). Kaseki owns execution, safety admission, Docker, repository access, validation, artifacts, and publication. Soyuz remains the control plane and canonical run history.
 
-## Required host configuration
+See the Kaseki [host setup and operations guide](https://github.com/CyanAutomation/kaseki-agent/blob/main/docs/SOYUZ_INTEGRATION.md) for environment variables, secret files, failure recovery, metrics, and the controlled smoke-test procedure. This repository documents the cross-service behavior and the additional Soyuz liveness change.
 
-1. Configure the Soyuz base URL and a dedicated `WORKER_API_TOKEN` on each Kaseki host using the host's secret manager. Keep Cloudflare Queue credentials separate from the Soyuz callback token.
-2. Configure the Cloudflare account ID, Queue ID, queue API token, pull endpoint, and execution capacity on the Kaseki host. Create a scoped Cloudflare API token with Queue read and write permissions; the pull API also needs write access to acknowledge or retry messages.
-3. Enable HTTP pull on the Queue with `npx wrangler queues consumer http add soyuz-runs` or the Cloudflare dashboard. Current Cloudflare guidance says HTTP pull is not configured with a `type = "http_pull"` Wrangler binding. Use one Queue consumer mode at a time.
-4. Pull only when the Kaseki host can durably accept the number of messages requested. Use the Queue API's `visibility_timeout_ms` and batch size to match its execution/handoff time. When capacity is unavailable, use the Queue acknowledgement endpoint's `retries` list with a delay; do not acknowledge and discard.
+## Handoff and authorization
 
-The Cloudflare HTTP pull endpoints are `POST /client/v4/accounts/{account_id}/queues/{queue_id}/messages/pull` and `POST /client/v4/accounts/{account_id}/queues/{queue_id}/messages/ack`. Pull responses include `lease_id`; ack requests list acknowledged lease IDs in `acks` and delayed messages in `retries`.
+The Kaseki API service starts the adapter only when `SOYUZ_ENABLED=true`; standalone Kaseki API and CLI runs remain the default. The adapter validates contract version 1, checks canonical run state, preserves Kaseki readiness, template/publish, credential, and task safety gates, then claims the Soyuz run. It writes the run ID mapping and queued job through Kaseki's existing `JobPersistenceManager`, posts `/started`, durably records the authorization, and only then opens the scheduler gate for Docker.
 
-## Consumer flow
+The Queue message is acknowledged after local durable acceptance and successful start authorization, not after coding finishes. If the ack response is lost, redelivery resolves by Soyuz `runId` and reuses the same local job. Delivery is at least once; no exactly-once execution guarantee is made. The full failure-boundary table and operator recovery policy are maintained in the Kaseki guide.
 
-1. Pull only within available execution capacity. Decode the Queue message and validate `contractVersion === "1"`, `runId`, timestamps, and the run request against a Kaseki-owned adapter schema. Reject unsupported versions safely and send an operational alert; do not run an unknown payload.
-2. Before scheduling, call `GET /v1/worker/runs/:id` with the worker token. If Soyuz reports `admitting`, retry the lease after a delay without acknowledging. If the run is cancelled or another terminal state, acknowledge and skip it. If it is already `claimed` by another worker, retry after a delay. If it is `queued`, the run is eligible for a claim.
-3. Preserve Kaseki's existing safety gate, publish-mode credential checks, template/readiness validation, and execution-specific admission policy before starting the job. Soyuz intentionally performs only structural control-plane validation.
-4. POST `/v1/worker/runs/:id/claim` with a stable callback ID, worker ID, and a 30–300 second lease (default 120). This D1 compare-and-set moves `queued → claimed`; only the winning host may persist and schedule the run. If the claim fails, do not execute. Retry or acknowledge only after reading canonical state and following the duplicate rules below.
-5. Add a durable `externalRunId`/Soyuz run ID mapping to Kaseki's persisted job record and make local scheduler submission idempotent by that ID. Kaseki currently generates `kaseki-N` IDs and the scheduler's existing HTTP idempotency store is outside the Queue consumer path; calling `submitJob()` a second time for the same Queue delivery would create a second run.
-6. Use the existing `JobPersistenceManager.persistQueuedJob()` boundary as the model for a durable handoff: write the job plus its Soyuz ID mapping and local restart ownership claim before acknowledging the Queue lease. The existing scheduler persists queued jobs before processing its local FIFO queue and recovers claimed queued jobs on restart. Configure a persistent results/index volume on the execution host. If that durable write fails, leave the lease unacknowledged and retry it.
-7. Acknowledge only after that durable Kaseki acceptance succeeds. This is the chosen handoff point: Kaseki has taken durable responsibility for the claimed run. If the HTTP ack call fails after local persistence, a redelivery finds the Soyuz ID mapping, does not enqueue a second job, and safely retries the ack. Do not wait until task completion to acknowledge; use Kaseki's durable scheduler/recovery path after handoff.
-8. Do not let Kaseki execute the job until it has POSTed `/started` and received success. That callback atomically changes `claimed → running`; its worker ID must match the claim owner. The current `submitJob()` begins processing after persistence, so add a scheduler start hook/gate that can report start before launching Docker. If the lease expires or Soyuz rejects `started`, remove the local pending attempt without running it.
-9. Convert only operational events from Kaseki progress tracking to Soyuz events, with stable UUID `eventId`s. Keep raw progress logs, stdout/stderr, analysis, and artifacts in Kaseki's existing result directory; do not copy arbitrary log lines into D1.
-10. While a job is running, periodically call worker-authenticated `GET /v1/worker/runs/:id`. When `status` becomes `cancel_requested`, call the existing Kaseki scheduler cancellation path, allow its process-exit cleanup to finish, then POST `/cancelled` with a stable callback ID. If work completes or fails before cancellation takes effect, POST the corresponding terminal result instead.
-11. On terminal Kaseki state, POST `/completed` for success, `/failed` for execution or quality-gate failure, and `/cancelled` when Kaseki's `failureClass` is `cancelled`. Include compact summary metadata only. Retry network failures with the same callback ID and payload; Soyuz treats callback delivery as at-least-once.
-12. Maintain a durable callback retry/outbox or replay terminal callbacks during Kaseki recovery. Kaseki's current persistence recovery marks previously running jobs `failed` with `failureClass: api_restart`; the adapter must report that terminal outcome to Soyuz after restart so Soyuz does not remain `running` forever.
+Claim lease IDs are used only to acknowledge/retry Queue messages. Soyuz run IDs are the durable deduplication key. Host IDs must be stable and unique per execution host. A second host cannot execute a run owned by another host. A stale heartbeat does not release ownership or permit a takeover.
 
-## Duplicate and race handling
+## Callback and cancellation behavior
 
-- If the same `runId` is already durably queued or running on this host, do not schedule another Kaseki job. If another host owns a live `claimed` run, retry the lease until that claim starts or expires. If a different host owns a `running` run, acknowledge the duplicate delivery and do not start another copy.
-- Two hosts can both read `queued`, but only one `POST /claim` can win the D1 compare-and-set. If a host's claim or started callback receives 409, it must not execute; stop or discard its local pending attempt and follow the existing recovery path.
-- A cancellation can race with a Queue pull. If the worker sees `cancelled`, acknowledge and skip. If a host has already started, it sees `cancel_requested` by polling and stops through the scheduler.
-- Queue delivery is at least once. Do not treat Queue lease IDs as run identity; they change across deliveries. Use Soyuz `runId` for durable deduplication and lease IDs only for Queue ack/retry operations.
-- If the host cannot persist job ownership, cannot reach Soyuz to check canonical state, or does not understand the contract version, it must retry rather than acknowledge the message.
+Kaseki sends bounded stage-change and heartbeat events; it does not upload prompts, logs, source, or artifacts. Started, event, and terminal callback IDs are stable across retries. Terminal callbacks are written atomically with the local terminal job into a durable outbox, retried with bounded exponential backoff and jitter, and compacted after delivery. The outbox pauses Queue intake at its configured hard cap to bound local storage growth.
 
-## Migration sequence
+Kaseki polls canonical status while an execution is active. It applies `cancel_requested` through its existing cancellation path and sends `/cancelled` after local cleanup finalizes. If completion wins the race, the completion callback is retained.
 
-Keep direct `client → Kaseki API` use available while wiring the host consumer. Then move selected callers to `client → Soyuz → Queue → Kaseki`. Kaseki's direct API can remain as a local/admin interface; the two repositories stay independently deployed and communicate only through this versioned contract.
+## Heartbeat and suspected stalled runs
+
+Contract version 1 exposes `lastHeartbeatAt` and `operationalHealth` on worker and client run reads. Heartbeats refresh a dedicated D1 timestamp and mark health `healthy`; they do not change lifecycle state. A five-minute cron threshold marks an active run `suspect_stalled` and emits one bounded `run.suspected_stalled` event/log for the stale heartbeat. Recovery by a later heartbeat restores `healthy`.
+
+`operationalHealth` is separate from lifecycle status. A suspect run remains `running` or `cancel_requested`; Soyuz never automatically requeues it. This protects against duplicate execution when a Kaseki controller or network is unavailable but its Docker process is still running. The Kaseki API restart path reports `api_restart` through its outbox once the persistent host is back. A permanently lost host with lost local state requires an operator to verify execution has stopped and follow a separately approved recovery procedure; contract v1 does not provide automatic takeover or fencing.
+
+## Queue retry and dead-letter policy
+
+Configure the Cloudflare HTTP pull consumer with a finite retry limit and a dead-letter queue. Kaseki retries malformed or unsupported messages and never executes them. Cloudflare deletes messages at the retry limit when no DLQ is configured, so a DLQ is required for safe poison-message review. Do not replay a DLQ message until the contract/configuration cause is corrected.
+
+Current Queue HTTP pull request fields use `visibility_timeout_ms` and `batch_size`; the lease timeout is bounded to 12 hours and the batch size to 100. Queue authentication requires a separate bearer token with Queue read and write permissions. The implementation follows current [Cloudflare pull consumer](https://developers.cloudflare.com/queues/configuration/pull-consumers/) and [dead-letter queue](https://developers.cloudflare.com/queues/configuration/dead-letter-queues/) behavior.
+
+## Database migration and rollout
+
+This change adds migration `0002_run_liveness.sql`, which adds nullable heartbeat time and a separate health classification to existing run rows. It keeps contract version 1 and does not add a new canonical lifecycle state. Apply the remote migration through the existing separately authorized production migration procedure before deploying code that reads the new columns. The change has not been deployed here.
+
+Roll out the Kaseki adapter against a non-production Queue first. Verify a `publishMode: none` completion and failure, a cancellation, duplicate delivery, callback retry, and restart reconciliation before enabling routine intake. See [deployment and local smoke-test guidance](DEPLOYMENT.md).

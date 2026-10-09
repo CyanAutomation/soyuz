@@ -39,6 +39,7 @@ stateDiagram-v2
     queued --> claimed: worker compare-and-set claim
     queued --> cancelled: client cancels before execution
     claimed --> running: worker started callback
+    claimed --> failed: worker reports pre-start admission failure
     claimed --> admitting: claim lease expires
     claimed --> cancelled: client cancels before start
     running --> cancel_requested: client requests cancellation
@@ -58,7 +59,7 @@ Transitions are checked in one domain state machine and written with a status co
 
 ## D1 model
 
-`runs` holds searchable lifecycle and request metadata: repository/ref, modes, timestamps, current stage/status, worker and claim-lease identity, outcome, cancellation time, request/correlation IDs, idempotency key and request fingerprint. The validated execution request and small result summary are JSON columns. Indexes support newest-first history, status filtering, correlation lookup, and unique idempotency keys.
+`runs` holds searchable lifecycle and request metadata: repository/ref, modes, timestamps, current stage/status, worker and claim-lease identity, outcome, cancellation time, request/correlation IDs, idempotency key and request fingerprint. The validated execution request and small result summary are JSON columns. `last_heartbeat_at` and `operational_health` track execution liveness separately from lifecycle status. Indexes support newest-first history, status filtering, correlation lookup, and unique idempotency keys.
 
 `run_events` is append-only operational history. It records status changes and compact worker events with a per-database increasing sequence, a per-run idempotency ID, timestamps, stage/step, and bounded JSON payload. It does not store raw terminal logs or arbitrary artifacts; Kaseki retains those, with R2 a future option.
 
