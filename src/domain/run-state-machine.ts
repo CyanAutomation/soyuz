@@ -15,7 +15,7 @@ export type RunStatus = typeof RUN_STATUSES[number];
 const TRANSITIONS: Record<RunStatus, readonly RunStatus[]> = {
   admitting: ["queued", "admission_failed", "cancelled"],
   queued: ["claimed", "cancelled"],
-  claimed: ["running", "admitting", "cancelled"],
+  claimed: ["running", "admitting", "cancelled", "failed"],
   running: ["cancel_requested", "completed", "failed", "cancelled"],
   cancel_requested: ["completed", "failed", "cancelled"],
   cancelled: [],

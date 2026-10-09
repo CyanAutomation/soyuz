@@ -44,6 +44,8 @@ export async function handleWorkerCallbacks(request: Request, env: Env, url: URL
         cancelRequestedAt: row.cancel_requested_at,
         workerId: row.worker_id,
         updatedAt: row.updated_at,
+        lastHeartbeatAt: row.last_heartbeat_at,
+        operationalHealth: row.operational_health,
       });
     } catch {
       return errorResponse(requestId, 503, "RUN_READ_UNAVAILABLE", "Soyuz cannot reach its run database to read canonical run state. Retry shortly.");
@@ -238,7 +240,7 @@ async function failed(request: Request, env: Env, runId: string, requestId: stri
     const body = await parseJsonBody(request, requestId);
     const payload = WorkerFailedSchema.safeParse(body);
     if (!payload.success) throw new ApiError(422, "INVALID_WORKER_CALLBACK", "Failed callback failed validation", validationDetails(payload.error.issues));
-    const row = await requireActiveWorker(env, runId, payload.data.workerId);
+    const row = await requireWorkerOwnership(env, runId, payload.data.workerId);
     const eventPayload = {
       failureClass: payload.data.failureClass,
       failureMessage: payload.data.failureMessage,
@@ -247,6 +249,7 @@ async function failed(request: Request, env: Env, runId: string, requestId: stri
     await ensureCallbackIdAvailable(env, runId, payload.data.callbackId, "run.failed", payload.data.workerId, eventPayload);
     if (row.status === "failed") return successResponse(requestId, publicRun(row));
     const now = new Date().toISOString();
+    if (row.status === "claimed") assertClaimIsLive(row);
     const updated = await transitionRun(env.DB, runId, "failed", {
       completed_at: payload.data.completedAt ?? now,
       exit_code: payload.data.exitCode ?? null,
@@ -259,7 +262,7 @@ async function failed(request: Request, env: Env, runId: string, requestId: stri
       occurredAt: payload.data.completedAt ?? now,
       recordedAt: now,
       payload: eventPayload,
-    });
+    }, row.status === "claimed" ? { claimOwner: payload.data.workerId, claimNotExpiredAt: now } : undefined);
     return successResponse(requestId, publicRun(updated));
   } catch (error) {
     return callbackError(error, requestId);
@@ -271,7 +274,7 @@ async function cancelled(request: Request, env: Env, runId: string, requestId: s
     const body = await parseJsonBody(request, requestId);
     const payload = WorkerCancelledSchema.safeParse(body);
     if (!payload.success) throw new ApiError(422, "INVALID_WORKER_CALLBACK", "Cancelled callback failed validation", validationDetails(payload.error.issues));
-    const row = await requireActiveWorker(env, runId, payload.data.workerId);
+    const row = await requireWorkerOwnership(env, runId, payload.data.workerId);
     const eventPayload = {
       ...(payload.data.reason ? { reason: payload.data.reason } : {}),
       ...(payload.data.exitCode !== undefined ? { exitCode: payload.data.exitCode } : {}),
@@ -279,6 +282,7 @@ async function cancelled(request: Request, env: Env, runId: string, requestId: s
     await ensureCallbackIdAvailable(env, runId, payload.data.callbackId, "run.cancelled", payload.data.workerId, eventPayload);
     if (row.status === "cancelled") return successResponse(requestId, publicRun(row));
     const now = new Date().toISOString();
+    if (row.status === "claimed") assertClaimIsLive(row);
     const updated = await transitionRun(env.DB, runId, "cancelled", {
       completed_at: payload.data.completedAt ?? now,
       exit_code: payload.data.exitCode ?? null,
@@ -291,7 +295,7 @@ async function cancelled(request: Request, env: Env, runId: string, requestId: s
       occurredAt: payload.data.completedAt ?? now,
       recordedAt: now,
       payload: eventPayload,
-    });
+    }, row.status === "claimed" ? { claimOwner: payload.data.workerId, claimNotExpiredAt: now } : undefined);
     return successResponse(requestId, publicRun(updated));
   } catch (error) {
     return callbackError(error, requestId);
@@ -307,6 +311,23 @@ async function requireActiveWorker(env: Env, runId: string, workerId: string): P
     throw new ApiError(409, "INVALID_STATE_TRANSITION", `Run in ${row.status} state cannot accept a terminal callback`);
   }
   return row;
+}
+
+async function requireWorkerOwnership(env: Env, runId: string, workerId: string): Promise<RunRow> {
+  const row = await getRun(env.DB, runId);
+  if (!row) throw new ApiError(404, "RUN_NOT_FOUND", "Run was not found");
+  if (row.worker_id !== workerId) throw new ApiError(409, "WORKER_MISMATCH", "Worker does not own this run");
+  if (row.status === "completed" || row.status === "failed" || row.status === "cancelled") return row;
+  if (row.status !== "claimed" && row.status !== "running" && row.status !== "cancel_requested") {
+    throw new ApiError(409, "INVALID_STATE_TRANSITION", `Run in ${row.status} state cannot accept a cancellation callback`);
+  }
+  return row;
+}
+
+function assertClaimIsLive(row: RunRow): void {
+  if (!row.claim_expires_at || Date.parse(row.claim_expires_at) <= Date.now()) {
+    throw new ApiError(409, "CLAIM_EXPIRED", "Worker claim expired before the terminal callback was recorded");
+  }
 }
 
 async function ensureCallbackIdAvailable(

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handleRequest } from "../src/index";
 import type { Env } from "../src/env";
 import { insertRun, getRun, RunTransitionError, transitionRun } from "../src/db/runs";
-import { reconcileAdmissions } from "../src/queue/reconcile";
+import { reconcileAdmissions, reconcileStalledRuns } from "../src/queue/reconcile";
 
 const CLIENT_TOKEN = "client-test-token-value-long-enough";
 const WORKER_TOKEN = "worker-test-token-value-long-enough";
@@ -636,5 +636,73 @@ describe("Soyuz Worker API", () => {
       "SELECT COUNT(*) AS count FROM run_events WHERE run_id = ? AND type IN ('run.completed', 'run.failed')",
     ).bind(id).first<{ count: number }>();
     expect(terminalEvents?.count).toBe(1);
+  });
+
+  it("marks stale running liveness as suspect without changing run state or requeueing", async () => {
+    const { bindings, sent } = testEnv();
+    const submitted = await submit(bindings, {}, "00000000-0000-4000-8000-000000000060");
+    const runId = submitted.body.data.id as string;
+    await claimRun(bindings, runId, "docker-host-liveness");
+    const startedAt = new Date().toISOString();
+    const started = await call(bindings, `/v1/worker/runs/${runId}/started`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        callbackId: "00000000-0000-4000-8000-000000000061",
+        workerId: "docker-host-liveness",
+        startedAt,
+      },
+    });
+    expect(started.response.status).toBe(200);
+
+    await reconcileStalledRuns(bindings, new Date(Date.now() + 6 * 60_000));
+    const suspect = await getRun(bindings.DB, runId);
+    expect(suspect?.status).toBe("running");
+    expect(suspect?.operational_health).toBe("suspect_stalled");
+    expect(sent).toHaveLength(1);
+    const stalledEvent = await bindings.DB.prepare(
+      "SELECT type FROM run_events WHERE run_id = ? AND type = 'run.suspected_stalled'",
+    ).bind(runId).first<{ type: string }>();
+    expect(stalledEvent?.type).toBe("run.suspected_stalled");
+
+    const heartbeat = await call(bindings, `/v1/worker/runs/${runId}/events`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        eventId: "00000000-0000-4000-8000-000000000062",
+        workerId: "docker-host-liveness",
+        type: "worker.heartbeat",
+        timestamp: new Date().toISOString(),
+        payload: { hostHealthy: true, executionActive: true },
+      },
+    });
+    expect(heartbeat.response.status).toBe(202);
+    const recovered = await getRun(bindings.DB, runId);
+    expect(recovered?.status).toBe("running");
+    expect(recovered?.operational_health).toBe("healthy");
+    expect(recovered?.last_heartbeat_at).toBeTruthy();
+  });
+
+  it("accepts worker terminal outcomes from a live claimed state without starting execution", async () => {
+    const { bindings } = testEnv();
+    const submitted = await submit(bindings, {}, "00000000-0000-4000-8000-000000000063");
+    const runId = submitted.body.data.id as string;
+    await claimRun(bindings, runId, "docker-host-admission");
+
+    const failed = await call(bindings, `/v1/worker/runs/${runId}/failed`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        callbackId: "00000000-0000-4000-8000-000000000064",
+        workerId: "docker-host-admission",
+        failureClass: "kaseki_admission_rejected",
+        failureMessage: "Local admission rejected the run.",
+      },
+    });
+    expect(failed.response.status).toBe(200);
+    expect((await getRun(bindings.DB, runId))?.status).toBe("failed");
   });
 });
