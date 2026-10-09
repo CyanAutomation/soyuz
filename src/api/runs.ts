@@ -127,6 +127,8 @@ export function publicRun(row: RunRow): Record<string, unknown> {
     updatedAt: row.updated_at,
     workerId: row.worker_id,
     claimExpiresAt: row.claim_expires_at,
+    lastHeartbeatAt: row.last_heartbeat_at,
+    operationalHealth: row.operational_health,
     exitCode: row.exit_code,
     failureClass: row.failure_class,
     failureMessage: row.failure_message,
@@ -152,6 +154,7 @@ function publicRunSummary(row: RunRow): Record<string, unknown> {
     startedAt: row.started_at,
     completedAt: row.completed_at,
     updatedAt: row.updated_at,
+    operationalHealth: row.operational_health,
     exitCode: row.exit_code,
     failureClass: row.failure_class,
   };

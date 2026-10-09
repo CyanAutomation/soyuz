@@ -32,6 +32,8 @@ export interface RunRow {
   request_id: string;
   admission_attempts: number;
   admission_last_attempt_at: string | null;
+  last_heartbeat_at: string | null;
+  operational_health: "unknown" | "healthy" | "suspect_stalled";
 }
 
 export interface RunEventRow {
@@ -73,6 +75,8 @@ export type RunPatch = Partial<Pick<RunRow,
   | "result_json"
   | "admission_attempts"
   | "admission_last_attempt_at"
+  | "last_heartbeat_at"
+  | "operational_health"
 >>;
 
 const RUN_PATCH_COLUMNS: ReadonlySet<keyof RunPatch> = new Set([
@@ -89,6 +93,8 @@ const RUN_PATCH_COLUMNS: ReadonlySet<keyof RunPatch> = new Set([
   "result_json",
   "admission_attempts",
   "admission_last_attempt_at",
+  "last_heartbeat_at",
+  "operational_health",
 ]);
 
 export class RunNotFoundError extends Error {}
@@ -234,6 +240,8 @@ export async function updateStartedRun(
         started_at: current.started_at ?? startedAt,
         stage: stage ?? current.stage,
         claim_expires_at: null,
+        last_heartbeat_at: event.recordedAt,
+        operational_health: "healthy",
       }, event, { claimOwner: workerId, claimNotExpiredAt: event.recordedAt });
     } catch (error) {
       if (error instanceof RunTransitionError && error.current === "claimed") {
@@ -333,7 +341,65 @@ export async function recordWorkerEvent(db: D1Database, runId: string, input: Ru
   if (Number(inserted.meta.changes ?? 0) > 0 || input.type === "stage.changed") {
     await updateLatestStage(db, runId, input);
   }
+  if (input.type === "worker.heartbeat") {
+    await db.prepare(`
+      UPDATE runs SET last_heartbeat_at = ?, operational_health = 'healthy', updated_at = ?
+      WHERE id = ? AND worker_id = ? AND status IN ('running', 'cancel_requested')
+        AND (last_heartbeat_at IS NULL OR julianday(last_heartbeat_at) <= julianday(?))
+    `).bind(input.recordedAt, input.recordedAt, runId, input.workerId ?? "", input.recordedAt).run();
+  }
   return saved;
+}
+
+export async function listStaleRunningRuns(
+  db: D1Database,
+  olderThan: string,
+  limit: number,
+): Promise<RunRow[]> {
+  const rows = await db.prepare(`
+    SELECT * FROM runs
+    WHERE status IN ('running', 'cancel_requested')
+      AND operational_health != 'suspect_stalled'
+      AND COALESCE(last_heartbeat_at, started_at) <= ?
+    ORDER BY COALESCE(last_heartbeat_at, started_at) ASC
+    LIMIT ?
+  `).bind(olderThan, limit).all<RunRow>();
+  return rows.results;
+}
+
+/** Mark stale liveness as a health classification without changing lifecycle status or requeueing. */
+export async function markRunSuspectedStalled(
+  db: D1Database,
+  row: RunRow,
+  observedAt: string,
+): Promise<boolean> {
+  const heartbeatAt = row.last_heartbeat_at ?? row.started_at;
+  if (!heartbeatAt) return false;
+  const eventId = `system:stalled:${heartbeatAt}`;
+  const payload = stableStringify({
+    lastHeartbeatAt: row.last_heartbeat_at,
+    startedAt: row.started_at,
+    observedAt,
+    automaticRetry: false,
+  });
+  const results = await db.batch([
+    db.prepare(`
+      UPDATE runs SET operational_health = 'suspect_stalled', updated_at = ?
+      WHERE id = ? AND status IN ('running', 'cancel_requested')
+        AND operational_health != 'suspect_stalled'
+        AND COALESCE(last_heartbeat_at, started_at) = ?
+    `).bind(observedAt, row.id, heartbeatAt),
+    db.prepare(`
+      INSERT INTO run_events (
+        run_id, contract_version, event_id, type, worker_id, stage, step,
+        occurred_at, recorded_at, payload_json
+      )
+      SELECT id, ?, ?, 'run.suspected_stalled', worker_id, stage, NULL, ?, ?, ?
+      FROM runs WHERE id = ? AND operational_health = 'suspect_stalled'
+      ON CONFLICT(run_id, event_id) DO NOTHING
+    `).bind(CONTRACT_VERSION, eventId, heartbeatAt, observedAt, payload, row.id),
+  ]);
+  return Number(results[0]?.meta?.changes ?? 0) === 1;
 }
 
 function assertSameEvent(saved: RunEventRow, input: RunEventInput): void {
