@@ -5,7 +5,7 @@ import { errorResponse, jsonResponse, requestIdFor } from "./api/http";
 import { handleWorkerCallbacks } from "./api/workers";
 import type { Env } from "./env";
 import { createSoyuzMcpHandler } from "./mcp/server";
-import { reconcileAdmissions } from "./queue/reconcile";
+import { reconcileAdmissions, reconcileStalledRuns } from "./queue/reconcile";
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
   const requestId = requestIdFor(request);
@@ -67,6 +67,6 @@ export default {
     return handleRequest(request, env);
   },
   scheduled(_controller: ScheduledController, env: Env, context: ExecutionContext): void {
-    context.waitUntil(reconcileAdmissions(env));
+    context.waitUntil(Promise.all([reconcileAdmissions(env), reconcileStalledRuns(env)]).then(() => undefined));
   },
 };

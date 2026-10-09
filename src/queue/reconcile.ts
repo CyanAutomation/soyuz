@@ -1,11 +1,12 @@
 import { CONTRACT_VERSION, type QueuedRun } from "../contracts/queue-message";
-import { listExpiredClaims, listStaleAdmissions, parseRequest, reserveAdmissionRetry, transitionRun } from "../db/runs";
+import { listExpiredClaims, listStaleAdmissions, listStaleRunningRuns, markRunSuspectedStalled, parseRequest, reserveAdmissionRetry, transitionRun } from "../db/runs";
 import type { Env } from "../env";
 
 const RETRY_AFTER_MS = 60_000;
 const MAX_ADMISSION_ATTEMPTS = 5;
 const RECONCILE_BATCH_SIZE = 50;
 const MAX_QUEUE_MESSAGE_BYTES = 96 * 1024;
+const STALE_RUNNING_HEARTBEAT_MS = 5 * 60_000;
 
 export async function reconcileAdmissions(env: Env, at = new Date()): Promise<void> {
   const now = at.toISOString();
@@ -85,6 +86,27 @@ export async function reconcileAdmissions(env: Env, at = new Date()): Promise<vo
     } catch {
       // A successful send followed by a D1 failure is retried with the same run ID.
       // The Kaseki consumer must check canonical state and deduplicate before starting.
+    }
+  }
+}
+
+/** Flag missing run liveness for operators without changing lifecycle state or launching a duplicate. */
+export async function reconcileStalledRuns(env: Env, at = new Date()): Promise<void> {
+  const cutoff = new Date(at.getTime() - STALE_RUNNING_HEARTBEAT_MS).toISOString();
+  const stale = await listStaleRunningRuns(env.DB, cutoff, RECONCILE_BATCH_SIZE);
+  for (const row of stale) {
+    try {
+      if (await markRunSuspectedStalled(env.DB, row, at.toISOString())) {
+        console.warn(JSON.stringify({
+          event: "soyuz_run_suspected_stalled",
+          runId: row.id,
+          workerId: row.worker_id,
+          lastHeartbeatAt: row.last_heartbeat_at,
+          action: "operator_review_required_no_automatic_retry",
+        }));
+      }
+    } catch {
+      // A heartbeat, terminal callback, or D1 failure may have won the race. Reconcile on the next cron tick.
     }
   }
 }
