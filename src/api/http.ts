@@ -1,4 +1,6 @@
-export const MAX_JSON_BODY_BYTES = 96 * 1024;
+import { isUuid } from "../lib/uuid";
+
+const MAX_JSON_BODY_BYTES = 96 * 1024;
 
 export interface ApiErrorOptions {
   details?: unknown;
@@ -65,7 +67,7 @@ export function validationDetails(issues: Array<{ path: PropertyKey[]; message: 
 
 export function requestIdFor(request: Request): string {
   const supplied = request.headers.get("x-request-id");
-  return supplied && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(supplied)
+  return supplied && isUuid(supplied)
     ? supplied
     : crypto.randomUUID();
 }
