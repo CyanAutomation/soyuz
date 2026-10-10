@@ -129,7 +129,3 @@ export const McpCreateRunInputSchema = z.object({
 }).strict();
 
 export type RunRequest = z.infer<typeof RunRequestSchema>;
-
-export function normalizeRunRequest(input: unknown): RunRequest {
-  return RunRequestSchema.parse(input);
-}

@@ -7,14 +7,14 @@ import {
   RunApplicationError,
 } from "../application/runs";
 import {
-  parseEventPayload,
   parseRequest,
   parseResult,
-  type RunEventRow,
   type RunRow,
 } from "../db/runs";
 import type { Env } from "../env";
+import { isUuid } from "../lib/uuid";
 import { ApiError, errorResponse, parseJsonBody, successResponse } from "./http";
+import { publicEvent } from "./public-event";
 
 export async function handleClientRuns(request: Request, env: Env, url: URL, requestId: string): Promise<Response | null> {
   const segments = url.pathname.split("/").filter(Boolean);
@@ -27,7 +27,7 @@ export async function handleClientRuns(request: Request, env: Env, url: URL, req
   if (segments.length < 3 || segments[0] !== "v1" || segments[1] !== "runs" || !segments[2]) return null;
 
   const runId = segments[2];
-  if (!isRunId(runId)) return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
+  if (!isUuid(runId)) return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
 
   if (segments.length === 3 && request.method === "GET") {
     return getRunRoute(runId, env, requestId);
@@ -158,24 +158,4 @@ function publicRunSummary(row: RunRow): Record<string, unknown> {
     exitCode: row.exit_code,
     failureClass: row.failure_class,
   };
-}
-
-function publicEvent(row: RunEventRow): Record<string, unknown> {
-  return {
-    contractVersion: row.contract_version,
-    runId: row.run_id,
-    sequence: row.sequence,
-    eventId: row.event_id,
-    type: row.type,
-    workerId: row.worker_id,
-    stage: row.stage,
-    step: row.step,
-    timestamp: row.occurred_at,
-    recordedAt: row.recorded_at,
-    payload: parseEventPayload(row),
-  };
-}
-
-function isRunId(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }

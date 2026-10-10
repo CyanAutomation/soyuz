@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isUuid } from "../src/lib/uuid";
 import { createRunId } from "../src/lib/uuidv7";
 
 describe("UUIDv7 run IDs", () => {
@@ -20,5 +21,21 @@ describe("UUIDv7 run IDs", () => {
     const firstTimestampId = createRunId(0);
     const encodedTimestamp = Number.parseInt(firstTimestampId.replaceAll("-", "").slice(0, 12), 16);
     expect(encodedTimestamp).toBe(0);
+  });
+});
+
+describe("isUuid", () => {
+  it("accepts UUID versions 1 through 8 and rejects malformed variants", () => {
+    const valid = "00000000-0000-4000-8000-000000000000";
+    expect(isUuid(valid)).toBe(true);
+    expect(isUuid("00000000-0000-7000-8000-000000000000")).toBe(true);
+    expect(isUuid("00000000-0000-9000-8000-000000000000")).toBe(false);
+    expect(isUuid("00000000-0000-4000-0000-000000000000")).toBe(false);
+    expect(isUuid(`x${valid}`)).toBe(false);
+    expect(isUuid(`${valid}x`)).toBe(false);
+    expect(isUuid(valid.replace("00000000", "0000000"))).toBe(false);
+    expect(isUuid(valid.replace("-0000-", "-000-"))).toBe(false);
+    expect(isUuid(valid.replace("-000000000000", "-00000000000"))).toBe(false);
+    expect(isUuid("not-a-uuid")).toBe(false);
   });
 });

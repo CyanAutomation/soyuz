@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { sha256Hex, stableStringify } from "../src/lib/json";
+import { stableStringify } from "../src/lib/canonical-json";
+import { sha256Hex } from "../src/lib/sha256";
 
 describe("stableStringify", () => {
   it("[SERIALIZE-CYCLE-01] rejects circular object and array references", () => {
