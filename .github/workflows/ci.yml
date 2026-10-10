@@ -71,6 +71,28 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID"
           test -n "$CLOUDFLARE_API_TOKEN"
 
+      - name: Verify production D1 database identity
+        env:
+          CLOUDFLARE_D1_READ_API_TOKEN: ${{ secrets.CLOUDFLARE_D1_READ_API_TOKEN }}
+        run: |
+          test -n "$CLOUDFLARE_D1_READ_API_TOKEN"
+          database_id="$(node -e 'const fs = require("node:fs"); const config = JSON.parse(fs.readFileSync("wrangler.jsonc", "utf8")); const database = config.d1_databases?.find(({ binding }) => binding === "DB"); if (!database?.database_id) process.exit(1); process.stdout.write(database.database_id);')"
+          response="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_D1_READ_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database/${database_id}")"
+          printf '%s' "$response" | D1_DATABASE_ID="$database_id" node -e '
+            const fs = require("node:fs");
+            const payload = JSON.parse(fs.readFileSync(0, "utf8"));
+            if (
+              payload.success !== true ||
+              payload.result?.uuid !== process.env.D1_DATABASE_ID ||
+              payload.result?.name !== "soyuz-runs"
+            ) {
+              console.error("Cloudflare D1 identity check failed for soyuz-runs.");
+              process.exit(1);
+            }
+          '
+
       - name: Verify production D1 migration compatibility
         env:
           CLOUDFLARE_D1_READ_API_TOKEN: ${{ secrets.CLOUDFLARE_D1_READ_API_TOKEN }}
