@@ -52,22 +52,27 @@ Create a separate dead-letter Queue, for example `soyuz-runs-dlq`, and configure
 
 ## GitHub Actions deployment
 
-`.github/workflows/ci.yml` runs on pull requests to `main` and pushes to `main`. Pull requests run `npm ci`, `npm run typecheck`, `npm test`, and `npx wrangler deploy --dry-run`. A push to `main` deploys the Worker and checks the deployed `/health` endpoint when both production secrets are configured. The health check exercises D1 through the Worker binding; deployment does not require direct D1 API access.
+`.github/workflows/ci.yml` runs on pull requests to `main` and pushes to `main`. Pull requests run `npm ci`, `npm run typecheck`, `npm test`, and `npx wrangler deploy --dry-run`. Before a push to `main` deploys the Worker, the workflow reads D1's `d1_migrations` history and checks it against every numbered SQL file in `migrations/`. A missing, unexpected, or out-of-order migration blocks deployment. The check uses a separate D1 Read token; it does not apply migrations or use the Worker deployment token. The post-deploy `/health` check is still required, but it only proves basic Worker/D1 connectivity and does not replace the schema check.
 
 Create a GitHub environment named `production` and add these environment secrets:
 
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_D1_READ_API_TOKEN`
 
-Create `CLOUDFLARE_API_TOKEN` with Workers Editor restricted to the existing `soyuz` Worker. Set a one-year expiry and rotate the token in Cloudflare and GitHub before it expires. Do not grant D1 permissions: the deployed Worker uses its existing D1 binding at runtime, while migrations remain manual. Restrict the `production` environment to deployments from `main`; production deployments do not require an approval gate. Keep `CLIENT_API_TOKEN` and `WORKER_API_TOKEN` as Cloudflare Worker secrets, not GitHub repository files. The first deployment creates the Worker and therefore must be done separately with an account administrator. If the `wrangler deploy` step fails with the Worker-only token, record the exact failing command and Cloudflare error and request only the missing Worker permission; do not add D1 Edit.
+Create `CLOUDFLARE_API_TOKEN` with Workers Editor restricted to the existing `soyuz` Worker. Set a one-year expiry and rotate the token in Cloudflare and GitHub before it expires. Give `CLOUDFLARE_D1_READ_API_TOKEN` D1 Read access only, scoped to the production account and `soyuz-runs` database where Cloudflare supports resource-level restriction. Do not grant D1 Edit to either CI token. Restrict the `production` environment to deployments from `main`; production deployments do not require an approval gate. Keep `CLIENT_API_TOKEN` and `WORKER_API_TOKEN` as Cloudflare Worker secrets, not GitHub repository files. The first deployment creates the Worker and therefore must be done separately with an account administrator. If a Wrangler step fails for missing permissions, record its exact command and Cloudflare error and request only the needed permission.
 
-For an authorized production migration, run `npm run db:migrate:remote` manually. This invokes `wrangler d1 migrations apply soyuz-runs --remote` and requires D1 Edit. The Cloudflare account token interface currently applies D1 Edit account-wide, so use an administrator-approved manual session or another approved migration path; never add this permission to the CI token.
+For an authorized production migration, first verify the target database name and ID in `wrangler.jsonc`, then run `npm run db:migrate:remote` manually. This invokes `wrangler d1 migrations apply soyuz-runs --remote` and requires D1 Edit. The Cloudflare account token interface currently applies D1 Edit account-wide, so use an administrator-approved manual session or another approved migration path; never add this permission to a CI token. After it completes, run `node scripts/verify-production-migrations.mjs` with the read-only account and D1 token environment variables, and confirm the reported migration count before deploying. The CI preflight blocks deployment until history matches.
 
-## One-time live acceptance check
+## Authorized live acceptance check
 
-Run this before a Kaseki host is polling the Queue. Set `SOYUZ_BASE_URL`, `CLIENT_API_TOKEN`, `SMOKE_IDEMPOTENCY_KEY` (an RFC UUID), `CLOUDFLARE_ACCOUNT_ID`, `SOYUZ_QUEUE_ID`, and `SOYUZ_QUEUE_API_TOKEN`. Use the Queue ID returned by Wrangler. The Queue token is a separate account-scoped Queue Read+Write credential.
+Submitting a run creates executable work that an enabled Kaseki host may immediately consume. Do this only after explicit authorization for the live run and its resource costs, and use a disposable repository, `publishMode: none`, a non-production Queue where available, a short timeout, and a bounded task. Do not use the Soyuz or Kaseki source repositories as the smoke-test target.
 
-Example request and persisted-state check:
+Before enabling a production consumer, review active D1 runs and read-only peek at Queue messages. Resolve who owns any existing work; do not delete/cancel a run or pull a message to “inspect” it. Cloudflare's `messages/peek` endpoint does not lease messages.
+
+Set `SOYUZ_BASE_URL`, `CLIENT_API_TOKEN`, `SOYUZ_WORKER_API_TOKEN`, `SMOKE_IDEMPOTENCY_KEY` (an RFC UUID), `DISPOSABLE_REPO_URL`, `CLOUDFLARE_ACCOUNT_ID`, `SOYUZ_QUEUE_ID`, and `SOYUZ_QUEUE_API_TOKEN`. Use tokens supplied through the existing secret manager, not shell history or committed files. First check canonical API health, the authenticated run list, Worker detail for a known run, and Queue backlog/peek. Then submit an approved smoke run using a unique idempotency key and inspect its D1/API, Queue, Kaseki mapping, Docker, event, and terminal states independently.
+
+Example bounded request (replace the disposable URL and prompt with the authorized smoke task):
 
 ```sh
 curl --fail-with-body --silent --show-error \
@@ -75,38 +80,35 @@ curl --fail-with-body --silent --show-error \
   --header "Authorization: Bearer $CLIENT_API_TOKEN" \
   --header "Content-Type: application/json" \
   --header "Idempotency-Key: $SMOKE_IDEMPOTENCY_KEY" \
-  --data '{"repoUrl":"https://github.com/CyanAutomation/soyuz","taskPrompt":"Deployment smoke test only; do not execute or publish work.","taskMode":"inspect","publishMode":"none"}'
+  --data "{\"repoUrl\":\"$DISPOSABLE_REPO_URL\",\"taskPrompt\":\"Make one small, bounded change in the disposable test repository and report the result.\",\"taskMode\":\"patch\",\"publishMode\":\"none\"}"
 
-# Set RUN_ID to data.id from the HTTP 202 response.
+# Set RUN_ID to data.id from the HTTP 202 response, then read canonical state.
 curl --fail-with-body --silent --show-error \
   "$SOYUZ_BASE_URL/v1/runs/$RUN_ID" \
   --header "Authorization: Bearer $CLIENT_API_TOKEN"
 
-npx wrangler d1 execute soyuz-runs --remote \
-  --command="SELECT id, status, contract_version FROM runs WHERE id = '$RUN_ID';"
+curl --fail-with-body --silent --show-error \
+  "$SOYUZ_BASE_URL/v1/worker/runs/$RUN_ID" \
+  --header "Authorization: Bearer $SOYUZ_WORKER_API_TOKEN"
 ```
 
-For JSON messages, decode `result.messages[].body` before checking `contractVersion` and `runId`. Set `LEASE_ID` from the matching message and acknowledge only that message:
+Check for a queued message without taking its lease:
 
 ```sh
 curl --fail-with-body --silent --show-error \
-  --request POST "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues/$SOYUZ_QUEUE_ID/messages/pull" \
+  --request POST "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues/$SOYUZ_QUEUE_ID/messages/peek" \
   --header "Authorization: Bearer $SOYUZ_QUEUE_API_TOKEN" \
   --header "Content-Type: application/json" \
-  --data '{"visibility_timeout_ms":60000,"batch_size":5}'
-
-curl --fail-with-body --silent --show-error \
-  --request POST "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues/$SOYUZ_QUEUE_ID/messages/ack" \
-  --header "Authorization: Bearer $SOYUZ_QUEUE_API_TOKEN" \
-  --header "Content-Type: application/json" \
-  --data "{\"acks\":[{\"lease_id\":\"$LEASE_ID\"}],\"retries\":[]}"
+  --data '{"batch_size":10}'
 ```
+
+Do not manually pull or acknowledge the test message while validating the Kaseki consumer; let the adapter exercise the production handoff and compare its one local mapping and Docker execution with the canonical run ID. Run a controlled failure only after the successful path is proven and explicitly authorized. Do not claim end-to-end success based only on `/health` or D1 connectivity.
 
 ## Worker configuration
 
 `wrangler.jsonc` declares the Worker entry point, compatibility date, D1 binding and database ID, Queue producer binding, required secret names, observability, and the one-minute admission reconciliation cron. Queue pull mode remains an external consumer configuration. The D1 ID is a resource identifier; account IDs and production credentials are not committed here.
 
-The Kaseki integration adds migration `0002_run_liveness.sql`. Before deploying code that reads the new heartbeat and operational-health columns, apply all pending migrations with the separately authorized `npm run db:migrate:remote` procedure above. This task has not applied production migrations or deployed the Worker.
+Migration `0002_run_liveness.sql` adds the heartbeat and operational-health columns. Apply all pending migrations with the separately authorized `npm run db:migrate:remote` procedure before deploying code that reads them. Never recreate the database or discard run history as a migration repair.
 
 Generate runtime and binding types after changing Wrangler bindings:
 
