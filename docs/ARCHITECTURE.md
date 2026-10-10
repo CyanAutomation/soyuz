@@ -28,7 +28,7 @@ Messages are typed in Soyuz and carry `contractVersion: "1"`. The repositories d
 
 ## Run lifecycle
 
-Requirement IDs: `LIFECYCLE-TRANSITIONS-01`, `LIFECYCLE-TERMINAL-01`, `CANCEL-CAS-01`, `WORKER-CLAIM-RECOVERY-01`, `LIFECYCLE-RACE-01`.
+Requirement IDs: `LIFECYCLE-TRANSITIONS-01`, `LIFECYCLE-TERMINAL-01`, `CANCEL-CAS-01`, `WORKER-PRESTART-FAIL-01`, `WORKER-CLAIM-RECOVERY-01`, `LIFECYCLE-RACE-01`.
 
 ```mermaid
 stateDiagram-v2

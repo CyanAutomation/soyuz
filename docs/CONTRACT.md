@@ -68,7 +68,7 @@ Cloudflare Queues is at-least-once. A consumer must use `runId` as its stable de
 
 ## Worker reads and callbacks
 
-Requirement IDs: `AUTH-REST-01`, `WORKER-READ-01`, `WORKER-CLAIM-01`, `WORKER-START-01`, `WORKER-EVENT-01`, `WORKER-COMPLETE-01`, `WORKER-FAIL-01`, `WORKER-CANCEL-01`, `CALLBACK-IDEMPOTENCY-01`.
+Requirement IDs: `AUTH-REST-01`, `WORKER-READ-01`, `WORKER-CLAIM-01`, `WORKER-START-01`, `WORKER-EVENT-01`, `WORKER-COMPLETE-01`, `WORKER-FAIL-01`, `WORKER-PRESTART-FAIL-01`, `WORKER-CANCEL-01`, `CALLBACK-IDEMPOTENCY-01`, `RUN-LIVENESS-01`.
 
 Every worker request uses `Authorization: Bearer <WORKER_API_TOKEN>`, distinct from the client token.
 

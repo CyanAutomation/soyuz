@@ -11,6 +11,7 @@
     "deploy": "wrangler deploy",
     "typecheck": "wrangler types && tsc --noEmit",
     "test": "vitest run",
+    "test:mutation:unit": "wrangler types && stryker run stryker.unit.config.mjs",
     "cf:types": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply soyuz-runs --local",
     "db:migrate:remote": "wrangler d1 migrations apply soyuz-runs --remote"
@@ -22,6 +23,9 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.0.0",
+    "@stryker-mutator/core": "^10.0.0",
+    "@stryker-mutator/typescript-checker": "^10.0.0",
+    "@stryker-mutator/vitest-runner": "^10.0.0",
     "@types/node": "^26.6.4",
     "typescript": "^5.9.0",
     "vitest": "^4.1.0",
