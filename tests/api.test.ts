@@ -64,6 +64,12 @@ async function clearDatabase(): Promise<void> {
   await runtimeEnv.DB.prepare("DELETE FROM runs").run();
 }
 
+async function countRunEvents(env: Env, runId: string, type: string): Promise<number> {
+  const row = await env.DB.prepare("SELECT COUNT(*) AS count FROM run_events WHERE run_id = ? AND type = ?")
+    .bind(runId, type).first<{ count: number }>();
+  return row?.count ?? 0;
+}
+
 async function submit(env: Env, overrides: Record<string, unknown> = {}, key = CLIENT_KEY) {
   return call(env, "/v1/runs", {
     method: "POST",
@@ -246,10 +252,15 @@ describe("Soyuz Worker API", () => {
     const firstClaim = await claimRun(bindings, runId, workerId);
     const claimReplay = await claimRun(bindings, runId, workerId);
     const competingClaim = await claimRun(bindings, runId, "docker-host-b", "00000000-0000-4000-8000-000000000031");
+    const stored = await getRun(bindings.DB, runId);
     expect(firstClaim.response.status).toBe(200);
     expect(firstClaim.body.data.status).toBe("claimed");
     expect(claimReplay.response.status).toBe(200);
     expect(competingClaim.response.status).toBe(409);
+    expect(stored?.worker_id).toBe(workerId);
+    expect(stored?.claim_expires_at).toBe(firstClaim.body.data.claimExpiresAt);
+    expect(claimReplay.body.data.claimExpiresAt).toBe(firstClaim.body.data.claimExpiresAt);
+    expect(await countRunEvents(bindings, runId, "run.claimed")).toBe(1);
   });
 
   it("[WORKER-START-01] replays the same started callback without changing running state", async () => {
@@ -269,12 +280,17 @@ describe("Soyuz Worker API", () => {
     const started = await call(bindings, `/v1/worker/runs/${runId}/started`, {
       method: "POST", token: WORKER_TOKEN, body: startedBody,
     });
+    const afterFirstStart = await getRun(bindings.DB, runId);
     const startedReplay = await call(bindings, `/v1/worker/runs/${runId}/started`, {
       method: "POST", token: WORKER_TOKEN, body: startedBody,
     });
+    const afterReplay = await getRun(bindings.DB, runId);
     expect(started.response.status).toBe(200);
     expect(started.body.data.status).toBe("running");
     expect(startedReplay.body.data.status).toBe("running");
+    expect(afterReplay?.started_at).toBe(afterFirstStart?.started_at);
+    expect(afterReplay?.stage).toBe("prepare");
+    expect(await countRunEvents(bindings, runId, "run.started")).toBe(1);
   });
 
   it("[WORKER-EVENT-01/CALLBACK-IDEMPOTENCY-01] stores one event when the worker retries its callback", async () => {
@@ -431,10 +447,18 @@ describe("Soyuz Worker API", () => {
       token: WORKER_TOKEN,
       body: failureBody,
     });
+    const stored = await getRun(bindings.DB, runId);
     expect(failure.response.status).toBe(200);
     expect(failure.body.data.status).toBe("failed");
     expect(failure.body.data.failureClass).toBe("validation_failed");
     expect(retry.body.data.status).toBe("failed");
+    expect(stored).toMatchObject({
+      status: "failed",
+      exit_code: 1,
+      failure_class: "validation_failed",
+      failure_message: failureBody.failureMessage,
+    });
+    expect(await countRunEvents(bindings, runId, "run.failed")).toBe(1);
   });
 
   it("[CANCEL-CAS-01] rejects a claimed-state cancellation after the run advances to running", async () => {
@@ -638,7 +662,7 @@ describe("Soyuz Worker API", () => {
     expect(terminalEvents?.count).toBe(1);
   });
 
-  it("marks stale running liveness as suspect without changing run state or requeueing", async () => {
+  it("[RUN-LIVENESS-01] marks stale running liveness as suspect without changing run state or requeueing", async () => {
     const { bindings, sent } = testEnv();
     const submitted = await submit(bindings, {}, "00000000-0000-4000-8000-000000000060");
     const runId = submitted.body.data.id as string;
@@ -657,6 +681,7 @@ describe("Soyuz Worker API", () => {
     expect(started.response.status).toBe(200);
 
     await reconcileStalledRuns(bindings, new Date(Date.now() + 6 * 60_000));
+    await reconcileStalledRuns(bindings, new Date(Date.now() + 7 * 60_000));
     const suspect = await getRun(bindings.DB, runId);
     expect(suspect?.status).toBe("running");
     expect(suspect?.operational_health).toBe("suspect_stalled");
@@ -665,6 +690,7 @@ describe("Soyuz Worker API", () => {
       "SELECT type FROM run_events WHERE run_id = ? AND type = 'run.suspected_stalled'",
     ).bind(runId).first<{ type: string }>();
     expect(stalledEvent?.type).toBe("run.suspected_stalled");
+    expect(await countRunEvents(bindings, runId, "run.suspected_stalled")).toBe(1);
 
     const heartbeat = await call(bindings, `/v1/worker/runs/${runId}/events`, {
       method: "POST",
@@ -685,7 +711,7 @@ describe("Soyuz Worker API", () => {
     expect(recovered?.last_heartbeat_at).toBeTruthy();
   });
 
-  it("accepts worker terminal outcomes from a live claimed state without starting execution", async () => {
+  it("[WORKER-PRESTART-FAIL-01] records a live claimed worker failure without starting execution", async () => {
     const { bindings } = testEnv();
     const submitted = await submit(bindings, {}, "00000000-0000-4000-8000-000000000063");
     const runId = submitted.body.data.id as string;
@@ -702,7 +728,14 @@ describe("Soyuz Worker API", () => {
         failureMessage: "Local admission rejected the run.",
       },
     });
+    const stored = await getRun(bindings.DB, runId);
     expect(failed.response.status).toBe(200);
-    expect((await getRun(bindings.DB, runId))?.status).toBe("failed");
+    expect(stored).toMatchObject({
+      status: "failed",
+      started_at: null,
+      failure_class: "kaseki_admission_rejected",
+      failure_message: "Local admission rejected the run.",
+    });
+    expect(await countRunEvents(bindings, runId, "run.failed")).toBe(1);
   });
 });
