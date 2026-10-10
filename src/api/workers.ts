@@ -9,7 +9,6 @@ import {
 import {
   findRunEvent,
   getRun,
-  parseEventPayload,
   parseResult,
   recordWorkerEvent,
   RunEventError,
@@ -22,16 +21,24 @@ import {
   type RunRow,
 } from "../db/runs";
 import type { Env } from "../env";
-import { stableStringify } from "../lib/json";
+import { stableStringify } from "../lib/canonical-json";
+import { isUuid } from "../lib/uuid";
 import { ApiError, errorResponse, parseJsonBody, successResponse, validationDetails } from "./http";
+import { publicEvent } from "./public-event";
 import { publicRun } from "./runs";
+
+type CallbackParseResult<T> =
+  | { success: true; data: T }
+  | { success: false; error: { issues: Array<{ path: PropertyKey[]; message: string }> } };
+
+type CallbackSchema<T> = { safeParse(input: unknown): CallbackParseResult<T> };
 
 export async function handleWorkerCallbacks(request: Request, env: Env, url: URL, requestId: string): Promise<Response | null> {
   const parts = url.pathname.split("/").filter(Boolean);
   if (parts[0] !== "v1" || parts[1] !== "worker" || parts[2] !== "runs") return null;
   if (parts.length === 4 && request.method === "GET") {
     const runId = parts[3];
-    if (!isRunId(runId)) return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
+    if (!isUuid(runId)) return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
     try {
       const row = await getRun(env.DB, runId);
       if (!row) return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
@@ -53,7 +60,7 @@ export async function handleWorkerCallbacks(request: Request, env: Env, url: URL
   }
   if (parts.length !== 5) return null;
   const [, , , runId, action] = parts;
-  if (!isRunId(runId)) return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
+  if (!isUuid(runId)) return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
   if (request.method !== "POST") return errorResponse(requestId, 405, "METHOD_NOT_ALLOWED", "Worker callback routes accept POST requests");
 
   switch (action) {
@@ -76,55 +83,18 @@ export async function handleWorkerCallbacks(request: Request, env: Env, url: URL
 
 async function claimed(request: Request, env: Env, runId: string, requestId: string): Promise<Response> {
   try {
-    const body = await parseJsonBody(request, requestId);
-    const payload = WorkerClaimSchema.safeParse(body);
-    if (!payload.success) throw new ApiError(422, "INVALID_WORKER_CALLBACK", "Claim callback failed validation", validationDetails(payload.error.issues));
-    const row = await getRun(env.DB, runId);
-    if (!row) throw new ApiError(404, "RUN_NOT_FOUND", "Run was not found");
-    const eventPayload = { leaseSeconds: payload.data.leaseSeconds };
+    const payload = await parseCallbackBody(
+      request, requestId, WorkerClaimSchema, "INVALID_WORKER_CALLBACK", "Claim callback failed validation",
+    );
+    const row = await requireRun(env, runId);
     const previous = await findRunEvent(env.DB, runId, payload.data.callbackId);
-    if (previous) {
-      if (previous.type !== "run.claimed"
-        || previous.worker_id !== payload.data.workerId
-        || previous.payload_json !== stableStringify(eventPayload)) {
-        throw new ApiError(409, "CALLBACK_ID_REUSED", "callbackId was already used for a different callback");
-      }
+    if (callbackReplayMatches(previous, "run.claimed", payload.data.workerId, { leaseSeconds: payload.data.leaseSeconds })) {
       return successResponse(requestId, publicRun(row));
     }
-    if ((row.status === "claimed" || row.status === "running") && row.worker_id === payload.data.workerId) {
-      return successResponse(requestId, publicRun(row));
-    }
-    if (row.status === "claimed" || row.status === "running") {
-      throw new ApiError(409, "RUN_CLAIMED", "Another worker already owns this run");
-    }
-    if (row.status !== "queued") {
-      throw new ApiError(409, row.status === "cancelled" ? "RUN_CANCELLED" : "INVALID_STATE_TRANSITION", `Run in ${row.status} state cannot be claimed`);
-    }
+    const existingClaim = currentClaimResponse(row, payload.data.workerId, requestId);
+    if (existingClaim) return existingClaim;
 
-    const now = new Date().toISOString();
-    const claimExpiresAt = new Date(Date.now() + payload.data.leaseSeconds * 1_000).toISOString();
-    let updated: RunRow;
-    try {
-      updated = await transitionRun(env.DB, runId, "claimed", {
-        worker_id: payload.data.workerId,
-        claim_expires_at: claimExpiresAt,
-      }, {
-        eventId: payload.data.callbackId,
-        type: "run.claimed",
-        workerId: payload.data.workerId,
-        occurredAt: now,
-        recordedAt: now,
-        payload: eventPayload,
-      });
-    } catch (error) {
-      if (error instanceof RunTransitionError) {
-        const latest = await getRun(env.DB, runId);
-        if (latest?.status === "claimed" && latest.worker_id === payload.data.workerId) {
-          return successResponse(requestId, publicRun(latest));
-        }
-      }
-      throw error;
-    }
+    const updated = await commitClaim(env, runId, payload.data.callbackId, payload.data.workerId, payload.data.leaseSeconds);
     return successResponse(requestId, publicRun(updated));
   } catch (error) {
     return callbackError(error, requestId);
@@ -133,22 +103,21 @@ async function claimed(request: Request, env: Env, runId: string, requestId: str
 
 async function started(request: Request, env: Env, runId: string, requestId: string): Promise<Response> {
   try {
-    const body = await parseJsonBody(request, requestId);
-    const payload = WorkerStartedSchema.safeParse(body);
-    if (!payload.success) throw new ApiError(422, "INVALID_WORKER_CALLBACK", "Started callback failed validation", validationDetails(payload.error.issues));
-    const row = await getRun(env.DB, runId);
-    if (!row) throw new ApiError(404, "RUN_NOT_FOUND", "Run was not found");
+    const payload = await parseCallbackBody(
+      request, requestId, WorkerStartedSchema, "INVALID_WORKER_CALLBACK", "Started callback failed validation",
+    );
+    const row = await requireRun(env, runId);
     if (row.worker_id && row.worker_id !== payload.data.workerId) {
       throw new ApiError(409, "WORKER_MISMATCH", "A different worker already owns this run");
     }
     const priorCallback = await findRunEvent(env.DB, runId, payload.data.callbackId);
-    if (priorCallback) {
-      if (priorCallback.type !== "run.started"
-        || priorCallback.worker_id !== payload.data.workerId
-        || priorCallback.stage !== (payload.data.stage ?? null)
-        || priorCallback.payload_json !== stableStringify({ status: "running" })) {
-        throw new ApiError(409, "CALLBACK_ID_REUSED", "callbackId was already used for a different callback");
-      }
+    if (callbackReplayMatches(
+      priorCallback,
+      "run.started",
+      payload.data.workerId,
+      { status: "running" },
+      payload.data.stage ?? null,
+    )) {
       return successResponse(requestId, publicRun(row));
     }
     if (row.status === "running") return successResponse(requestId, publicRun(row));
@@ -182,9 +151,9 @@ async function started(request: Request, env: Env, runId: string, requestId: str
 
 async function event(request: Request, env: Env, runId: string, requestId: string): Promise<Response> {
   try {
-    const body = await parseJsonBody(request, requestId);
-    const payload = WorkerEventSchema.safeParse(body);
-    if (!payload.success) throw new ApiError(422, "INVALID_WORKER_EVENT", "Worker event failed validation", validationDetails(payload.error.issues));
+    const payload = await parseCallbackBody(
+      request, requestId, WorkerEventSchema, "INVALID_WORKER_EVENT", "Worker event failed validation",
+    );
     const now = new Date().toISOString();
     const eventInput: RunEventInput = {
       eventId: payload.data.eventId,
@@ -205,9 +174,9 @@ async function event(request: Request, env: Env, runId: string, requestId: strin
 
 async function completed(request: Request, env: Env, runId: string, requestId: string): Promise<Response> {
   try {
-    const body = await parseJsonBody(request, requestId);
-    const payload = WorkerCompletedSchema.safeParse(body);
-    if (!payload.success) throw new ApiError(422, "INVALID_WORKER_CALLBACK", "Completed callback failed validation", validationDetails(payload.error.issues));
+    const payload = await parseCallbackBody(
+      request, requestId, WorkerCompletedSchema, "INVALID_WORKER_CALLBACK", "Completed callback failed validation",
+    );
     const row = await requireActiveWorker(env, runId, payload.data.workerId);
     const result = {
       ...(payload.data.summary ? { summary: payload.data.summary } : {}),
@@ -237,9 +206,9 @@ async function completed(request: Request, env: Env, runId: string, requestId: s
 
 async function failed(request: Request, env: Env, runId: string, requestId: string): Promise<Response> {
   try {
-    const body = await parseJsonBody(request, requestId);
-    const payload = WorkerFailedSchema.safeParse(body);
-    if (!payload.success) throw new ApiError(422, "INVALID_WORKER_CALLBACK", "Failed callback failed validation", validationDetails(payload.error.issues));
+    const payload = await parseCallbackBody(
+      request, requestId, WorkerFailedSchema, "INVALID_WORKER_CALLBACK", "Failed callback failed validation",
+    );
     const row = await requireWorkerOwnership(env, runId, payload.data.workerId);
     const eventPayload = {
       failureClass: payload.data.failureClass,
@@ -271,9 +240,9 @@ async function failed(request: Request, env: Env, runId: string, requestId: stri
 
 async function cancelled(request: Request, env: Env, runId: string, requestId: string): Promise<Response> {
   try {
-    const body = await parseJsonBody(request, requestId);
-    const payload = WorkerCancelledSchema.safeParse(body);
-    if (!payload.success) throw new ApiError(422, "INVALID_WORKER_CALLBACK", "Cancelled callback failed validation", validationDetails(payload.error.issues));
+    const payload = await parseCallbackBody(
+      request, requestId, WorkerCancelledSchema, "INVALID_WORKER_CALLBACK", "Cancelled callback failed validation",
+    );
     const row = await requireWorkerOwnership(env, runId, payload.data.workerId);
     const eventPayload = {
       ...(payload.data.reason ? { reason: payload.data.reason } : {}),
@@ -302,24 +271,108 @@ async function cancelled(request: Request, env: Env, runId: string, requestId: s
   }
 }
 
-async function requireActiveWorker(env: Env, runId: string, workerId: string): Promise<RunRow> {
+async function requireRun(env: Env, runId: string): Promise<RunRow> {
   const row = await getRun(env.DB, runId);
   if (!row) throw new ApiError(404, "RUN_NOT_FOUND", "Run was not found");
-  if (row.worker_id !== workerId) throw new ApiError(409, "WORKER_MISMATCH", "Worker does not own this run");
-  if (row.status === "completed" || row.status === "failed" || row.status === "cancelled") return row;
-  if (row.status !== "running" && row.status !== "cancel_requested") {
-    throw new ApiError(409, "INVALID_STATE_TRANSITION", `Run in ${row.status} state cannot accept a terminal callback`);
-  }
   return row;
 }
 
+function currentClaimResponse(row: RunRow, workerId: string, requestId: string): Response | null {
+  if (row.status === "claimed" || row.status === "running") {
+    if (row.worker_id === workerId) return successResponse(requestId, publicRun(row));
+    throw new ApiError(409, "RUN_CLAIMED", "Another worker already owns this run");
+  }
+  if (row.status !== "queued") {
+    throw new ApiError(409, row.status === "cancelled" ? "RUN_CANCELLED" : "INVALID_STATE_TRANSITION", `Run in ${row.status} state cannot be claimed`);
+  }
+  return null;
+}
+
+async function commitClaim(
+  env: Env,
+  runId: string,
+  callbackId: string,
+  workerId: string,
+  leaseSeconds: number,
+): Promise<RunRow> {
+  const now = new Date().toISOString();
+  const claimExpiresAt = new Date(Date.now() + leaseSeconds * 1_000).toISOString();
+  const payload = { leaseSeconds };
+  try {
+    const updated = await transitionRun(env.DB, runId, "claimed", {
+      worker_id: workerId,
+      claim_expires_at: claimExpiresAt,
+    }, {
+      eventId: callbackId,
+      type: "run.claimed",
+      workerId,
+      occurredAt: now,
+      recordedAt: now,
+      payload,
+    });
+    if (updated.worker_id !== workerId) throw new ApiError(409, "RUN_CLAIMED", "Another worker already owns this run");
+    return updated;
+  } catch (error) {
+    if (error instanceof RunTransitionError) {
+      const latest = await getRun(env.DB, runId);
+      if (latest?.status === "claimed" && latest.worker_id === workerId) return latest;
+      if ((latest?.status === "claimed" || latest?.status === "running") && latest.worker_id !== workerId) {
+        throw new ApiError(409, "RUN_CLAIMED", "Another worker already owns this run");
+      }
+    }
+    throw error;
+  }
+}
+
+async function parseCallbackBody<T>(
+  request: Request,
+  requestId: string,
+  schema: CallbackSchema<T>,
+  code: string,
+  message: string,
+): Promise<{ data: T }> {
+  const result = schema.safeParse(await parseJsonBody(request, requestId));
+  if (!result.success) throw new ApiError(422, code, message, validationDetails(result.error.issues));
+  return { data: result.data };
+}
+
+function callbackReplayMatches(
+  existing: RunEventRow | null,
+  expectedType: string,
+  workerId: string,
+  payload: Record<string, unknown>,
+  expectedStage?: string | null,
+): boolean {
+  if (!existing) return false;
+  if (existing.type !== expectedType
+    || existing.worker_id !== workerId
+    || (expectedStage !== undefined && existing.stage !== expectedStage)
+    || existing.payload_json !== stableStringify(payload)) {
+    throw new ApiError(409, "CALLBACK_ID_REUSED", "callbackId was already used for a different callback");
+  }
+  return true;
+}
+
+async function requireActiveWorker(env: Env, runId: string, workerId: string): Promise<RunRow> {
+  return requireOwnedWorker(env, runId, workerId, ["running", "cancel_requested"], "terminal");
+}
+
 async function requireWorkerOwnership(env: Env, runId: string, workerId: string): Promise<RunRow> {
-  const row = await getRun(env.DB, runId);
-  if (!row) throw new ApiError(404, "RUN_NOT_FOUND", "Run was not found");
+  return requireOwnedWorker(env, runId, workerId, ["claimed", "running", "cancel_requested"], "cancellation");
+}
+
+async function requireOwnedWorker(
+  env: Env,
+  runId: string,
+  workerId: string,
+  acceptedStatuses: readonly RunRow["status"][],
+  callbackKind: "terminal" | "cancellation",
+): Promise<RunRow> {
+  const row = await requireRun(env, runId);
   if (row.worker_id !== workerId) throw new ApiError(409, "WORKER_MISMATCH", "Worker does not own this run");
   if (row.status === "completed" || row.status === "failed" || row.status === "cancelled") return row;
-  if (row.status !== "claimed" && row.status !== "running" && row.status !== "cancel_requested") {
-    throw new ApiError(409, "INVALID_STATE_TRANSITION", `Run in ${row.status} state cannot accept a cancellation callback`);
+  if (!acceptedStatuses.includes(row.status)) {
+    throw new ApiError(409, "INVALID_STATE_TRANSITION", `Run in ${row.status} state cannot accept a ${callbackKind} callback`);
   }
   return row;
 }
@@ -339,12 +392,7 @@ async function ensureCallbackIdAvailable(
   payload: Record<string, unknown>,
 ): Promise<void> {
   const existing = await findRunEvent(env.DB, runId, callbackId);
-  if (!existing) return;
-  if (existing.type !== expectedType
-    || existing.worker_id !== workerId
-    || existing.payload_json !== stableStringify(payload)) {
-    throw new ApiError(409, "CALLBACK_ID_REUSED", "callbackId was already used for a different callback");
-  }
+  callbackReplayMatches(existing, expectedType, workerId, payload);
 }
 
 function callbackError(error: unknown, requestId: string): Response {
@@ -356,24 +404,4 @@ function callbackError(error: unknown, requestId: string): Response {
     return errorResponse(requestId, 409, code, error.message);
   }
   return errorResponse(requestId, 503, "CALLBACK_UNAVAILABLE", "Soyuz cannot reach its run database to record the worker callback. Retry with the same callback ID.");
-}
-
-function publicEvent(row: RunEventRow): Record<string, unknown> {
-  return {
-    contractVersion: row.contract_version,
-    runId: row.run_id,
-    sequence: row.sequence,
-    eventId: row.event_id,
-    type: row.type,
-    workerId: row.worker_id,
-    stage: row.stage,
-    step: row.step,
-    timestamp: row.occurred_at,
-    recordedAt: row.recorded_at,
-    payload: parseEventPayload(row),
-  };
-}
-
-function isRunId(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }

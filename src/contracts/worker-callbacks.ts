@@ -78,10 +78,3 @@ export const WorkerCancelledSchema = CallbackBase.extend({
   exitCode: z.number().int().optional(),
   reason: z.string().max(2_000).optional(),
 }).strict();
-
-export type WorkerStarted = z.infer<typeof WorkerStartedSchema>;
-export type WorkerClaim = z.infer<typeof WorkerClaimSchema>;
-export type WorkerEvent = z.infer<typeof WorkerEventSchema>;
-export type WorkerCompleted = z.infer<typeof WorkerCompletedSchema>;
-export type WorkerFailed = z.infer<typeof WorkerFailedSchema>;
-export type WorkerCancelled = z.infer<typeof WorkerCancelledSchema>;
