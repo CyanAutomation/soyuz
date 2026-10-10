@@ -6,11 +6,11 @@ See the Kaseki [host setup and operations guide](https://github.com/CyanAutomati
 
 ## Handoff and authorization
 
-The Kaseki API service starts the adapter only when `SOYUZ_ENABLED=true`; standalone Kaseki API and CLI runs remain the default. The adapter validates contract version 1, checks canonical run state, preserves Kaseki readiness, template/publish, credential, and task safety gates, then claims the Soyuz run. It writes the run ID mapping and queued job through Kaseki's existing `JobPersistenceManager`, posts `/started`, durably records the authorization, and only then opens the scheduler gate for Docker.
+The Kaseki API service starts the adapter only when `SOYUZ_ENABLED=true`; standalone Kaseki API and CLI runs remain the default. The adapter validates contract version 1, checks canonical run state, preserves Kaseki readiness, template/publish, credential, and task safety gates, then writes a per-attempt claim intent to Kaseki's existing persistent jobs index before claiming the Soyuz run. After claim success, it writes the run ID mapping and queued job, posts `/started`, durably records the authorization, and only then opens the scheduler gate for Docker. A lost claim response can be reconciled after restart from the saved intent without creating a speculative local job.
 
 The Queue message is acknowledged after local durable acceptance and successful start authorization, not after coding finishes. If the ack response is lost, redelivery resolves by Soyuz `runId` and reuses the same local job. Delivery is at least once; no exactly-once execution guarantee is made. The full failure-boundary table and operator recovery policy are maintained in the Kaseki guide.
 
-Claim lease IDs are used only to acknowledge/retry Queue messages. Soyuz run IDs are the durable deduplication key. Host IDs must be stable and unique per execution host. A second host cannot execute a run owned by another host. A stale heartbeat does not release ownership or permit a takeover.
+Queue lease IDs are used only to acknowledge/retry Queue messages. Soyuz run IDs are the durable deduplication key. Host IDs must be stable and unique per execution host. Each accepted claim also supplies a `claimCallbackId` that fences started, event/heartbeat, and terminal callbacks from older execution attempts, even if a host ID is accidentally reused. A second host cannot execute a run owned by another host. A stale heartbeat does not release ownership or permit a takeover.
 
 ## Callback and cancellation behavior
 
@@ -20,9 +20,9 @@ Kaseki polls canonical status while an execution is active. It applies `cancel_r
 
 ## Heartbeat and suspected stalled runs
 
-Contract version 1 exposes `lastHeartbeatAt` and `operationalHealth` on worker and client run reads. Heartbeats refresh a dedicated D1 timestamp and mark health `healthy`; they do not change lifecycle state. A five-minute cron threshold marks an active run `suspect_stalled` and emits one bounded `run.suspected_stalled` event/log for the stale heartbeat. Recovery by a later heartbeat restores `healthy`.
+Contract version 1 exposes `lastHeartbeatAt` and `operationalHealth` on worker and client run reads, and exposes the current claim token on worker reads only. Heartbeats refresh a dedicated D1 timestamp and mark health `healthy`; they do not change lifecycle state. A five-minute cron threshold marks an active run `suspect_stalled` and emits one bounded `run.suspected_stalled` event/log for the stale heartbeat. Recovery by a later heartbeat restores `healthy`.
 
-`operationalHealth` is separate from lifecycle status. A suspect run remains `running` or `cancel_requested`; Soyuz never automatically requeues it. This protects against duplicate execution when a Kaseki controller or network is unavailable but its Docker process is still running. The Kaseki API restart path reports `api_restart` through its outbox once the persistent host is back. A permanently lost host with lost local state requires an operator to verify execution has stopped and follow a separately approved recovery procedure; contract v1 does not provide automatic takeover or fencing.
+`operationalHealth` is separate from lifecycle status. A suspect run remains `running` or `cancel_requested`; Soyuz never automatically requeues it. This protects against duplicate execution when a Kaseki controller or network is unavailable but its Docker process is still running. The Kaseki API restart path reports `api_restart` through its outbox once the persistent host is back. A permanently lost host with lost local state requires an operator to verify execution has stopped and follow a separately approved recovery procedure; contract v1 does not provide automatic takeover of a running execution.
 
 ## Queue retry and dead-letter policy
 
@@ -34,4 +34,4 @@ Current Queue HTTP pull request fields use `visibility_timeout_ms` and `batch_si
 
 This change adds migration `0002_run_liveness.sql`, which adds nullable heartbeat time and a separate health classification to existing run rows. It keeps contract version 1 and does not add a new canonical lifecycle state. Apply the remote migration through the existing separately authorized production migration procedure before deploying code that reads the new columns. The change has not been deployed here.
 
-Roll out the Kaseki adapter against a non-production Queue first. Verify a `publishMode: none` completion and failure, a cancellation, duplicate delivery, callback retry, and restart reconciliation before enabling routine intake. See [deployment and local smoke-test guidance](DEPLOYMENT.md).
+Roll out the compatible Soyuz Worker first, after its D1 migrations are applied and verified, then deploy the Kaseki image with claim fencing. Roll out the Kaseki adapter against a non-production Queue first. Verify a `publishMode: none` completion and failure, a cancellation, duplicate delivery, callback retry, and restart reconciliation before enabling routine intake. A production smoke submission creates executable work; use an explicitly authorized disposable repository and Queue. See [deployment and local smoke-test guidance](DEPLOYMENT.md).

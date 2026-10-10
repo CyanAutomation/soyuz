@@ -280,6 +280,154 @@ describe("Soyuz Worker API", () => {
     expect(await countRunEvents(bindings, runId, "run.claimed")).toBe(1);
   });
 
+  it("[WORKER-CLAIM-FENCE-01] rejects a stale same-worker start after an expired claim is replaced", async () => {
+    const { bindings } = testEnv();
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-reused-id";
+    const oldClaimId = "00000000-0000-4000-8000-000000000070";
+    const newClaimId = "00000000-0000-4000-8000-000000000071";
+    const first = await claimRun(bindings, runId, workerId, oldClaimId);
+    expect(first.response.status).toBe(200);
+
+    const expiredAt = new Date(Date.now() - 60_000).toISOString();
+    await bindings.DB.prepare("UPDATE runs SET claim_expires_at = ? WHERE id = ?").bind(expiredAt, runId).run();
+    await reconcileAdmissions(bindings, new Date());
+    const second = await claimRun(bindings, runId, workerId, newClaimId);
+    expect(second.response.status).toBe(200);
+    const currentRead = await call(bindings, `/v1/worker/runs/${runId}`, { token: WORKER_TOKEN });
+    expect(currentRead.body.data.claimCallbackId).toBe(newClaimId);
+
+    const staleStart = await call(bindings, `/v1/worker/runs/${runId}/started`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        callbackId: "00000000-0000-4000-8000-000000000072",
+        workerId,
+        claimCallbackId: oldClaimId,
+      },
+    });
+    expect(staleStart.response.status).toBe(409);
+    expect(staleStart.body.error.code).toBe("STALE_CLAIM");
+
+    const currentStart = await call(bindings, `/v1/worker/runs/${runId}/started`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        callbackId: "00000000-0000-4000-8000-000000000073",
+        workerId,
+        claimCallbackId: newClaimId,
+      },
+    });
+    expect(currentStart.response.status).toBe(200);
+    expect(currentStart.body.data.status).toBe("running");
+  });
+
+  it("[WORKER-CLAIM-FENCE-02] rejects stale heartbeat and terminal callbacks", async () => {
+    const { bindings } = testEnv();
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-fenced";
+    const currentClaimId = "00000000-0000-4000-8000-000000000074";
+    const staleClaimId = "00000000-0000-4000-8000-000000000075";
+    await claimRun(bindings, runId, workerId, currentClaimId);
+    const started = await call(bindings, `/v1/worker/runs/${runId}/started`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        callbackId: "00000000-0000-4000-8000-000000000076",
+        workerId,
+        claimCallbackId: currentClaimId,
+      },
+    });
+    expect(started.response.status).toBe(200);
+
+    const heartbeat = await call(bindings, `/v1/worker/runs/${runId}/events`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        eventId: "00000000-0000-4000-8000-000000000077",
+        workerId,
+        claimCallbackId: staleClaimId,
+        type: "worker.heartbeat",
+      },
+    });
+    const completed = await call(bindings, `/v1/worker/runs/${runId}/completed`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        callbackId: "00000000-0000-4000-8000-000000000078",
+        workerId,
+        claimCallbackId: staleClaimId,
+      },
+    });
+    expect(heartbeat.response.status).toBe(409);
+    expect(heartbeat.body.error.code).toBe("STALE_CLAIM");
+    expect(completed.response.status).toBe(409);
+    expect(completed.body.error.code).toBe("STALE_CLAIM");
+    expect((await getRun(bindings.DB, runId))?.status).toBe("running");
+  });
+
+  it("[WORKER-CLAIM-FENCE-03] rejects a claim superseded between callback validation and write", async () => {
+    const { bindings } = testEnv();
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-racing-claim";
+    const oldClaimId = "00000000-0000-4000-8000-000000000081";
+    const newClaimId = "00000000-0000-4000-8000-000000000082";
+    const startedCallbackId = "00000000-0000-4000-8000-000000000083";
+    const claim = await claimRun(bindings, runId, workerId, oldClaimId);
+    expect(claim.response.status).toBe(200);
+
+    const database = bindings.DB;
+    let injectRace = true;
+    const racingDatabase = {
+      prepare: database.prepare.bind(database),
+      batch: async (statements: Parameters<typeof database.batch>[0]) => {
+        if (injectRace) {
+          injectRace = false;
+          const now = new Date().toISOString();
+          await database.prepare(
+            "UPDATE runs SET status = 'running', started_at = ?, claim_expires_at = NULL WHERE id = ?",
+          ).bind(now, runId).run();
+          await database.prepare(`
+            INSERT INTO run_events (
+              run_id, contract_version, event_id, type, worker_id,
+              occurred_at, recorded_at, payload_json
+            ) VALUES (?, '1', ?, 'run.claimed', ?, ?, ?, '{}')
+          `).bind(runId, newClaimId, workerId, now, now).run();
+        }
+        return database.batch(statements);
+      },
+    } as unknown as Env["DB"];
+
+    await expect(transitionRun(racingDatabase, runId, "running", {
+      worker_id: workerId,
+      started_at: new Date().toISOString(),
+      claim_expires_at: null,
+    }, {
+      eventId: startedCallbackId,
+      type: "run.started",
+      workerId,
+      claimCallbackId: oldClaimId,
+      occurredAt: new Date().toISOString(),
+      recordedAt: new Date().toISOString(),
+      payload: {},
+    }, { claimOwner: workerId, claimCallbackId: oldClaimId })).rejects.toMatchObject({
+      code: "STALE_CLAIM",
+    });
+    expect(await getRun(bindings.DB, runId)).toMatchObject({
+      status: "running",
+      claim_callback_id: newClaimId,
+    });
+    expect(await countRunEvents(bindings, runId, "run.started")).toBe(0);
+  });
+
   it("[WORKER-CLAIM-ID-01] rejects a reused claim callback ID with a different lease", async () => {
     const { bindings } = testEnv();
     const created = await submit(bindings);
@@ -300,6 +448,20 @@ describe("Soyuz Worker API", () => {
     expect(first.response.status).toBe(200);
     expect(reused.response.status).toBe(409);
     expect(reused.body.error.code).toBe("CALLBACK_ID_REUSED");
+    expect(await countRunEvents(bindings, runId, "run.claimed")).toBe(1);
+  });
+
+  it("[WORKER-CLAIM-FENCE-00] rejects a second active claim from a reused worker ID", async () => {
+    const { bindings } = testEnv();
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-reused-id";
+    const first = await claimRun(bindings, runId, workerId, "00000000-0000-4000-8000-000000000079");
+    const second = await claimRun(bindings, runId, workerId, "00000000-0000-4000-8000-000000000080");
+
+    expect(first.response.status).toBe(200);
+    expect(second.response.status).toBe(409);
+    expect(second.body.error.code).toBe("STALE_CLAIM");
     expect(await countRunEvents(bindings, runId, "run.claimed")).toBe(1);
   });
 
