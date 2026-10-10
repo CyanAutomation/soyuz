@@ -7,9 +7,14 @@ const CallbackBase = z.object({
   workerId: z.string().min(1).max(200),
 }).strict();
 
+const FencedCallbackBase = CallbackBase.extend({
+  /** Optional for older contract-v1 hosts; new hosts echo the current claim callback ID. */
+  claimCallbackId: z.string().uuid().optional(),
+});
+
 const OptionalTimestamp = z.string().datetime({ offset: true }).optional();
 
-export const WorkerStartedSchema = CallbackBase.extend({
+export const WorkerStartedSchema = FencedCallbackBase.extend({
   startedAt: OptionalTimestamp,
   stage: z.string().min(1).max(120).optional(),
 }).strict();
@@ -22,6 +27,7 @@ export const WorkerEventSchema = z.object({
   contractVersion: z.literal(CONTRACT_VERSION),
   eventId: z.string().uuid(),
   workerId: z.string().min(1).max(200),
+  claimCallbackId: z.string().uuid().optional(),
   type: z.enum([
     "stage.changed",
     "step.changed",
@@ -58,7 +64,7 @@ export const WorkerEventSchema = z.object({
   }
 });
 
-export const WorkerCompletedSchema = CallbackBase.extend({
+export const WorkerCompletedSchema = FencedCallbackBase.extend({
   completedAt: OptionalTimestamp,
   exitCode: z.literal(0).optional(),
   summary: z.string().max(2_000).optional(),
@@ -66,14 +72,14 @@ export const WorkerCompletedSchema = CallbackBase.extend({
   changedFileCount: z.number().int().min(0).max(100_000).optional(),
 }).strict();
 
-export const WorkerFailedSchema = CallbackBase.extend({
+export const WorkerFailedSchema = FencedCallbackBase.extend({
   completedAt: OptionalTimestamp,
   exitCode: z.number().int().optional(),
   failureClass: z.string().min(1).max(120),
   failureMessage: z.string().min(1).max(4_000),
 }).strict();
 
-export const WorkerCancelledSchema = CallbackBase.extend({
+export const WorkerCancelledSchema = FencedCallbackBase.extend({
   completedAt: OptionalTimestamp,
   exitCode: z.number().int().optional(),
   reason: z.string().max(2_000).optional(),
