@@ -1,7 +1,7 @@
 import type { RunRequest } from "../contracts/run-request";
 import { CONTRACT_VERSION } from "../contracts/queue-message";
 import { canTransition, type RunStatus } from "../domain/run-state-machine";
-import { stableStringify } from "../lib/json";
+import { stableStringify } from "../lib/canonical-json";
 
 export interface RunRow {
   id: string;

@@ -54,18 +54,7 @@ const RunListItemOutputSchema = z.object({
   completedAt: z.string().datetime({ offset: true }).nullable(),
 }).strict();
 
-const RunDetailOutputSchema = z.object({
-  runId: z.string().uuid(),
-  repoUrl: z.string().url(),
-  ref: z.string(),
-  status: z.enum(RUN_STATUSES),
-  stage: z.string().nullable(),
-  taskMode: z.enum(["patch", "inspect"]),
-  publishMode: z.enum(["auto", "none", "branch", "pr"]),
-  createdAt: z.string().datetime({ offset: true }),
-  queuedAt: z.string().datetime({ offset: true }).nullable(),
-  startedAt: z.string().datetime({ offset: true }).nullable(),
-  completedAt: z.string().datetime({ offset: true }).nullable(),
+const RunDetailOutputSchema = RunListItemOutputSchema.extend({
   updatedAt: z.string().datetime({ offset: true }),
   outcomeSummary: z.string().nullable(),
   publishedUrl: z.string().url().nullable(),
@@ -223,6 +212,10 @@ function mcpRunSummary(row: RunRow): Record<string, unknown> {
 }
 
 function mcpRunListItem(row: RunRow): Record<string, unknown> {
+  return mcpRunFields(row);
+}
+
+function mcpRunFields(row: RunRow): Record<string, unknown> {
   return {
     runId: row.id,
     repoUrl: safeUrlForMcp(row.repo_url),
@@ -244,17 +237,7 @@ function mcpRunDetail(row: RunRow): Record<string, unknown> {
   const publishedUrl = typeof result?.publishedUrl === "string" ? safeUrlForMcp(result.publishedUrl) : null;
   const changedFileCount = typeof result?.changedFileCount === "number" ? result.changedFileCount : null;
   return {
-    runId: row.id,
-    repoUrl: safeUrlForMcp(row.repo_url),
-    ref: row.git_ref,
-    status: row.status,
-    stage: row.stage,
-    taskMode: row.task_mode,
-    publishMode: row.publish_mode,
-    createdAt: row.created_at,
-    queuedAt: row.queued_at,
-    startedAt: row.started_at,
-    completedAt: row.completed_at,
+    ...mcpRunFields(row),
     updatedAt: row.updated_at,
     outcomeSummary: summary,
     publishedUrl,

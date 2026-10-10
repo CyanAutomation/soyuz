@@ -11,6 +11,7 @@
     "deploy": "wrangler deploy",
     "typecheck": "wrangler types && tsc --noEmit",
     "test": "vitest run",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:mutation:unit": "wrangler types && stryker run stryker.unit.config.mjs",
     "cf:types": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply soyuz-runs --local",

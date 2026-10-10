@@ -244,6 +244,23 @@ describe("Soyuz Worker API", () => {
     expect(row?.failure_message).toContain("new Idempotency-Key");
   });
 
+  it("[RUN-ADMISSION-SIZE-01] rejects an oversized Queue message and records admission failure", async () => {
+    const { bindings, send } = testEnv();
+    const result = await submit(bindings, {
+      validationCommands: [
+        ...Array.from({ length: 47 }, () => "x".repeat(2_048)),
+        "x".repeat(1_500),
+      ],
+    });
+
+    expect(result.response.status).toBe(422);
+    expect(result.body.error.code).toBe("RUN_REQUEST_TOO_LARGE");
+    expect(send).not.toHaveBeenCalled();
+    const row = await getRun(bindings.DB, result.body.error.details.runId as string);
+    expect(row?.status).toBe("admission_failed");
+    expect(row?.failure_class).toBe("queue_message_too_large");
+  });
+
   it("[WORKER-CLAIM-01] grants an idempotent claim to one worker", async () => {
     const { bindings } = testEnv();
     const created = await submit(bindings);
@@ -260,6 +277,49 @@ describe("Soyuz Worker API", () => {
     expect(stored?.worker_id).toBe(workerId);
     expect(stored?.claim_expires_at).toBe(firstClaim.body.data.claimExpiresAt);
     expect(claimReplay.body.data.claimExpiresAt).toBe(firstClaim.body.data.claimExpiresAt);
+    expect(await countRunEvents(bindings, runId, "run.claimed")).toBe(1);
+  });
+
+  it("[WORKER-CLAIM-ID-01] rejects a reused claim callback ID with a different lease", async () => {
+    const { bindings } = testEnv();
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-claim-replay";
+    const first = await claimRun(bindings, runId, workerId);
+    const reused = await call(bindings, `/v1/worker/runs/${runId}/claim`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        callbackId: "00000000-0000-4000-8000-000000000030",
+        workerId,
+        leaseSeconds: 180,
+      },
+    });
+
+    expect(first.response.status).toBe(200);
+    expect(reused.response.status).toBe(409);
+    expect(reused.body.error.code).toBe("CALLBACK_ID_REUSED");
+    expect(await countRunEvents(bindings, runId, "run.claimed")).toBe(1);
+  });
+
+  it("[WORKER-CLAIM-RACE-01] grants a queued run to only one concurrent worker", async () => {
+    const { bindings } = testEnv();
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const claims = await Promise.all([
+      claimRun(bindings, runId, "docker-host-race-a", "00000000-0000-4000-8000-000000000032"),
+      claimRun(bindings, runId, "docker-host-race-b", "00000000-0000-4000-8000-000000000033"),
+    ]);
+
+    const granted = claims.filter((claim) => claim.response.status === 200);
+    const rejected = claims.filter((claim) => claim.response.status !== 200);
+    const stored = await getRun(bindings.DB, runId);
+    expect(granted).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].response.status).toBe(409);
+    expect(rejected[0].body.error.code).toBe("RUN_CLAIMED");
+    expect(["docker-host-race-a", "docker-host-race-b"]).toContain(stored?.worker_id);
     expect(await countRunEvents(bindings, runId, "run.claimed")).toBe(1);
   });
 
@@ -291,6 +351,15 @@ describe("Soyuz Worker API", () => {
     expect(afterReplay?.started_at).toBe(afterFirstStart?.started_at);
     expect(afterReplay?.stage).toBe("prepare");
     expect(await countRunEvents(bindings, runId, "run.started")).toBe(1);
+
+    const reusedCallbackId = await call(bindings, `/v1/worker/runs/${runId}/started`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: { ...startedBody, stage: "execute" },
+    });
+    expect(reusedCallbackId.response.status).toBe(409);
+    expect(reusedCallbackId.body.error.code).toBe("CALLBACK_ID_REUSED");
+    expect((await getRun(bindings.DB, runId))?.stage).toBe("prepare");
   });
 
   it("[WORKER-EVENT-01/CALLBACK-IDEMPOTENCY-01] stores one event when the worker retries its callback", async () => {
