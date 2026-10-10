@@ -1,6 +1,6 @@
 # Test requirement index
 
-Tests carry the IDs below in their `it()` names; one test may cover more than one ID. These IDs provide a stable link from an assertion to its canonical behavior source. When a test or contract changes, update this index; do not reuse an ID for a different behavior.
+Tests carry the IDs below in their `it()` names; one test may cover more than one ID. These IDs provide a stable link from an assertion to its canonical behavior source. When a test or contract changes, update this index; do not reuse an ID for a different behavior. IDs whose source is marked as an internal invariant classify helper-level tests, not user-facing contract coverage.
 
 | ID | Requirement | Canonical source |
 | --- | --- | --- |
@@ -22,11 +22,13 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `CALLBACK-IDEMPOTENCY-01` | Replaying a callback or event with the same ID and payload is safe. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
 | `WORKER-COMPLETE-01` | Completion callbacks are replay-safe and terminal runs reject late starts. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
 | `WORKER-FAIL-01` | Failure callbacks accept an exact retry. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `WORKER-PRESTART-FAIL-01` | An owned, live claimed run can record a pre-execution failure without entering running state. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks); [Architecture: run lifecycle](ARCHITECTURE.md#run-lifecycle) |
 | `CANCEL-QUEUED-01` | Queued cancellation is terminal and rejects a late start. | [Transport contract: cancellation](CONTRACT.md#public-endpoints) |
 | `CANCEL-RUNNING-01` | Running cancellation remains pending until the worker confirms it. | [Transport contract: cancellation](CONTRACT.md#public-endpoints) |
 | `WORKER-CANCEL-01` | The worker can confirm cancellation through its callback route. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
 | `CANCEL-CAS-01` | A stale claimed-state cancellation cannot overwrite a run that has started. | [Architecture: run lifecycle](ARCHITECTURE.md#run-lifecycle) |
 | `RUN-READ-REST-01` | REST history, detail, and unknown-run behavior are stable. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |
+| `RUN-LIVENESS-01` | A stale heartbeat marks an active run suspect without changing lifecycle state or requeueing it; a later heartbeat restores healthy status. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks); [Kaseki heartbeat policy](KASEKI-INTEGRATION.md#heartbeat-and-suspected-stalled-runs) |
 | `QUEUE-RECONCILE-01` | A stale admission is retried with the original run ID. | [Transport contract: run request](CONTRACT.md#run-request) |
 | `WORKER-CLAIM-RECOVERY-01` | An abandoned claim expires and republishes the original run ID. | [Architecture: run lifecycle](ARCHITECTURE.md#run-lifecycle) |
 | `LIFECYCLE-RACE-01` | Competing terminal outcomes commit only one terminal event. | [Architecture: run lifecycle](ARCHITECTURE.md#run-lifecycle) |
@@ -47,8 +49,22 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `LIFECYCLE-TRANSITIONS-01` | The state machine permits the documented lifecycle transitions. | [Architecture: run lifecycle](ARCHITECTURE.md#run-lifecycle) |
 | `LIFECYCLE-TERMINAL-01` | Terminal states cannot return to active states. | [Architecture: run lifecycle](ARCHITECTURE.md#run-lifecycle) |
 | `RUN-ID-UUIDV7-01` | Run IDs encode the millisecond timestamp and sort across millisecond boundaries. | [Architecture: IDs, authentication, and compatibility](ARCHITECTURE.md#ids-authentication-and-compatibility) |
-| `RUN-ID-BOUNDS-01` | The UUIDv7 encoder rejects timestamps outside its 48-bit field. | Internal invariant in `src/lib/uuidv7.ts`. |
-| `SERIALIZE-CYCLE-01` | Stable serialization detects circular references. | Internal invariant in `src/lib/json.ts`. |
-| `SERIALIZE-SHARED-01` | Reusing an object in separate branches is not mistaken for a cycle. | Internal invariant in `src/lib/json.ts`. |
 | `HTTP-BODY-01` | JSON body size is measured in bytes and capped at 96 KiB. | [Transport contract: errors](CONTRACT.md#errors) |
 | `ERRORS-01` | Invalid run requests return a stable 422 error response. | [Transport contract: errors](CONTRACT.md#errors) |
+
+## Internal helper invariants
+
+These tests protect implementation helpers and are useful for direct callers and mutation checks, but they do not represent behavior that a client can exercise through the JSON API. Keep them separate from user-facing requirement coverage when scoring the suite.
+
+Run `npm run test:mutation:unit` to measure how well the focused helper and lifecycle unit tests detect mutations. This pilot is not part of the regular CI test command.
+
+The initial local run reported a 90.63% mutation score across 113 mutants. It also reported three timeouts, 49 type-check errors, and six survivors. Five survivors are static transition-array mutants: replacing a transition list with an empty list directly makes the transition test fail, although Stryker reports those mutants as surviving. Treat this score as a baseline signal, not a gate, until the Vitest runner's static-mutant behavior is resolved. The remaining survivor changes UUID error-message text, which is not part of the public contract.
+
+| ID | Internal invariant |
+| --- | --- |
+| `RUN-ID-BOUNDS-01` | The UUIDv7 encoder rejects timestamps outside its 48-bit field. |
+| `SERIALIZE-CYCLE-01` | Stable serialization detects circular references. |
+| `SERIALIZE-SHARED-01` | Reusing an object in separate branches is not mistaken for a cycle. |
+| `SERIALIZE-ARRAY-01` | Stable serialization preserves nested array values and deterministic object-key ordering. |
+| `SERIALIZE-PRIMITIVE-01` | Stable serialization returns a string for primitive values, mapping undefined to null. |
+| `SERIALIZE-SHA256-01` | The SHA-256 helper returns the standard hexadecimal digest. |

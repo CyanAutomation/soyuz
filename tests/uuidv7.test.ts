@@ -16,5 +16,9 @@ describe("UUIDv7 run IDs", () => {
   it("[RUN-ID-BOUNDS-01] rejects timestamps outside the UUIDv7 field", () => {
     expect(() => createRunId(-1)).toThrow(RangeError);
     expect(() => createRunId(2 ** 48)).toThrow(RangeError);
+
+    const firstTimestampId = createRunId(0);
+    const encodedTimestamp = Number.parseInt(firstTimestampId.replaceAll("-", "").slice(0, 12), 16);
+    expect(encodedTimestamp).toBe(0);
   });
 });
