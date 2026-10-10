@@ -1,26 +1,40 @@
 import { describe, expect, it } from "vitest";
-import { canTransition, isTerminalStatus } from "../src/domain/run-state-machine";
+import { allowedTransitions, canTransition, isTerminalStatus, RUN_STATUSES, type RunStatus } from "../src/domain/run-state-machine";
+
+const documentedTransitions: Record<RunStatus, readonly RunStatus[]> = {
+  admitting: ["queued", "admission_failed", "cancelled"],
+  queued: ["claimed", "cancelled"],
+  claimed: ["running", "admitting", "cancelled", "failed"],
+  running: ["cancel_requested", "completed", "failed", "cancelled"],
+  cancel_requested: ["completed", "failed", "cancelled"],
+  cancelled: [],
+  completed: [],
+  failed: [],
+  admission_failed: [],
+};
+
+const terminalStatuses = new Set<RunStatus>(["cancelled", "completed", "failed", "admission_failed"]);
 
 describe("run state machine", () => {
-  it("[LIFECYCLE-TRANSITIONS-01] permits documented admission, execution, and cancellation transitions", () => {
-    expect(canTransition("admitting", "queued")).toBe(true);
-    expect(canTransition("admitting", "admission_failed")).toBe(true);
-    expect(canTransition("queued", "claimed")).toBe(true);
-    expect(canTransition("claimed", "running")).toBe(true);
-    expect(canTransition("claimed", "admitting")).toBe(true);
-    expect(canTransition("claimed", "cancelled")).toBe(true);
-    expect(canTransition("queued", "cancelled")).toBe(true);
-    expect(canTransition("running", "cancel_requested")).toBe(true);
-    expect(canTransition("cancel_requested", "completed")).toBe(true);
-    expect(canTransition("cancel_requested", "failed")).toBe(true);
-    expect(canTransition("cancel_requested", "cancelled")).toBe(true);
+  it("[LIFECYCLE-TRANSITIONS-01] permits only the documented lifecycle transitions", () => {
+    for (const from of RUN_STATUSES) {
+      expect(allowedTransitions(from), from).toEqual(documentedTransitions[from]);
+      for (const to of RUN_STATUSES) {
+        expect(canTransition(from, to), `${from} -> ${to}`).toBe(documentedTransitions[from].includes(to));
+      }
+    }
   });
 
   it("[LIFECYCLE-TERMINAL-01] prevents terminal states from returning to active states", () => {
-    for (const status of ["cancelled", "completed", "failed", "admission_failed"] as const) {
-      expect(isTerminalStatus(status)).toBe(true);
-      expect(canTransition(status, "queued")).toBe(false);
-      expect(canTransition(status, "running")).toBe(false);
+    const activeStatuses = RUN_STATUSES.filter((status) => !terminalStatuses.has(status));
+
+    for (const status of RUN_STATUSES) {
+      expect(isTerminalStatus(status), status).toBe(terminalStatuses.has(status));
+      if (!terminalStatuses.has(status)) continue;
+
+      for (const activeStatus of activeStatuses) {
+        expect(canTransition(status, activeStatus), `${status} -> ${activeStatus}`).toBe(false);
+      }
     }
   });
 });
