@@ -1,3 +1,5 @@
+[![CI and deploy](https://github.com/CyanAutomation/soyuz/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CyanAutomation/soyuz/actions/workflows/ci.yml)
+
 # Soyuz
 
 Soyuz is the Cloudflare control plane for Kaseki. It accepts authenticated run requests, persists canonical run state in D1, publishes versioned jobs to Cloudflare Queues, and records callbacks from Kaseki execution hosts. Kaseki continues to own Docker, repository access, Pi, validation, safety admission, and publication.
