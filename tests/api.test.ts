@@ -765,6 +765,58 @@ describe("Soyuz Worker API", () => {
     expect(stored?.admission_attempts).toBe(2);
   });
 
+  it("[QUEUE-RETENTION-01] republishes a stale queued run without changing its admission time and backs off", async () => {
+    const { bindings, sent } = testEnv();
+    const now = new Date();
+    const old = new Date(now.getTime() - 13 * 60 * 60_000).toISOString();
+    const id = "00000000-0000-4000-8000-000000000060";
+    const request = {
+      repoUrl: "https://github.com/example/project",
+      ref: "main",
+      taskPrompt: "Inspect the project setup and summarize its first steps.",
+      taskMode: "inspect" as const,
+      publishMode: "none" as const,
+    };
+    await insertRun(bindings.DB, {
+      id,
+      request,
+      requestHash: "test-fingerprint-queue-retention",
+      idempotencyKey: null,
+      correlationId: "00000000-0000-4000-8000-000000000061",
+      requestId: "00000000-0000-4000-8000-000000000062",
+      createdAt: old,
+    });
+    await transitionRun(bindings.DB, id, "queued", { queued_at: old }, {
+      eventId: "system:admission:queued",
+      type: "run.queued",
+      occurredAt: old,
+      recordedAt: old,
+      payload: { queue: "soyuz-runs" },
+    });
+
+    await Promise.all([
+      reconcileAdmissions(bindings, now),
+      reconcileAdmissions(bindings, now),
+    ]);
+    let stored = await getRun(bindings.DB, id);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ runId: id, request });
+    expect(stored?.status).toBe("queued");
+    expect(stored?.queued_at).toBe(old);
+    expect(stored?.updated_at).toBe(now.toISOString());
+    expect(await countRunEvents(bindings, id, "run.queue_recovery_attempted")).toBe(1);
+
+    await reconcileAdmissions(bindings, new Date(now.getTime() + 60_000));
+    expect(sent).toHaveLength(1);
+
+    await reconcileAdmissions(bindings, new Date(now.getTime() + 13 * 60 * 60_000));
+    stored = await getRun(bindings.DB, id);
+    expect(sent).toHaveLength(2);
+    expect(sent[1].runId).toBe(id);
+    expect(stored?.queued_at).toBe(old);
+    expect(await countRunEvents(bindings, id, "run.queue_recovery_attempted")).toBe(2);
+  });
+
   it("[WORKER-CLAIM-RECOVERY-01] expires an abandoned claim and republishes the same run ID", async () => {
     const { bindings, sent } = testEnv();
     const now = new Date();

@@ -526,6 +526,15 @@ export async function listStaleAdmissions(db: D1Database, olderThan: string, lim
   return rows.results;
 }
 
+export async function listStaleQueuedRuns(db: D1Database, olderThan: string, limit: number): Promise<RunRow[]> {
+  const rows = await db.prepare(`
+    SELECT * FROM runs
+    WHERE status = 'queued' AND updated_at <= ?
+    ORDER BY updated_at ASC LIMIT ?
+  `).bind(olderThan, limit).all<RunRow>();
+  return rows.results;
+}
+
 export async function listExpiredClaims(db: D1Database, at: string, limit: number): Promise<RunRow[]> {
   const rows = await db.prepare(`
     SELECT * FROM runs WHERE status = 'claimed' AND claim_expires_at <= ?
@@ -541,6 +550,36 @@ export async function reserveAdmissionRetry(db: D1Database, run: RunRow, attempt
     WHERE id = ? AND status = 'admitting' AND admission_last_attempt_at = ?
   `).bind(attemptedAt, attemptedAt, run.id, run.admission_last_attempt_at).run();
   return Number(result.meta.changes ?? 0) === 1;
+}
+
+export async function reserveQueuedRunRecovery(db: D1Database, run: RunRow, attemptedAt: string): Promise<boolean> {
+  const eventId = `system:queue-recovery:${attemptedAt}`;
+  const results = await db.batch([
+    db.prepare(`
+      UPDATE runs SET updated_at = ?
+      WHERE id = ? AND status = 'queued' AND updated_at = ?
+    `).bind(attemptedAt, run.id, run.updated_at),
+    db.prepare(`
+      INSERT INTO run_events (
+        run_id, contract_version, event_id, type, worker_id, stage, step,
+        occurred_at, recorded_at, payload_json
+      )
+      SELECT ?, ?, ?, 'run.queue_recovery_attempted', NULL, NULL, NULL, ?, ?, ?
+      WHERE changes() = 1
+        AND EXISTS (SELECT 1 FROM runs WHERE id = ? AND status = 'queued' AND updated_at = ?)
+      ON CONFLICT(run_id, event_id) DO NOTHING
+    `).bind(
+      run.id,
+      CONTRACT_VERSION,
+      eventId,
+      attemptedAt,
+      attemptedAt,
+      stableStringify({ queue: "soyuz-runs", reason: "queue_retention" }),
+      run.id,
+      attemptedAt,
+    ),
+  ]);
+  return Number(results[0]?.meta?.changes ?? 0) === 1;
 }
 
 export function parseRequest(row: RunRow): RunRequest {

@@ -1,8 +1,10 @@
-# Soyuz implementation plan
+# Soyuz initial implementation plan (historical)
 
 Prepared before implementation on 2026-10-02.
 
-## Current-state findings
+> This file preserves the original planning snapshot. It does not describe the current repository state or remaining work. See the [README](../README.md), [architecture](ARCHITECTURE.md), [Kaseki integration](KASEKI-INTEGRATION.md), and [deployment guide](DEPLOYMENT.md) for the implemented system and current operations.
+
+## Initial findings (2026-10-02)
 
 - The Soyuz `main` checkout is an initial commit with only a placeholder README and license. There is no existing runtime, API, schema, or test suite to preserve.
 - `CyanAutomation/kaseki-agent` has default branch `main`, observed at commit [`adb830d`](https://github.com/CyanAutomation/kaseki-agent/commit/adb830d349642f8f9bf06f491333d94c4c4a6940) (v1.147.2). Its [README](https://github.com/CyanAutomation/kaseki-agent/blob/main/README.md) describes a Docker-backed runner; its [lifecycle guide](https://github.com/CyanAutomation/kaseki-agent/blob/main/docs/KASEKI-AGENT-LIFECYCLE-DIAGRAMS.md) separates queueing, startup, execution, and terminal outcomes.
@@ -24,7 +26,7 @@ Prepared before implementation on 2026-10-02.
 8. **Idempotency.** Accept Kaseki's UUID `idempotencyKey` and the matching `Idempotency-Key` header. Persist a SHA-256 fingerprint of the normalized execution request. Same key plus same fingerprint returns the existing run; same key with different content returns 409. Generate UUIDv7 run IDs from the current millisecond timestamp and Workers' built-in Web Crypto random bytes; callers treat them as opaque instead of relying on `kaseki-N`.
 9. **D1/Queue consistency.** Insert an `admitting` row and event, call `Queue.send()`, then transactionally set `queued` and append its event. A send exception has an ambiguous outcome, so keep the run `admitting` and retry the same run ID; after five failed attempts, set `admission_failed`. A one-minute scheduled reconciler retries stale `admitting` rows and reclaims expired `claimed` rows using the same run ID. Kaseki must not acknowledge while admission is incomplete and must wait for the started callback before execution. Duplicate messages are expected. A cancellation can race with publication; the worker sees terminal state and safely skips it.
 10. **Testing.** Use Cloudflare's Vitest integration with a real local D1 binding for route/state persistence and a queue test double to inject send success/failure. Cover request validation/auth, admission and reconciliation, idempotent replay/key conflict, competing claims, expired claims, transitions and cancellation races, callback retries, event de-duplication, list/get/404, and separate client/worker trust.
-11. **Explicit non-goals.** Do not modify Kaseki, run Docker, clone repositories, install project dependencies as part of a run, implement artifacts/R2, UI, RBAC, billing, streaming, GitHub publishing, or migrate Kaseki's execution safety gate. The follow-up document will specify the Kaseki host work and queue acknowledgement point.
+11. **Explicit non-goals.** The original scope excluded changes to Kaseki execution safety, artifacts/R2, UI, RBAC, billing, streaming, and GitHub publishing. The Kaseki host integration and Queue acknowledgement point are now documented in the [Kaseki integration guide](KASEKI-INTEGRATION.md).
 
 ## Sources consulted
 
