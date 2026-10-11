@@ -50,6 +50,8 @@ Create a separate API token for the Kaseki host with Queue read and write permis
 
 Create a separate dead-letter Queue, for example `soyuz-runs-dlq`, and configure the HTTP pull consumer with a finite `max_retries` value (for example, 5) and that DLQ. Verify the consumer settings in Cloudflare before enabling unattended Kaseki polling. Without a DLQ, messages that reach the retry limit are deleted. The host guide explains poison-message review and replay.
 
+The `soyuz-runs` Queue currently retains messages for 24 hours. Soyuz's one-minute reconciler republishes D1 runs that remain `queued` for 12 hours, leaving time for a replacement message to reach Kaseki before Queue retention expires. Keep Queue retention longer than this recovery interval or adjust the interval with it.
+
 ## GitHub Actions deployment
 
 `.github/workflows/ci.yml` runs on pull requests to `main` and pushes to `main`. Pull requests run `npm ci`, `npm run typecheck`, `npm test`, and `npx wrangler deploy --dry-run`. Before a push to `main` deploys the Worker, the workflow reads D1's `d1_migrations` history and checks it against every numbered SQL file in `migrations/`. A missing, unexpected, or out-of-order migration blocks deployment. The check uses a separate D1 Read token; it does not apply migrations or use the Worker deployment token. The post-deploy `/health` check is still required, but it only proves basic Worker/D1 connectivity and does not replace the schema check.
@@ -106,7 +108,7 @@ Do not manually pull or acknowledge the test message while validating the Kaseki
 
 ## Worker configuration
 
-`wrangler.jsonc` declares the Worker entry point, compatibility date, D1 binding and database ID, Queue producer binding, required secret names, observability, and the one-minute admission reconciliation cron. Queue pull mode remains an external consumer configuration. The D1 ID is a resource identifier; account IDs and production credentials are not committed here.
+`wrangler.jsonc` declares the Worker entry point, compatibility date, D1 binding and database ID, Queue producer binding, required secret names, observability, and the one-minute reconciler for stale admissions, expired claims, stale queued runs, and stalled-run health. Queue pull mode remains an external consumer configuration. The D1 ID is a resource identifier; account IDs and production credentials are not committed here.
 
 Migration `0002_run_liveness.sql` adds the heartbeat and operational-health columns. Apply all pending migrations with the separately authorized `npm run db:migrate:remote` procedure before deploying code that reads them. Never recreate the database or discard run history as a migration repair.
 
