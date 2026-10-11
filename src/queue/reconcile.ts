@@ -1,11 +1,12 @@
 import { CONTRACT_VERSION, type QueuedRun } from "../contracts/queue-message";
-import { listExpiredClaims, listStaleAdmissions, listStaleRunningRuns, markRunSuspectedStalled, parseRequest, reserveAdmissionRetry, transitionRun } from "../db/runs";
+import { listExpiredClaims, listStaleAdmissions, listStaleQueuedRuns, listStaleRunningRuns, markRunSuspectedStalled, parseRequest, reserveAdmissionRetry, reserveQueuedRunRecovery, transitionRun } from "../db/runs";
 import type { Env } from "../env";
 
 const RETRY_AFTER_MS = 60_000;
 const MAX_ADMISSION_ATTEMPTS = 5;
 const RECONCILE_BATCH_SIZE = 50;
 const MAX_QUEUE_MESSAGE_BYTES = 96 * 1024;
+const QUEUED_RUN_RECOVERY_AFTER_MS = 12 * 60 * 60_000;
 const STALE_RUNNING_HEARTBEAT_MS = 5 * 60_000;
 
 export async function reconcileAdmissions(env: Env, at = new Date()): Promise<void> {
@@ -86,6 +87,34 @@ export async function reconcileAdmissions(env: Env, at = new Date()): Promise<vo
     } catch {
       // A successful send followed by a D1 failure is retried with the same run ID.
       // The Kaseki consumer must check canonical state and deduplicate before starting.
+    }
+  }
+
+  const staleQueuedCutoff = new Date(at.getTime() - QUEUED_RUN_RECOVERY_AFTER_MS).toISOString();
+  const staleQueued = await listStaleQueuedRuns(env.DB, staleQueuedCutoff, RECONCILE_BATCH_SIZE);
+  for (const row of staleQueued) {
+    if (!(await reserveQueuedRunRecovery(env.DB, row, now))) continue;
+    const message: QueuedRun = {
+      contractVersion: CONTRACT_VERSION,
+      runId: row.id,
+      createdAt: row.created_at,
+      correlationId: row.correlation_id,
+      requestId: row.request_id,
+      request: parseRequest(row),
+    };
+
+    try {
+      if (new TextEncoder().encode(JSON.stringify(message)).byteLength > MAX_QUEUE_MESSAGE_BYTES) {
+        throw new Error("queue message too large");
+      }
+      await env.RUN_QUEUE.send(message, { contentType: "json" });
+    } catch (error) {
+      console.warn(JSON.stringify({
+        event: "soyuz_queued_run_recovery_failed",
+        runId: row.id,
+        errorClass: error instanceof Error ? error.name : "Error",
+        retryAfterMs: QUEUED_RUN_RECOVERY_AFTER_MS,
+      }));
     }
   }
 }

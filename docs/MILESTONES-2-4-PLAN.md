@@ -1,11 +1,13 @@
 # Kaseki/Soyuz milestones 2–4 delivery record
 
+This is a historical handoff snapshot. Its verification notes describe the state at that handoff, not the current deployment state.
+
 ## Base state inspected
 
 - Soyuz was reset to `main` and fast-forwarded from `origin/main` at `4d2514b` before work began. Contract v1 already defined Queue admission, worker reads/claim/start/events/terminal callbacks, callback IDs, and claim recovery.
 - Kaseki was reset to `main` and fast-forwarded from `origin/main` at `bdbc2b82` before work began. Its scheduler persists queued work before execution, uses the shared jobs index, and recovers queued jobs while classifying interrupted running jobs as `api_restart`.
 - Kaseki already supplied task safety admission, template and publish checks, Docker lifecycle, cancellation, progress events, results storage, and Prometheus metrics; the adapter reuses those services.
-- Contract-v1 claims are fenced by worker ID and a live lease, not a per-execution fencing token. The implementation therefore requires unique stable host IDs, never takes over a `running` run automatically, and treats stale liveness as operator review only.
+- Each accepted claim has a `claimCallbackId` derived from its unique claim callback ID. Started, event/heartbeat, and terminal callbacks must match the latest claim, even if a worker ID is accidentally reused. A stale `running` run is still operator-review only; Soyuz never takes it over automatically.
 
 ## Delivered
 
@@ -35,8 +37,8 @@ Kaseki acknowledges the Queue message only after (1) Soyuz claim acceptance, (2)
 
 An expired `claimed` lease may be recovered by Soyuz's existing admission reconciler because the scheduler gate prevents a claimed-but-not-started execution from running. A `running` run with stale heartbeat is marked `suspect_stalled` and never requeued by the reconciler. If the host and persistent volume are permanently lost, contract v1 has no automated fencing/takeover operation; operators must verify the previous Docker execution stopped before a separately approved manual recovery.
 
-## Verification and rollout boundary
+## Verification at milestone handoff
 
-Soyuz unit/API tests and Kaseki type/unit checks are run locally. The Kaseki guide contains a disposable non-publishing smoke-test procedure. No production migration, Worker deployment, live Queue consumption, or live execution was performed. Migration `0002_run_liveness.sql` must be applied through the existing separately authorized remote-migration procedure before deploying Soyuz code that reads its columns.
+Soyuz unit/API tests and Kaseki type/unit checks were run locally. The Kaseki guide contained a disposable non-publishing smoke-test procedure. At that handoff, no production migration, Worker deployment, live Queue consumption, or live execution had been performed. See the [deployment guide](DEPLOYMENT.md) for current rollout procedures and the [test requirement index](TEST-REQUIREMENTS.md) for tracked behavior.
 
 The HTTP pull implementation follows the current official [Cloudflare pull consumer](https://developers.cloudflare.com/queues/configuration/pull-consumers/), [dead-letter queue](https://developers.cloudflare.com/queues/configuration/dead-letter-queues/), and [D1 batch](https://developers.cloudflare.com/d1/worker-api/d1-database/) documentation.

@@ -68,4 +68,4 @@ Enable the Queue's HTTP pull consumer for the Kaseki host separately in Cloudfla
 
 ## Scope
 
-This repository implements the Soyuz side only. The queue consumer and callback client in `kaseki-agent` are a follow-up integration; Soyuz does not run containers or execute repository code.
+The opt-in Queue consumer and callback client are implemented in [`kaseki-agent`](https://github.com/CyanAutomation/kaseki-agent/blob/main/docs/SOYUZ_INTEGRATION.md). Soyuz owns the control-plane API and canonical run state; the Kaseki host continues to run containers and execute repository code.

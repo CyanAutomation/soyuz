@@ -67,6 +67,10 @@ Transitions are checked in one domain state machine and written with a status co
 
 D1 and Queues do not share a transaction. Soyuz writes `admitting` and its event, awaits `RUN_QUEUE.send()`, then batches the `queued` update and event in D1. A send exception is outcome-ambiguous, so the run stays `admitting`; a one-minute scheduled reconciler retries it with the same run ID and records `admission_failed` after five unsuccessful attempts. A successful send followed by a D1 failure can also create duplicate Queue messages, so the Kaseki consumer must deduplicate and check canonical status.
 
+### Queue retention and recovery
+
+The scheduled reconciler also republishes a `queued` run when its last update is at least 12 hours old. This recovers jobs whose Queue message expired while the execution host was unavailable. The recovery reserves an attempt with a D1 compare-and-set and appends `run.queue_recovery_attempted` in one batch before sending; a failed send is eligible for another attempt after 12 hours. It keeps the same run ID and leaves `queuedAt` unchanged. `updatedAt` records the latest recovery attempt. Duplicate delivery remains safe because Kaseki deduplicates by run ID and checks canonical state before execution. Keep Queue retention longer than the 12-hour recovery interval; the current production Queue retains messages for 24 hours.
+
 Kaseki must leave a pulled message unacknowledged while Soyuz still reports `admitting`. After it reads `queued`, it claims the run with a worker-authenticated compare-and-set. It may execute only after its `started` callback moves the claim to `running`. If it sees a terminal state, it acknowledges and skips the message. A cancellation racing with publication may still leave a Queue message; canonical `cancelled` state makes it harmless.
 
 ## IDs, authentication, and compatibility
