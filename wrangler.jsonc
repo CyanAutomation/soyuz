@@ -10,7 +10,8 @@
     "binding": "ASSETS"
   },
   "vars": {
-    "SOYUZ_PUBLIC_URL": "https://soyuz.scheimann.workers.dev"
+    "SOYUZ_PUBLIC_URL": "https://soyuz.scheimann.workers.dev",
+    "SOYUZ_OAUTH_ALLOWED_GITHUB_IDS": "68898852"
   },
   "kv_namespaces": [
     {
