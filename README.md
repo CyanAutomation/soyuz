@@ -6,7 +6,7 @@ Soyuz is the Cloudflare control plane for Kaseki. It accepts authenticated run r
 
 ## Local development
 
-Requirements: Node.js 22 or later and npm.
+Requirements: Node.js 22 or later and npm. The local token check enforces a 16-character minimum; the example values are longer to encourage stronger secrets. Keep the client and worker tokens distinct.
 
 ```sh
 npm install
@@ -17,7 +17,20 @@ npm run db:migrate:local
 npm run dev
 ```
 
-The local Worker uses Wrangler's local D1 database and Queue binding. `.dev.vars` and the generated `worker-configuration.d.ts` are ignored by Git. For Cloudflare's Worker runtime test harness, run `npm test`; `npm run typecheck` refreshes Wrangler's binding/runtime types and checks TypeScript.
+The local Worker uses Wrangler's local D1 database and Queue binding. `.dev.vars` and the generated `worker-configuration.d.ts` are ignored by Git. To try a local request, keep `npm run dev` running in one terminal, then set `CLIENT_API_TOKEN` in a second terminal to the same value from `.dev.vars` and submit a run:
+
+```sh
+export CLIENT_API_TOKEN='the-client-token-from-.dev.vars'
+curl --fail-with-body --silent --show-error \
+  --request POST http://localhost:8787/v1/runs \
+  --header "Authorization: Bearer $CLIENT_API_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{"repoUrl":"https://github.com/example/demo","taskPrompt":"Verify local Soyuz queue admission.","publishMode":"none"}'
+```
+
+An accepted request returns HTTP `202` with a JSON body containing `data.id`, `data.status` (`queued`), and `requestId`. This local request writes to local D1 and the local Queue; it does not execute the request unless a Queue consumer is separately configured. Each invocation without an idempotency key creates a new run.
+
+The [transport contract](docs/CONTRACT.md) documents request fields, responses, pagination, and errors. For Cloudflare's Worker runtime test harness, run `npm test`; `npm run typecheck` refreshes Wrangler's binding/runtime types and checks TypeScript.
 
 ## API overview
 
@@ -45,7 +58,7 @@ POST /v1/worker/runs/:id/failed
 POST /v1/worker/runs/:id/cancelled
 ```
 
-All Soyuz↔Kaseki messages carry `contractVersion: "1"`. See [the architecture](docs/ARCHITECTURE.md), [contract](docs/CONTRACT.md), [Kaseki integration plan](docs/KASEKI-INTEGRATION.md), and [Cloudflare setup](docs/DEPLOYMENT.md).
+All Soyuz↔Kaseki messages carry `contractVersion: "1"`. See [the architecture](docs/ARCHITECTURE.md), [transport contract](docs/CONTRACT.md), [MCP interface](docs/MCP.md), [Kaseki integration](docs/KASEKI-INTEGRATION.md), and [Cloudflare setup](docs/DEPLOYMENT.md).
 
 Client and worker keys are static bearer secrets; Soyuz does not assign them an automatic expiry time. Rotating or revoking a configured key makes earlier keys invalid. Authentication errors return 401 with guidance to use the current key; a missing server-side key returns 503 so it is distinguishable from a caller credential error.
 
@@ -69,3 +82,7 @@ Enable the Queue's HTTP pull consumer for the Kaseki host separately in Cloudfla
 ## Scope
 
 The opt-in Queue consumer and callback client are implemented in [`kaseki-agent`](https://github.com/CyanAutomation/kaseki-agent/tree/main/src/integrations/soyuz); see the [host integration guide](https://github.com/CyanAutomation/kaseki-agent/blob/main/docs/SOYUZ_INTEGRATION.md) for configuration and recovery. The adapter is disabled by default, and direct Kaseki API and CLI runs remain available. Soyuz owns the control-plane API and canonical run state; the Kaseki host continues to run containers and execute repository code.
+
+## Development and support
+
+Run `npm run typecheck` to generate Wrangler types and check TypeScript, and `npm test` to run the Worker runtime test suite. The [CI workflow](.github/workflows/ci.yml) also validates the deployment bundle. See the [license](LICENSE) for reuse terms and [GitHub Issues](https://github.com/CyanAutomation/soyuz/issues) to report a problem.

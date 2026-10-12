@@ -2,7 +2,7 @@
 
 ## Local setup
 
-Use Node.js 22 or later. Install dependencies, copy the local variable template, replace both token values with different random strings of at least 32 characters, then apply the local D1 migration:
+Use Node.js 22 or later. Install dependencies, copy the local variable template, and replace both token values with distinct random strings. Soyuz enforces a minimum of 16 characters; the 32-character example values are a stronger recommendation. Then apply the local D1 migration:
 
 ```sh
 npm install
@@ -20,7 +20,7 @@ npx wrangler d1 create soyuz-runs
 npx wrangler queues create soyuz-runs
 ```
 
-Copy the D1 `database_id` returned by Wrangler into `wrangler.jsonc`, replacing the all-zero local placeholder. The database name and Queue name should remain `soyuz-runs` unless the bindings are changed in the config at the same time.
+The checked-in `wrangler.jsonc` already contains a non-zero D1 `database_id`. Verify that it identifies the intended database before deploying. If you create a different D1 database, replace the configured ID with the `database_id` returned by Wrangler and keep the configured database name and Queue name as `soyuz-runs` unless you update the corresponding bindings at the same time.
 
 Set distinct production Worker secrets before the first deploy. Apply the initial migration as a separately authorized manual operation, generate Worker/binding types, then deploy once with an account administrator so the `soyuz` Worker is created:
 
@@ -36,7 +36,7 @@ npm run deploy
 
 ## API token configuration
 
-**[AUTH-MINIMUM-01]** Cloudflare secrets are not checked into the repository. Configure both API tokens with at least 16 characters. Use the same `WORKER_API_TOKEN` on the Kaseki callback client and status poller. Do not reuse the client token as the worker token. Soyuz does not expire these static secrets automatically; rotate them in Cloudflare and update clients together. A missing Worker-side key makes protected requests return 503 `AUTHENTICATION_UNAVAILABLE`; an outdated client key returns 401 `UNAUTHORIZED`.
+**[AUTH-MINIMUM-01]** Cloudflare secrets are not checked into the repository. Soyuz enforces a 16-character minimum for both API tokens; use distinct random values of at least 32 characters as recommended by `.dev.vars.example`. Use the same `WORKER_API_TOKEN` on the Kaseki callback client and status poller. Do not reuse the client token as the worker token. Soyuz does not expire these static secrets automatically; rotate them in Cloudflare and update clients together. A missing Worker-side key makes protected requests return 503 `AUTHENTICATION_UNAVAILABLE`; an outdated client key returns 401 `UNAUTHORIZED`.
 
 ## Configure external HTTP pull
 
