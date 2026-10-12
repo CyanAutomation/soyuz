@@ -9,6 +9,15 @@
     "directory": "./public",
     "binding": "ASSETS"
   },
+  "vars": {
+    "SOYUZ_PUBLIC_URL": "https://soyuz.scheimann.workers.dev"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "bbaeb9b98b8746818193a5eac9e69f88"
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
