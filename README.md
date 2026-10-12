@@ -42,8 +42,11 @@ POST /v1/runs
 GET  /v1/runs?limit=25&status=queued
 GET  /v1/runs/:id
 GET  /v1/runs/:id/events?after=0&limit=100
+GET  /v1/runs/:id/artifacts
+GET  /v1/runs/:id/artifacts/:artifactId
 POST /v1/runs/:id/cancel
 POST /mcp (Streamable HTTP MCP)
+GET  /dashboard/ (GitHub OAuth, read-only)
 ```
 
 Worker callbacks use a separate `Authorization: Bearer $WORKER_API_TOKEN`:
@@ -56,7 +59,10 @@ POST /v1/worker/runs/:id/events
 POST /v1/worker/runs/:id/completed
 POST /v1/worker/runs/:id/failed
 POST /v1/worker/runs/:id/cancelled
+PUT  /v1/worker/runs/:id/artifacts/:artifactId
 ```
+
+Artifact uploads require the current worker ID and claim callback ID as headers, are limited to 25 MB each and 100 per run, and are retained for 30 days. The dashboard uses OAuth with an explicit GitHub user-ID allowlist; it exposes read-only run and artifact data.
 
 All Soyuz↔Kaseki messages carry `contractVersion: "1"`. See [the architecture](docs/ARCHITECTURE.md), [transport contract](docs/CONTRACT.md), [MCP interface](docs/MCP.md), [Kaseki integration](docs/KASEKI-INTEGRATION.md), and [Cloudflare setup](docs/DEPLOYMENT.md).
 
@@ -71,11 +77,18 @@ Create a D1 database and Queue, then copy the D1 database ID into `wrangler.json
 ```sh
 npx wrangler d1 create soyuz-runs
 npx wrangler queues create soyuz-runs
-npm run db:migrate:remote
+npx wrangler r2 bucket create soyuz-artifacts
+# Create the soyuz-oauth KV namespace and add its returned ID as OAUTH_KV in wrangler.jsonc.
 npx wrangler secret put CLIENT_API_TOKEN
 npx wrangler secret put WORKER_API_TOKEN
+npx wrangler secret put GITHUB_OAUTH_CLIENT_ID
+npx wrangler secret put GITHUB_OAUTH_CLIENT_SECRET
+# Only after separately authorizing a production D1 migration:
+npm run db:migrate:remote
 npm run deploy
 ```
+
+Set `SOYUZ_PUBLIC_URL` and `SOYUZ_OAUTH_ALLOWED_GITHUB_IDS` as Worker variables or secrets. Apply remote D1 migrations only through the separately authorized migration procedure in the [deployment guide](docs/DEPLOYMENT.md).
 
 Enable the Queue's HTTP pull consumer for the Kaseki host separately in Cloudflare. See [deployment and secret setup](docs/DEPLOYMENT.md) and [Kaseki integration](docs/KASEKI-INTEGRATION.md) for the required pull permissions and acknowledgement contract.
 

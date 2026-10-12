@@ -3,7 +3,12 @@
   "name": "soyuz",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-02",
+  "compatibility_flags": ["global_fetch_strictly_public"],
   "observability": { "enabled": true },
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
   "d1_databases": [
     {
       "binding": "DB",
@@ -17,8 +22,11 @@
       { "binding": "RUN_QUEUE", "queue": "soyuz-runs" }
     ]
   },
+  "r2_buckets": [
+    { "binding": "ARTIFACTS", "bucket_name": "soyuz-artifacts" }
+  ],
   "triggers": {
-    "crons": ["*/1 * * * *"]
+    "crons": ["*/1 * * * *", "0 3 * * *"]
   },
   "secrets": {
     "required": ["CLIENT_API_TOKEN", "WORKER_API_TOKEN"]

@@ -15,12 +15,19 @@
     "test:mutation:unit": "wrangler types && stryker run stryker.unit.config.mjs",
     "cf:types": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply soyuz-runs --local",
-    "db:migrate:remote": "wrangler d1 migrations apply soyuz-runs --remote"
+    "db:migrate:remote": "wrangler d1 migrations apply soyuz-runs --remote",
+    "soyuz:smoke": "node scripts/soyuz-production-smoke.mjs"
   },
   "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^1.2.3",
     "@modelcontextprotocol/server": "^2.0.0",
     "agents": "^0.26.0",
     "zod": "^4.6.5"
+  },
+  "overrides": {
+    "@modelcontextprotocol/client": "2.2.0",
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "qs": "^6.16.0"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.4.0",
