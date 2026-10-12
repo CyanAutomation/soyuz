@@ -14,7 +14,7 @@ Queue lease IDs are used only to acknowledge/retry Queue messages. Soyuz run IDs
 
 ## Callback and cancellation behavior
 
-Kaseki sends bounded stage-change and heartbeat events; it does not upload prompts, logs, source, or artifacts. Started, event, and terminal callback IDs are stable across retries. Terminal callbacks are written atomically with the local terminal job into a durable outbox, retried with bounded exponential backoff and jitter, and compacted after delivery. The outbox pauses Queue intake at its configured hard cap to bound local storage growth.
+Kaseki sends bounded stage-change and heartbeat events; it does not upload prompts or raw logs. At finalization it may upload the allowlisted summary, failure JSON, and diff artifacts described in the Kaseki host guide. Artifact upload is bound to the current worker and claim ID. Started, event, and terminal callback IDs are stable across retries. Terminal callbacks are written atomically with the local terminal job into a durable outbox, retried with bounded exponential backoff and jitter, and compacted after delivery. The outbox pauses Queue intake at its configured hard cap to bound local storage growth.
 
 Kaseki polls canonical status while an execution is active. It applies `cancel_requested` through its existing cancellation path and sends `/cancelled` after local cleanup finalizes. If completion wins the race, the completion callback is retained.
 
@@ -32,6 +32,8 @@ Current Queue HTTP pull request fields use `visibility_timeout_ms` and `batch_si
 
 ## Database migration and rollout
 
-This change adds migration `0002_run_liveness.sql`, which adds nullable heartbeat time and a separate health classification to existing run rows. It keeps contract version 1 and does not add a new canonical lifecycle state. Apply the remote migration through the existing separately authorized production migration procedure before deploying code that reads the new columns. The change has not been deployed here.
+This change adds `0002_run_liveness.sql` for heartbeat and operational health, and `0003_run_artifacts.sql` for artifact metadata and the per-run cap. It keeps contract version 1 and does not add a new canonical lifecycle state. Apply pending remote migrations through the separately authorized production migration procedure before deploying code that reads the new columns.
+
+The production check recorded before this change found a healthy Worker `/health` and an HTTP pull consumer with a configured DLQ; its Queue peek was empty, and D1 had one `kaseki_admission_rejected` run with no completed run. It predates migration `0003_run_artifacts.sql`, which is pending and has not been applied remotely. These checks do not establish a successful execution path. Apply pending migrations through the authorized procedure, then run the controlled acceptance check in [the deployment guide](DEPLOYMENT.md#authorized-live-acceptance-check) before treating end-to-end operation as verified.
 
 Roll out the compatible Soyuz Worker first, after its D1 migrations are applied and verified, then deploy the Kaseki image with claim fencing. Roll out the Kaseki adapter against a non-production Queue first. Verify a `publishMode: none` completion and failure, a cancellation, duplicate delivery, callback retry, and restart reconciliation before enabling routine intake. A production smoke submission creates executable work; use an explicitly authorized disposable repository and Queue. See [deployment and local smoke-test guidance](DEPLOYMENT.md).
