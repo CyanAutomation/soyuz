@@ -10,6 +10,7 @@ export default defineConfig({
     cloudflareTest(async () => ({
       wrangler: { configPath: "./wrangler.jsonc" },
       miniflare: {
+        kvNamespaces: ["OAUTH_KV"],
         bindings: {
           CLIENT_API_TOKEN: "client-test-token-value-long-enough",
           WORKER_API_TOKEN: "worker-test-token-value-long-enough",
@@ -19,7 +20,7 @@ export default defineConfig({
     })),
   ],
   test: {
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.ts", "tests/**/*.test.mjs"],
     setupFiles: ["./tests/apply-migrations.ts"],
     testTimeout: 15_000,
     hookTimeout: 15_000,

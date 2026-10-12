@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Soyuz runs</title>
+  <link rel="stylesheet" href="/dashboard/style.css">
+  <script type="module" src="/dashboard/app.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">Soyuz</p>
+        <h1>Run dashboard</h1>
+        <p class="muted">Read-only view of run status, progress, and retained artifacts.</p>
+      </div>
+      <button id="connect" type="button">Sign in with GitHub</button>
+    </header>
+    <p id="notice" role="status" aria-live="polite">Sign in to view runs.</p>
+    <section id="runs" aria-label="Recent runs"></section>
+  </main>
+</body>
+</html>

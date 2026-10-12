@@ -4,6 +4,9 @@ import { handleRequest } from "../src/index";
 import type { Env } from "../src/env";
 import { insertRun, getRun, RunTransitionError, transitionRun } from "../src/db/runs";
 import { reconcileAdmissions, reconcileStalledRuns } from "../src/queue/reconcile";
+import { purgeExpiredArtifacts } from "../src/api/artifacts";
+import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
+import { oauthProviderOptions } from "../src/auth/oauth";
 
 const CLIENT_TOKEN = "client-test-token-value-long-enough";
 const WORKER_TOKEN = "worker-test-token-value-long-enough";
@@ -13,7 +16,7 @@ const EVENT_ID = "00000000-0000-4000-8000-000000000012";
 
 type QueueMessage = { runId: string; contractVersion: string; [key: string]: unknown };
 
-function testEnv(options: { queueFailure?: boolean } = {}) {
+function testEnv(options: { queueFailure?: boolean; artifacts?: Env["ARTIFACTS"]; oauth?: boolean } = {}) {
   const sent: QueueMessage[] = [];
   const send = vi.fn(async (message: unknown) => {
     if (options.queueFailure) throw new Error("simulated queue failure");
@@ -24,8 +27,64 @@ function testEnv(options: { queueFailure?: boolean } = {}) {
     RUN_QUEUE: { send } as unknown as Env["RUN_QUEUE"],
     CLIENT_API_TOKEN: CLIENT_TOKEN,
     WORKER_API_TOKEN: WORKER_TOKEN,
+    ARTIFACTS: options.artifacts,
+    OAUTH_KV: options.oauth ? (runtimeEnv as unknown as { OAUTH_KV: Env["OAUTH_KV"] }).OAUTH_KV : undefined,
+    SOYUZ_PUBLIC_URL: options.oauth ? "https://soyuz.test" : undefined,
+    GITHUB_OAUTH_CLIENT_ID: options.oauth ? "test-github-client-id" : undefined,
+    GITHUB_OAUTH_CLIENT_SECRET: options.oauth ? "test-github-client-secret" : undefined,
+    SOYUZ_OAUTH_ALLOWED_GITHUB_IDS: options.oauth ? "123" : undefined,
   };
   return { bindings, sent, send };
+}
+
+async function createOAuthAccessToken(env: Env, scope: string[] = ["soyuz:read"]): Promise<string> {
+  const helpers = getOAuthApi(oauthProviderOptions("https://soyuz.test"), env);
+  const redirectUri = "https://client.example.test/callback";
+  const client = await helpers.createClient({
+    clientName: `Soyuz test ${crypto.randomUUID()}`,
+    redirectUris: [redirectUri],
+    grantTypes: ["authorization_code"],
+    responseTypes: ["code"],
+    tokenEndpointAuthMethod: "none",
+  });
+  const verifier = "soyuZ-test-verifier-which-is-at-least-43-characters-long";
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  const authorization = new URL("https://soyuz.test/oauth/authorize");
+  authorization.searchParams.set("client_id", client.clientId);
+  authorization.searchParams.set("redirect_uri", redirectUri);
+  authorization.searchParams.set("response_type", "code");
+  authorization.searchParams.set("scope", scope.join(" "));
+  authorization.searchParams.set("resource", "https://soyuz.test/");
+  authorization.searchParams.set("state", crypto.randomUUID());
+  authorization.searchParams.set("code_challenge", challenge);
+  authorization.searchParams.set("code_challenge_method", "S256");
+  const parsed = await helpers.parseAuthRequest(new Request(authorization));
+  const granted = await helpers.completeAuthorization({
+    request: parsed,
+    userId: "github-123",
+    metadata: { githubLogin: "allowed-test-user" },
+    props: { githubUserId: "123", githubLogin: "allowed-test-user" },
+    scope,
+  });
+  const code = new URL(granted.redirectTo).searchParams.get("code");
+  if (!code) throw new Error("OAuth authorization code was not returned");
+  const response = await handleRequest(new Request("https://soyuz.test/oauth/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      client_id: client.clientId,
+      redirect_uri: redirectUri,
+      code_verifier: verifier,
+      resource: "https://soyuz.test/",
+    }),
+  }), env);
+  const token = await response.json() as { access_token?: string; error?: string };
+  if (!response.ok || !token.access_token) throw new Error(`OAuth token exchange failed: ${token.error ?? response.status}`);
+  return token.access_token;
 }
 
 function apiRequest(
@@ -42,6 +101,15 @@ function apiRequest(
   });
 }
 
+function cookieHeader(response: Response): string {
+  const headers = response.headers as Headers & { getSetCookie?: () => string[] };
+  const values = headers.getSetCookie?.() ?? [headers.get("set-cookie") ?? ""];
+  return values.flatMap((value) => value.split(/,(?=\s*[^;,=]+=)/))
+    .map((value) => value.split(";")[0].trim())
+    .filter(Boolean)
+    .join("; ");
+}
+
 async function call(
   env: Env,
   path: string,
@@ -49,6 +117,22 @@ async function call(
 ): Promise<{ response: Response; body: any }> {
   const response = await handleRequest(apiRequest(path, options), env);
   return { response, body: await response.json() };
+}
+
+async function callBinary(
+  env: Env,
+  path: string,
+  options: { method?: string; body?: string; token?: string; headers?: Record<string, string> } = {},
+): Promise<{ response: Response; body: unknown }> {
+  const headers = new Headers(options.headers);
+  if (options.token) headers.set("authorization", `Bearer ${options.token}`);
+  const response = await handleRequest(new Request(`https://soyuz.test${path}`, {
+    method: options.method ?? "GET",
+    headers,
+    body: options.body,
+  }), env);
+  const contentType = response.headers.get("content-type") ?? "";
+  return { response, body: contentType.includes("application/json") ? await response.json() : await response.text() };
 }
 
 function validRequest(overrides: Record<string, unknown> = {}) {
@@ -68,6 +152,47 @@ async function countRunEvents(env: Env, runId: string, type: string): Promise<nu
   const row = await env.DB.prepare("SELECT COUNT(*) AS count FROM run_events WHERE run_id = ? AND type = ?")
     .bind(runId, type).first<{ count: number }>();
   return row?.count ?? 0;
+}
+
+function memoryArtifactBucket() {
+  const objects = new Map<string, { body: Uint8Array; options: Record<string, any> }>();
+  const put = vi.fn(async (key: string, body: ReadableStream<Uint8Array> | ArrayBuffer, options: Record<string, any>) => {
+    const bytes = body instanceof ArrayBuffer
+      ? new Uint8Array(body)
+      : new Uint8Array(await new Response(body).arrayBuffer());
+    objects.set(key, { body: bytes, options });
+    return { etag: "test-etag" };
+  });
+  const get = vi.fn(async (key: string) => {
+    const stored = objects.get(key);
+    if (!stored) return null;
+    return {
+      key,
+      size: stored.body.byteLength,
+      customMetadata: stored.options.customMetadata,
+      httpMetadata: stored.options.httpMetadata,
+      body: new Response(stored.body.buffer as ArrayBuffer).body,
+      arrayBuffer: async () => stored.body.buffer.slice(
+        stored.body.byteOffset,
+        stored.body.byteOffset + stored.body.byteLength,
+      ) as ArrayBuffer,
+      writeHttpMetadata(headers: Headers) {
+        headers.set("content-type", stored.options.httpMetadata.contentType);
+      },
+    };
+  });
+  const list = vi.fn(async ({ prefix, limit }: { prefix?: string; limit?: number }) => ({
+    objects: [...objects.entries()]
+      .filter(([key]) => key.startsWith(prefix ?? ""))
+      .slice(0, limit ?? 1_000)
+      .map(([key, item]) => ({ key, size: item.body.byteLength, uploaded: new Date(item.options.customMetadata.createdAt), customMetadata: item.options.customMetadata })),
+    truncated: false,
+    cursor: undefined,
+  }));
+  const deleteObjects = vi.fn(async (keys: string | string[]) => {
+    for (const key of Array.isArray(keys) ? keys : [keys]) objects.delete(key);
+  });
+  return { bucket: { put, get, list, delete: deleteObjects } as unknown as Env["ARTIFACTS"], objects, put, get, list, delete: deleteObjects };
 }
 
 async function submit(env: Env, overrides: Record<string, unknown> = {}, key = CLIENT_KEY) {
@@ -134,6 +259,135 @@ describe("Soyuz Worker API", () => {
     expect(workerMisconfigured.response.status).toBe(503);
     expect(workerMisconfigured.body.error.code).toBe("AUTHENTICATION_UNAVAILABLE");
     expect(workerMisconfigured.body.error.message).toContain("not configured");
+  });
+
+  it("[OAUTH-01] serves dashboard data only to an allowlisted OAuth user", async () => {
+    const { bindings } = testEnv({ oauth: true });
+    const accessToken = await createOAuthAccessToken(bindings);
+
+    const result = await call(bindings, "/dashboard/api/runs", { token: accessToken });
+    expect(result.response.status).toBe(200);
+    expect(result.body.data.runs).toEqual([]);
+
+    bindings.SOYUZ_OAUTH_ALLOWED_GITHUB_IDS = "456";
+    const revoked = await call(bindings, "/dashboard/api/runs", { token: accessToken });
+    expect(revoked.response.status).toBe(403);
+    expect(revoked.body.error.code).toBe("ACCESS_DENIED");
+  });
+
+  it("[OAUTH-02] keeps the dashboard read-only and requires write scope for MCP mutations", async () => {
+    const { bindings } = testEnv({ oauth: true });
+    const accessToken = await createOAuthAccessToken(bindings);
+
+    const dashboardWrite = await call(bindings, "/dashboard/api/runs", {
+      method: "POST",
+      token: accessToken,
+      body: validRequest(),
+    });
+    expect(dashboardWrite.response.status).toBe(405);
+
+    const mcpWrite = await callBinary(bindings, "/mcp", {
+      method: "POST",
+      token: accessToken,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "create_run", arguments: validRequest() } }),
+    });
+    expect(mcpWrite.response.status).toBe(403);
+    expect((mcpWrite.body as any).error).toBe("insufficient_scope");
+  });
+
+  it("[OAUTH-03] renders a bound, non-framable consent page before GitHub sign-in", async () => {
+    const { bindings } = testEnv({ oauth: true });
+    const registration = await call(bindings, "/oauth/register", {
+      method: "POST",
+      body: {
+        client_name: "Consent <script>alert(1)</script>",
+        redirect_uris: ["https://client.example.test/callback"],
+        grant_types: ["authorization_code"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+      },
+    });
+    expect(registration.response.status).toBe(201);
+    const verifier = "soyuz-consent-page-test-verifier-long-enough-123456";
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+    const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+    const authorize = new URL("https://soyuz.test/oauth/authorize");
+    authorize.searchParams.set("client_id", registration.body.client_id);
+    authorize.searchParams.set("redirect_uri", "https://client.example.test/callback");
+    authorize.searchParams.set("response_type", "code");
+    authorize.searchParams.set("scope", "soyuz:read");
+    authorize.searchParams.set("resource", "https://soyuz.test/");
+    authorize.searchParams.set("state", "consent-test-state");
+    authorize.searchParams.set("code_challenge", challenge);
+    authorize.searchParams.set("code_challenge_method", "S256");
+
+    const consent = await handleRequest(new Request(authorize), bindings);
+    const html = await consent.text();
+    expect(consent.status).toBe(200);
+    expect(consent.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(consent.headers.get("cache-control")).toBe("no-store");
+    expect(html).toContain("Consent &lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("read:user permission");
+    expect(consent.headers.get("set-cookie")).toContain("__Host-oauth-consent");
+
+    const handle = html.match(/name="handle" value="([^"]+)"/)?.[1];
+    expect(handle).toBeTruthy();
+    const approval = await handleRequest(new Request("https://soyuz.test/oauth/authorize", {
+      method: "POST",
+      headers: {
+        cookie: cookieHeader(consent),
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ handle: handle!, decision: "approve", scope: "soyuz:read" }),
+    }), bindings);
+    expect(approval.status).toBe(302);
+    const githubAuthorize = new URL(approval.headers.get("location")!);
+    expect(githubAuthorize.origin).toBe("https://github.com");
+    expect(githubAuthorize.pathname).toBe("/login/oauth/authorize");
+    expect(githubAuthorize.searchParams.get("code_challenge_method")).toBe("S256");
+
+    const githubRequests: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      githubRequests.push({ url, init });
+      if (url === "https://github.com/login/oauth/access_token") {
+        return new Response(JSON.stringify({ access_token: "short-lived-github-token" }), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url === "https://api.github.com/user") {
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer short-lived-github-token");
+        return new Response(JSON.stringify({ id: 123, login: "allowed-test-user" }), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected external OAuth request: ${url}`);
+    }));
+    try {
+      const githubState = githubAuthorize.searchParams.get("state");
+      const callback = await handleRequest(new Request(
+        `https://soyuz.test/oauth/callback?code=github-code&state=${encodeURIComponent(githubState ?? "")}`,
+        { headers: { cookie: cookieHeader(approval) } },
+      ), bindings);
+      expect(callback.status).toBe(302);
+      const redirect = new URL(callback.headers.get("location")!);
+      expect(redirect.origin).toBe("https://client.example.test");
+      expect(redirect.searchParams.get("state")).toBe("consent-test-state");
+      expect(redirect.searchParams.get("code")).toBeTruthy();
+      expect(callback.headers.get("location")).not.toContain("short-lived-github-token");
+      const tokenRequestBody = new URLSearchParams(githubRequests[0].init?.body as URLSearchParams);
+      expect(tokenRequestBody.get("code_verifier")).toBeTruthy();
+      expect(tokenRequestBody.get("redirect_uri")).toBe("https://soyuz.test/oauth/callback");
+      expect(githubRequests.map(({ url }) => url)).toEqual([
+        "https://github.com/login/oauth/access_token",
+        "https://api.github.com/user",
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("[AUTH-ROTATE-01] rejects old client and worker credentials after key rotation", async () => {
@@ -646,6 +900,281 @@ describe("Soyuz Worker API", () => {
     });
     expect(confirmed.response.status).toBe(200);
     expect(confirmed.body.data.status).toBe("cancelled");
+  });
+
+  it("[ARTIFACTS-01] uploads artifacts from a running worker and returns them through client-authenticated reads", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-artifacts";
+    await claimRun(bindings, runId, workerId, "00000000-0000-4000-8000-000000000041");
+    await call(bindings, `/v1/worker/runs/${runId}/started`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: { contractVersion: "1", callbackId: "00000000-0000-4000-8000-000000000042", workerId },
+    });
+
+    const artifactId = "00000000-0000-4000-8000-000000000043";
+    const upload = await callBinary(bindings, `/v1/worker/runs/${runId}/artifacts/${artifactId}`, {
+      method: "PUT",
+      token: WORKER_TOKEN,
+      headers: {
+        "content-type": "text/plain",
+        "content-length": "12",
+        "x-artifact-name": "summary.txt",
+        "x-artifact-kind": "report",
+        "x-soyuz-worker-id": workerId,
+        "x-soyuz-claim-callback-id": "00000000-0000-4000-8000-000000000041",
+      },
+      body: "run summary\n",
+    });
+    expect(upload.response.status).toBe(201);
+    expect((upload.body as any).data).toMatchObject({ id: artifactId, name: "summary.txt", kind: "report", size: 12 });
+    expect(r2.put).toHaveBeenCalledWith(
+      `runs/${runId}/${artifactId}`,
+      expect.any(ReadableStream),
+      expect.objectContaining({ customMetadata: expect.objectContaining({ runId, artifactId }) }),
+    );
+
+    const unauthorized = await callBinary(bindings, `/v1/runs/${runId}/artifacts/${artifactId}`);
+    expect(unauthorized.response.status).toBe(401);
+    const list = await call(bindings, `/v1/runs/${runId}/artifacts`, { token: CLIENT_TOKEN });
+    expect(list.response.status).toBe(200);
+    expect(list.body.data.artifacts).toEqual([expect.objectContaining({ id: artifactId, name: "summary.txt" })]);
+    const download = await callBinary(bindings, `/v1/runs/${runId}/artifacts/${artifactId}`, { token: CLIENT_TOKEN });
+    expect(download.response.status).toBe(200);
+    expect(download.response.headers.get("content-disposition")).toContain("attachment");
+    expect(download.body).toBe("run summary\n");
+
+    const retry = await callBinary(bindings, `/v1/worker/runs/${runId}/artifacts/${artifactId}`, {
+      method: "PUT", token: WORKER_TOKEN,
+      headers: {
+        "content-type": "text/plain", "content-length": "12", "x-artifact-name": "summary.txt", "x-artifact-kind": "report",
+        "x-soyuz-worker-id": workerId, "x-soyuz-claim-callback-id": "00000000-0000-4000-8000-000000000041",
+      },
+      body: "run summary\n",
+    });
+    expect(retry.response.status).toBe(200);
+    const conflict = await callBinary(bindings, `/v1/worker/runs/${runId}/artifacts/${artifactId}`, {
+      method: "PUT", token: WORKER_TOKEN,
+      headers: {
+        "content-type": "text/plain", "content-length": "12", "x-artifact-name": "summary.txt", "x-artifact-kind": "report",
+        "x-soyuz-worker-id": workerId, "x-soyuz-claim-callback-id": "00000000-0000-4000-8000-000000000041",
+      },
+      body: "run summary!",
+    });
+    expect(conflict.response.status).toBe(409);
+    expect((conflict.body as any).error.code).toBe("ARTIFACT_ID_CONFLICT");
+    expect(r2.objects.size).toBe(1);
+  });
+
+  it("[ARTIFACTS-02] rejects artifact uploads after a run has completed", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-artifacts-terminal";
+    await claimRun(bindings, runId, workerId, "00000000-0000-4000-8000-000000000044");
+    await call(bindings, `/v1/worker/runs/${runId}/started`, {
+      method: "POST", token: WORKER_TOKEN,
+      body: { contractVersion: "1", callbackId: "00000000-0000-4000-8000-000000000045", workerId },
+    });
+    await call(bindings, `/v1/worker/runs/${runId}/completed`, {
+      method: "POST", token: WORKER_TOKEN,
+      body: { contractVersion: "1", callbackId: "00000000-0000-4000-8000-000000000046", workerId, exitCode: 0 },
+    });
+
+    const upload = await callBinary(bindings, `/v1/worker/runs/${runId}/artifacts/00000000-0000-4000-8000-000000000047`, {
+      method: "PUT", token: WORKER_TOKEN,
+      headers: { "content-type": "text/plain", "content-length": "4", "x-artifact-name": "late.txt" },
+      body: "late",
+    });
+    expect(upload.response.status).toBe(409);
+    expect(r2.put).not.toHaveBeenCalled();
+  });
+
+  it("[ARTIFACTS-03] rejects a body whose actual byte size differs from Content-Length", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-artifact-size";
+    await claimRun(bindings, runId, workerId, "00000000-0000-4000-8000-000000000048");
+    await call(bindings, `/v1/worker/runs/${runId}/started`, {
+      method: "POST", token: WORKER_TOKEN,
+      body: { contractVersion: "1", callbackId: "00000000-0000-4000-8000-000000000049", workerId },
+    });
+
+    const upload = await callBinary(bindings, `/v1/worker/runs/${runId}/artifacts/00000000-0000-4000-8000-000000000050`, {
+      method: "PUT", token: WORKER_TOKEN,
+      headers: {
+        "content-type": "text/plain", "content-length": "4", "x-artifact-name": "size.txt",
+        "x-soyuz-worker-id": workerId, "x-soyuz-claim-callback-id": "00000000-0000-4000-8000-000000000048",
+      },
+      body: "five!",
+    });
+    expect(upload.response.status).toBe(400);
+    expect((upload.body as any).error.code).toBe("ARTIFACT_SIZE_MISMATCH");
+    expect(r2.objects.size).toBe(0);
+  });
+
+  it("[ARTIFACTS-07] rejects artifacts from another worker or stale claim", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-owned-artifacts";
+    const claimCallbackId = "00000000-0000-4000-8000-000000000061";
+    await claimRun(bindings, runId, workerId, claimCallbackId);
+    await call(bindings, `/v1/worker/runs/${runId}/started`, {
+      method: "POST", token: WORKER_TOKEN,
+      body: { contractVersion: "1", callbackId: "00000000-0000-4000-8000-000000000062", workerId },
+    });
+    const path = `/v1/worker/runs/${runId}/artifacts/00000000-0000-4000-8000-000000000063`;
+    const headers = {
+      "content-type": "text/plain",
+      "content-length": "4",
+      "x-artifact-name": "owned.txt",
+      "x-soyuz-worker-id": workerId,
+      "x-soyuz-claim-callback-id": claimCallbackId,
+    };
+
+    const wrongWorker = await callBinary(bindings, path, {
+      method: "PUT", token: WORKER_TOKEN,
+      headers: { ...headers, "x-soyuz-worker-id": "different-worker" },
+      body: "data",
+    });
+    const staleClaim = await callBinary(bindings, path, {
+      method: "PUT", token: WORKER_TOKEN,
+      headers: { ...headers, "x-soyuz-claim-callback-id": "00000000-0000-4000-8000-000000000064" },
+      body: "data",
+    });
+
+    expect(wrongWorker.response.status).toBe(409);
+    expect((wrongWorker.body as any).error.code).toBe("WORKER_MISMATCH");
+    expect(staleClaim.response.status).toBe(409);
+    expect((staleClaim.body as any).error.code).toBe("STALE_CLAIM");
+    expect(r2.objects.size).toBe(0);
+  });
+
+  it("[ARTIFACTS-08] keeps failed R2 cleanup indexed for the retention sweep", async () => {
+    const r2 = memoryArtifactBucket();
+    r2.put.mockImplementationOnce(async (key, body, options) => {
+      const bytes = body instanceof ArrayBuffer
+        ? new Uint8Array(body)
+        : new Uint8Array(await new Response(body).arrayBuffer());
+      r2.objects.set(key, { body: bytes, options });
+      throw new Error("simulated R2 write acknowledgement failure");
+    });
+    r2.delete.mockImplementationOnce(async () => { throw new Error("simulated R2 cleanup failure"); });
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-artifact-cleanup";
+    const claimCallbackId = "00000000-0000-4000-8000-000000000071";
+    await claimRun(bindings, runId, workerId, claimCallbackId);
+    await call(bindings, `/v1/worker/runs/${runId}/started`, {
+      method: "POST", token: WORKER_TOKEN,
+      body: { contractVersion: "1", callbackId: "00000000-0000-4000-8000-000000000072", workerId },
+    });
+    const artifactId = "00000000-0000-4000-8000-000000000073";
+    const objectKey = `runs/${runId}/${artifactId}`;
+    const upload = await callBinary(bindings, `/v1/worker/runs/${runId}/artifacts/${artifactId}`, {
+      method: "PUT", token: WORKER_TOKEN,
+      headers: {
+        "content-type": "text/plain", "content-length": "4", "x-artifact-name": "failure.txt",
+        "x-soyuz-worker-id": workerId, "x-soyuz-claim-callback-id": claimCallbackId,
+      },
+      body: "data",
+    });
+    const pending = await bindings.DB.prepare("SELECT state FROM run_artifacts WHERE id = ?").bind(artifactId).first<{ state: string }>();
+
+    expect(upload.response.status).toBe(503);
+    expect(pending?.state).toBe("pending");
+    expect(r2.objects.has(objectKey)).toBe(true);
+
+    await purgeExpiredArtifacts(bindings, new Date(Date.now() + 31 * 24 * 60 * 60 * 1_000));
+
+    expect(r2.objects.has(objectKey)).toBe(false);
+    const removed = await bindings.DB.prepare("SELECT id FROM run_artifacts WHERE id = ?").bind(artifactId).first();
+    expect(removed).toBeNull();
+  });
+
+  it("[ARTIFACTS-06] applies the per-run cap atomically across pending uploads", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-artifact-cap";
+    await claimRun(bindings, runId, workerId, "00000000-0000-4000-8000-000000000053");
+    await call(bindings, `/v1/worker/runs/${runId}/started`, {
+      method: "POST", token: WORKER_TOKEN,
+      body: { contractVersion: "1", callbackId: "00000000-0000-4000-8000-000000000054", workerId },
+    });
+    const now = new Date().toISOString();
+    const pendingRows = Array.from({ length: 100 }, (_, index) => {
+      const artifactId = `00000000-0000-4000-8000-${String(index + 100).padStart(12, "0")}`;
+      return bindings.DB.prepare(`
+        INSERT INTO run_artifacts (id, run_id, kind, name, content_type, size_bytes, object_key, created_at, expires_at, state)
+        VALUES (?, ?, 'other', 'pending.txt', 'text/plain', 1, ?, ?, '2099-01-01T00:00:00.000Z', 'pending')
+      `).bind(artifactId, runId, `runs/${runId}/${artifactId}`, now);
+    });
+    await bindings.DB.batch(pendingRows);
+
+    const upload = await callBinary(bindings, `/v1/worker/runs/${runId}/artifacts/00000000-0000-4000-8000-000000000200`, {
+      method: "PUT", token: WORKER_TOKEN,
+      headers: {
+        "content-type": "text/plain", "content-length": "4", "x-artifact-name": "capped.txt",
+        "x-soyuz-worker-id": workerId, "x-soyuz-claim-callback-id": "00000000-0000-4000-8000-000000000053",
+      },
+      body: "data",
+    });
+    expect(upload.response.status).toBe(413);
+    expect((upload.body as any).error.code).toBe("ARTIFACT_LIMIT_REACHED");
+    expect(r2.put).not.toHaveBeenCalled();
+  });
+
+  it("[ARTIFACTS-04] removes expired artifact metadata and R2 content", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const artifactId = "00000000-0000-4000-8000-000000000051";
+    const objectKey = `runs/${runId}/${artifactId}`;
+    r2.objects.set(objectKey, {
+      body: new TextEncoder().encode("expired"),
+      options: { httpMetadata: { contentType: "text/plain" }, customMetadata: {} },
+    });
+    await bindings.DB.prepare(`
+      INSERT INTO run_artifacts (id, run_id, kind, name, content_type, size_bytes, object_key, created_at, expires_at, state)
+      VALUES (?, ?, 'report', 'old.txt', 'text/plain', 7, ?, '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z', 'ready')
+    `).bind(artifactId, runId, objectKey).run();
+
+    await purgeExpiredArtifacts(bindings, new Date("2026-01-03T00:00:00.000Z"));
+
+    expect(r2.objects.has(objectKey)).toBe(false);
+    const row = await bindings.DB.prepare("SELECT id FROM run_artifacts WHERE id = ?").bind(artifactId).first();
+    expect(row).toBeNull();
+  });
+
+  it("[ARTIFACTS-05] keeps expired metadata for retry when R2 deletion fails", async () => {
+    const r2 = memoryArtifactBucket();
+    r2.delete.mockImplementationOnce(async () => { throw new Error("temporary R2 failure"); });
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const artifactId = "00000000-0000-4000-8000-000000000052";
+    const objectKey = `runs/${runId}/${artifactId}`;
+    await bindings.DB.prepare(`
+      INSERT INTO run_artifacts (id, run_id, kind, name, content_type, size_bytes, object_key, created_at, expires_at, state)
+      VALUES (?, ?, 'report', 'old.txt', 'text/plain', 7, ?, '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z', 'ready')
+    `).bind(artifactId, runId, objectKey).run();
+
+    await expect(purgeExpiredArtifacts(bindings, new Date("2026-01-03T00:00:00.000Z"))).resolves.toBeUndefined();
+
+    const row = await bindings.DB.prepare("SELECT id FROM run_artifacts WHERE id = ?").bind(artifactId).first();
+    expect(row).not.toBeNull();
   });
 
   it("[WORKER-FAIL-01] records worker failure and accepts an exact callback retry", async () => {

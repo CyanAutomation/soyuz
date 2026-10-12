@@ -4,14 +4,18 @@
 flowchart TD
     CLI[CLI] -->|REST| REST[REST adapter]
     UI[Web UI and integrations] -->|REST| REST
+    UI -->|GitHub OAuth, read-only| Dashboard[Private run dashboard]
     AI[AI clients] -->|Streamable HTTP at /mcp| MCP[MCP adapter]
     REST --> App[Shared run application operations]
     MCP --> App
-    App --> D1[(D1: canonical runs and operational events)]
+    App --> D1[(D1: runs, events, artifact index)]
     App -->|versioned Queue message| Q[Cloudflare Queue]
     Q -->|HTTP pull, capacity controlled| K[Kaseki host]
     K -->|separate worker bearer API| Worker[Private worker routes]
     Worker --> D1
+    Worker -->|claim-fenced upload| R2[(Private R2 artifacts)]
+    Dashboard -->|authorized read| D1
+    Dashboard -->|authorized download| R2
     K --> Docker[Disposable Docker workers]
     Docker --> Repo[Repository, Pi, validation, publication]
 ```
@@ -61,7 +65,7 @@ Transitions are checked in one domain state machine and written with a status co
 
 `runs` holds searchable lifecycle and request metadata: repository/ref, modes, timestamps, current stage/status, worker and claim-lease identity, outcome, cancellation time, request/correlation IDs, idempotency key and request fingerprint. The validated execution request and small result summary are JSON columns. `last_heartbeat_at` and `operational_health` track execution liveness separately from lifecycle status. Indexes support newest-first history, status filtering, correlation lookup, and unique idempotency keys.
 
-`run_events` is append-only operational history. It records status changes and compact worker events with a per-database increasing sequence, a per-run idempotency ID, timestamps, stage/step, and bounded JSON payload. It does not store raw terminal logs or arbitrary artifacts; Kaseki retains those, with R2 a future option.
+`run_events` is append-only operational history. It records status changes and compact worker events with a per-database increasing sequence, a per-run idempotency ID, timestamps, stage/step, and bounded JSON payload. `run_artifacts` indexes private R2 objects with a 30-day expiry and a per-run limit. Kaseki uploads only its bounded summary, failure JSON, and diff outputs after execution; raw stdout/stderr remain on the host.
 
 ## Admission across D1 and Queues
 
@@ -79,7 +83,7 @@ Requirement ID: `RUN-ID-UUIDV7-01`.
 
 Soyuz generates RFC 9562 UUIDv7 IDs from the current millisecond timestamp and Web Crypto random bytes rather than Kaseki's historical `kaseki-N`. They are URL-safe and lexicographically time-sortable; D1 timestamps remain the source for deterministic history ordering. Callers must treat IDs as opaque strings.
 
-Client and worker APIs have separate bearer secrets. Public health is unauthenticated. The MCP endpoint is client-facing and checks `CLIENT_API_TOKEN`; it does not accept `WORKER_API_TOKEN` or expose worker routes. It cannot claim, start, complete, or otherwise advance a worker run. MCP talks only to Soyuz. Kaseki remains responsible for execution-context safety, Docker, repository access, validation, diagnostics, and publication. See [the MCP interface](MCP.md) for the current bearer-token setup and OAuth follow-up.
+Client and worker APIs have separate bearer secrets. Public health is unauthenticated. `/mcp` accepts the legacy client key or OAuth tokens; OAuth read and write scopes separate reads from run creation/cancellation. The private read-only dashboard uses GitHub OAuth and an explicit user-ID allowlist. Worker artifact uploads require the shared worker token plus the current worker and claim fencing IDs. These routes cannot be used to execute work directly. Kaseki remains responsible for execution-context safety, Docker, repository access, validation, and publication. See [the MCP interface](MCP.md) and [deployment guide](DEPLOYMENT.md) for OAuth configuration.
 
 The caller migration can be gradual: direct callers may keep using the current Kaseki API while new or selected clients submit to Soyuz. Soyuz and Kaseki remain independently deployable.
 
