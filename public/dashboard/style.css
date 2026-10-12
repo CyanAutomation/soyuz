@@ -1,0 +1,19 @@
+:root { color-scheme: light; font: 16px/1.5 system-ui, sans-serif; color: #17202a; background: #f5f7fa; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 1040px; margin: 0 auto; padding: 3rem 1.25rem; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 2rem; margin-bottom: 2rem; }
+h1 { margin: 0; font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -.04em; }
+.eyebrow { margin: 0 0 .4rem; color: #53657a; font-size: .75rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.muted, .meta { color: #65758b; }
+button, .artifact-link { border: 0; border-radius: .6rem; background: #1b4e8a; color: white; cursor: pointer; font: inherit; font-weight: 650; padding: .75rem 1rem; text-decoration: none; }
+button:hover, .artifact-link:hover { background: #123d70; }
+#notice { min-height: 1.5rem; color: #405268; }
+.run { margin: 1rem 0; padding: 1.25rem; border: 1px solid #dde4ed; border-radius: .85rem; background: white; box-shadow: 0 2px 8px #17202a0a; }
+.run h2 { margin: 0; font-size: 1.05rem; overflow-wrap: anywhere; }
+.run .meta { font-size: .9rem; }
+.run pre { max-height: 18rem; overflow: auto; padding: .8rem; border-radius: .5rem; background: #f5f7fa; white-space: pre-wrap; overflow-wrap: anywhere; }
+.run details { margin-top: .8rem; }
+.artifacts { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .75rem; }
+.artifact-link { display: inline-block; padding: .45rem .7rem; font-size: .85rem; }
+@media (max-width: 640px) { header { align-items: flex-start; flex-direction: column; } }

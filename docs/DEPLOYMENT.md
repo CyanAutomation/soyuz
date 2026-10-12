@@ -18,6 +18,13 @@ Wrangler's local D1 and Queue bindings are used by local development. HTTP pull 
 ```sh
 npx wrangler d1 create soyuz-runs
 npx wrangler queues create soyuz-runs
+npx wrangler r2 bucket create soyuz-artifacts
+```
+
+OAuth uses a Cloudflare KV namespace. Create it and add the returned namespace ID to the `OAUTH_KV` binding in `wrangler.jsonc` before deploying the dashboard:
+
+```sh
+npx wrangler kv namespace create soyuz-oauth
 ```
 
 The checked-in `wrangler.jsonc` already contains a non-zero D1 `database_id`. Verify that it identifies the intended database before deploying. If you create a different D1 database, replace the configured ID with the `database_id` returned by Wrangler and keep the configured database name and Queue name as `soyuz-runs` unless you update the corresponding bindings at the same time.
@@ -27,12 +34,18 @@ Set distinct production Worker secrets before the first deploy. Apply the initia
 ```sh
 npx wrangler secret put CLIENT_API_TOKEN
 npx wrangler secret put WORKER_API_TOKEN
+npx wrangler secret put GITHUB_OAUTH_CLIENT_ID
+npx wrangler secret put GITHUB_OAUTH_CLIENT_SECRET
 npm run db:migrate:remote
 npm run cf:types
 npm run deploy
 ```
 
 `npm run db:migrate:remote` changes production D1 and requires D1 Edit access. Run it only with separate authorization from the Worker deployment. CI/CD never runs production migrations.
+
+Set `SOYUZ_PUBLIC_URL` to the canonical HTTPS origin, such as `https://soyuz.example.com`, and `SOYUZ_OAUTH_ALLOWED_GITHUB_IDS` to a comma-separated allowlist of numeric GitHub user IDs as Worker variables or secrets. Configure the GitHub OAuth App callback URL to `${SOYUZ_PUBLIC_URL}/oauth/callback`. The consent flow requests only GitHub `read:user`; Soyuz stores the GitHub numeric ID/login and does not retain the GitHub access token. The dashboard API and OAuth access tokens remain unavailable unless the `OAUTH_KV` binding, callback origin, OAuth credentials, and non-empty allowlist are configured.
+
+The `ARTIFACTS` R2 binding stores private run files. Worker uploads are limited to 25,000,000 bytes per file and 100 artifacts per run, require the current worker ID and claim fencing token, and are retained for 30 days. Authenticated client/OAuth reads are streamed as attachments. The daily cron removes expired R2 objects and D1 metadata.
 
 ## API token configuration
 
@@ -69,6 +82,18 @@ For an authorized production migration, first verify the target database name an
 ## Authorized live acceptance check
 
 Submitting a run creates executable work that an enabled Kaseki host may immediately consume. Do this only after explicit authorization for the live run and its resource costs, and use a disposable repository, `publishMode: none`, a non-production Queue where available, a short timeout, and a bounded task. Do not use the Soyuz or Kaseki source repositories as the smoke-test target.
+
+Use the production smoke helper for a repeatable preflight and run check. It verifies `/health`, checks for active canonical runs, confirms an HTTP pull consumer has a DLQ, and peeks at the Queue without leasing messages. By default it performs only those read-only checks:
+
+```sh
+npm run soyuz:smoke
+```
+
+To submit one inspect-only run, provide `SOYUZ_BASE_URL`, `CLIENT_API_TOKEN`, `SOYUZ_WORKER_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `SOYUZ_QUEUE_ID`, `SOYUZ_QUEUE_API_TOKEN`, `SMOKE_IDEMPOTENCY_KEY`, and `DISPOSABLE_REPO_URL` through the existing secret manager. Set `SOYUZ_SMOKE_ACK_EXECUTION=yes` only after authorizing the specific run. The helper fixes `taskMode` to `inspect` and `publishMode` to `none`, defaults to a 180-second run timeout, and verifies both start and completion events. If polling times out, it reports the run ID and does not cancel the job automatically. Reuse the same idempotency key when checking or retrying an uncertain submission.
+
+```sh
+SOYUZ_SMOKE_ACK_EXECUTION=yes npm run soyuz:smoke -- --run
+```
 
 Before enabling a production consumer, review active D1 runs and read-only peek at Queue messages. Resolve who owns any existing work; do not delete/cancel a run or pull a message to “inspect” it. Cloudflare's `messages/peek` endpoint does not lease messages.
 
@@ -108,9 +133,9 @@ Do not manually pull or acknowledge the test message while validating the Kaseki
 
 ## Worker configuration
 
-`wrangler.jsonc` declares the Worker entry point, compatibility date, D1 binding and database ID, Queue producer binding, required secret names, observability, and the one-minute reconciler for stale admissions, expired claims, stale queued runs, and stalled-run health. Queue pull mode remains an external consumer configuration. The D1 ID is a resource identifier; account IDs and production credentials are not committed here.
+`wrangler.jsonc` declares the Worker entry point, compatibility date, D1 binding and database ID, Queue producer binding, R2 bucket, static dashboard assets, required secret names, observability, and cron triggers for reconciliation and daily retention cleanup. Add the `OAUTH_KV` namespace ID returned during bootstrap. Queue pull mode remains an external consumer configuration. The D1 ID is a resource identifier; account IDs and production credentials are not committed here.
 
-Migration `0002_run_liveness.sql` adds the heartbeat and operational-health columns. Apply all pending migrations with the separately authorized `npm run db:migrate:remote` procedure before deploying code that reads them. Never recreate the database or discard run history as a migration repair.
+Migration `0002_run_liveness.sql` adds heartbeat and operational-health columns; `0003_run_artifacts.sql` adds run artifact metadata and a pending-plus-ready artifact cap. Apply all pending migrations with the separately authorized `npm run db:migrate:remote` procedure before deploying code that reads them. Never recreate the database or discard run history as a migration repair.
 
 Generate runtime and binding types after changing Wrangler bindings:
 

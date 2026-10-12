@@ -79,8 +79,9 @@ Every worker request uses `Authorization: Bearer <WORKER_API_TOKEN>`, distinct f
 - `POST /v1/worker/runs/:id/completed` body: `{ contractVersion, callbackId, workerId, claimCallbackId?, completedAt?, exitCode?: 0, summary?, publishedUrl?, changedFileCount? }`.
 - `POST /v1/worker/runs/:id/failed` body: `{ contractVersion, callbackId, workerId, claimCallbackId?, completedAt?, exitCode?, failureClass, failureMessage }`. It accepts an owned, live `claimed` run as well as an active run so Kaseki can persist a pre-execution admission failure without starting Docker.
 - `POST /v1/worker/runs/:id/cancelled` body: `{ contractVersion, callbackId, workerId, claimCallbackId?, completedAt?, exitCode?, reason? }`. It accepts an owned, live `claimed` run as well as an active run so a confirmed pre-start cancellation can be recorded.
+- `PUT /v1/worker/runs/:id/artifacts/:artifactId` streams an artifact with `Content-Length`, `X-Artifact-Name`, `X-Artifact-Kind`, `X-Soyuz-Worker-Id`, and `X-Soyuz-Claim-Callback-Id` headers. The worker ID and current claim ID must match the active run. Each file is limited to 25,000,000 bytes; a run can retain at most 100 artifacts.
 
-The claim request's `callbackId` is also the per-attempt fencing token. New Kaseki hosts echo it on every later callback; Soyuz rejects an older token with 409 `STALE_CLAIM`, including when two controller instances accidentally reuse a `workerId`. The echoed field is optional for contract-v1 compatibility with older hosts; those hosts do not receive stale-callback protection. Lifecycle callback IDs and event IDs must remain stable across retries. Replaying the same ID and payload is safe; reusing an ID for different data returns 409. Worker events are event metadata, not stdout/stderr or artifact uploads.
+The claim request's `callbackId` is also the per-attempt fencing token. New Kaseki hosts echo it on every later callback; Soyuz rejects an older token with 409 `STALE_CLAIM`, including when two controller instances accidentally reuse a `workerId`. The echoed field is optional for contract-v1 compatibility with older hosts; those hosts do not receive stale-callback protection. Lifecycle callback IDs and event IDs must remain stable across retries. Replaying the same ID and payload is safe; reusing an ID for different data returns 409. Worker events are event metadata, not stdout/stderr. Exact artifact retries with the same ID and metadata are idempotent; reusing an ID for different bytes or metadata returns 409.
 
 `worker.heartbeat` updates `lastHeartbeatAt` and restores `operationalHealth: "healthy"`. Soyuz's five-minute stale-run reconciler changes only the health classification to `suspect_stalled` and appends `run.suspected_stalled`; it never changes lifecycle status or republishes work. A later heartbeat can restore health. See the [Kaseki integration policy](KASEKI-INTEGRATION.md#heartbeat-and-suspected-stalled-runs).
 
@@ -95,8 +96,12 @@ Requirement IDs: `HEALTH-DB-01`, `RUN-READ-REST-01`, `CANCEL-QUEUED-01`, `CANCEL
 | `GET /v1/runs` | Client | Filtered, cursor-paginated history |
 | `GET /v1/runs/:id` | Client | Canonical run and normalized request |
 | `GET /v1/runs/:id/events` | Client | Append-only event history |
+| `GET /v1/runs/:id/artifacts` | Client | List retained artifact metadata |
+| `GET /v1/runs/:id/artifacts/:artifactId` | Client | Download an artifact as an attachment |
 | `POST /v1/runs/:id/cancel` | Client | Cancel queued work or record running cancellation intent |
-| `POST /mcp` | Client | Stateless Streamable HTTP MCP tools |
+| `POST /mcp` | Client key or OAuth | Stateless Streamable HTTP MCP tools |
+| `GET /dashboard/` | Browser | Private read-only dashboard; requires OAuth for its API |
+| `GET /dashboard/api/**` | OAuth `soyuz:read` | Dashboard run/event/artifact reads |
 
 Queued cancellation becomes terminal `cancelled` immediately; a later Queue delivery must be skipped. Claimed-but-not-started cancellation also becomes terminal `cancelled`; the Kaseki adapter must wait for `started` to succeed before launching execution. Running cancellation becomes `cancel_requested`; the worker polls and confirms with `/cancelled`. If execution completes or fails first, that terminal result is retained.
 
