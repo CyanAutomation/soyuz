@@ -4,6 +4,7 @@ import { z } from "zod";
 import { createRun, listRunsPage, readRun, readRunEventsPage, requestRunCancellation, RunApplicationError } from "../application/runs";
 import { McpCreateRunInputSchema } from "../contracts/run-request";
 import { parseEventPayload, parseResult, type RunEventRow, type RunRow } from "../db/runs";
+import { safeUrlForDisplay } from "../lib/safe-url";
 import { RUN_STATUSES } from "../domain/run-state-machine";
 import type { Env } from "../env";
 import { requestIdFor } from "../api/http";
@@ -205,7 +206,7 @@ function mcpRunSummary(row: RunRow): Record<string, unknown> {
     runId: row.id,
     status: row.status,
     createdAt: row.created_at,
-    repoUrl: safeUrlForMcp(row.repo_url),
+    repoUrl: safeUrlForDisplay(row.repo_url),
     ref: row.git_ref,
     publishMode: row.publish_mode,
   };
@@ -218,7 +219,7 @@ function mcpRunListItem(row: RunRow): Record<string, unknown> {
 function mcpRunFields(row: RunRow): Record<string, unknown> {
   return {
     runId: row.id,
-    repoUrl: safeUrlForMcp(row.repo_url),
+    repoUrl: safeUrlForDisplay(row.repo_url),
     ref: row.git_ref,
     status: row.status,
     stage: row.stage,
@@ -234,7 +235,7 @@ function mcpRunFields(row: RunRow): Record<string, unknown> {
 function mcpRunDetail(row: RunRow): Record<string, unknown> {
   const result = parseResult(row);
   const summary = typeof result?.summary === "string" ? result.summary : null;
-  const publishedUrl = typeof result?.publishedUrl === "string" ? safeUrlForMcp(result.publishedUrl) : null;
+  const publishedUrl = typeof result?.publishedUrl === "string" ? safeUrlForDisplay(result.publishedUrl) : null;
   const changedFileCount = typeof result?.changedFileCount === "number" ? result.changedFileCount : null;
   return {
     ...mcpRunFields(row),
@@ -248,20 +249,6 @@ function mcpRunDetail(row: RunRow): Record<string, unknown> {
       requestedAt: row.cancel_requested_at,
     },
   };
-}
-
-function safeUrlForMcp(value: string): string {
-  try {
-    const url = new URL(value);
-    url.username = "";
-    url.password = "";
-    url.search = "";
-    url.hash = "";
-    return url.toString();
-  } catch {
-    // Do not echo malformed persisted values, which may contain embedded secrets.
-    return "about:invalid";
-  }
 }
 
 function mcpRunEvent(row: RunEventRow): Record<string, unknown> {

@@ -1,3 +1,5 @@
+import { fetchJson } from "./api.js";
+
 const notice = document.querySelector("#notice");
 const runsSection = document.querySelector("#runs");
 const connectButton = document.querySelector("#connect");
@@ -55,15 +57,31 @@ async function finishSignIn() {
   const params = new URL(location.href).searchParams;
   const code = params.get("code");
   if (!code) return;
-  const state = params.get("state");
-  if (!state || state !== sessionStorage.getItem("soyuz.dashboard.state")) {
+  if (!oauthStateMatches(params)) {
     notice.textContent = "Sign-in could not be verified. Start again.";
     return;
   }
 
   notice.textContent = "Finishing sign-in…";
   try {
-    const token = await fetchJson("/oauth/token", {
+    const token = await exchangeAuthorizationCode(code);
+    accessToken = token.access_token;
+    clearOAuthState();
+    history.replaceState(null, "", "/dashboard/");
+    await loadRuns();
+  } catch {
+    notice.textContent = "GitHub sign-in failed. Start again.";
+    clearOAuthState();
+  }
+}
+
+function oauthStateMatches(params) {
+  const state = params.get("state");
+  return Boolean(state && state === sessionStorage.getItem("soyuz.dashboard.state"));
+}
+
+async function exchangeAuthorizationCode(code) {
+  return fetchJson("/oauth/token", {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -75,14 +93,10 @@ async function finishSignIn() {
         resource: `${location.origin}/`,
       }),
     });
-    accessToken = token.access_token;
-    for (const key of oauthKeys) sessionStorage.removeItem(`soyuz.dashboard.${key}`);
-    history.replaceState(null, "", "/dashboard/");
-    await loadRuns();
-  } catch {
-    notice.textContent = "GitHub sign-in failed. Start again.";
-    for (const key of oauthKeys) sessionStorage.removeItem(`soyuz.dashboard.${key}`);
-  }
+}
+
+function clearOAuthState() {
+  for (const key of oauthKeys) sessionStorage.removeItem(`soyuz.dashboard.${key}`);
 }
 
 async function loadRuns() {
@@ -127,32 +141,42 @@ async function loadRunDetails(runId, container) {
       apiJson(`/dashboard/api/runs/${encodeURIComponent(runId)}`),
       apiJson(`/dashboard/api/runs/${encodeURIComponent(runId)}/artifacts`),
     ]);
-    const summary = document.createElement("p");
-    summary.textContent = detail.outcomeSummary || `Task mode: ${detail.taskMode}; publish mode: ${detail.publishMode}.`;
-    container.append(summary);
-    if (artifacts.artifacts.length) {
-      const list = document.createElement("div");
-      list.className = "artifacts";
-      for (const artifact of artifacts.artifacts) {
-        const button = document.createElement("button");
-        button.className = "artifact-link";
-        button.type = "button";
-        button.textContent = `Download ${artifact.name} (${formatBytes(artifact.size)})`;
-        button.addEventListener("click", () => void downloadArtifact(runId, artifact));
-        list.append(button);
-      }
-      container.append(list);
-    } else {
-      const empty = document.createElement("p");
-      empty.className = "meta";
-      empty.textContent = "No retained artifacts.";
-      container.append(empty);
-    }
+    appendRunSummary(container, detail);
+    appendRunArtifacts(container, runId, artifacts.artifacts);
   } catch {
     const error = document.createElement("p");
     error.textContent = "Run details could not be loaded.";
     container.append(error);
   }
+}
+
+function appendRunSummary(container, detail) {
+  const summary = document.createElement("p");
+  summary.textContent = detail.outcomeSummary || `Task mode: ${detail.taskMode}; publish mode: ${detail.publishMode}.`;
+  container.append(summary);
+}
+
+function appendRunArtifacts(container, runId, artifacts) {
+  if (!artifacts.length) {
+    const empty = document.createElement("p");
+    empty.className = "meta";
+    empty.textContent = "No retained artifacts.";
+    container.append(empty);
+    return;
+  }
+  const list = document.createElement("div");
+  list.className = "artifacts";
+  for (const artifact of artifacts) list.append(createArtifactButton(runId, artifact));
+  container.append(list);
+}
+
+function createArtifactButton(runId, artifact) {
+  const button = document.createElement("button");
+  button.className = "artifact-link";
+  button.type = "button";
+  button.textContent = `Download ${artifact.name} (${formatBytes(artifact.size)})`;
+  button.addEventListener("click", () => void downloadArtifact(runId, artifact));
+  return button;
 }
 
 async function downloadArtifact(runId, artifact) {
@@ -175,13 +199,6 @@ async function downloadArtifact(runId, artifact) {
 
 async function apiJson(path) {
   return fetchJson(path, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" });
-}
-
-async function fetchJson(path, init = {}) {
-  const response = await fetch(path, init);
-  const body = await response.json();
-  if (!response.ok) throw new Error("request failed");
-  return body.data ?? body;
 }
 
 function randomString(byteCount) {
