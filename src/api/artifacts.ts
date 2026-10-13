@@ -91,7 +91,7 @@ async function readClientArtifact(env: Env, runId: string, artifactId: string, r
   }
   if (!object) return errorResponse(requestId, 404, "ARTIFACT_CONTENT_NOT_FOUND", "Artifact content was not found");
 
-  return new Response(object.body, { status: 200, headers: artifactDownloadHeaders(artifactId, row) });
+  return new Response(object.body, { status: 200, headers: artifactDownloadHeaders(row) });
 }
 
 async function findReadyArtifact(env: Env, runId: string, artifactId: string): Promise<ArtifactRow | null> {
@@ -105,10 +105,14 @@ async function readArtifactObject(env: Env, row: ArtifactRow): Promise<R2ObjectB
   return env.ARTIFACTS!.get(row.object_key);
 }
 
-function artifactDownloadHeaders(artifactId: string, row: ArtifactRow): Headers {
+function artifactDownloadHeaders(row: ArtifactRow): Headers {
+  const filenameFallback = row.name.replace(/[^A-Za-z0-9._-]/g, "_") || "artifact";
+  const encodedFilename = encodeURIComponent(row.name).replace(/['()*]/g, (character) =>
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
   return new Headers({
     "content-type": row.content_type,
-    "content-disposition": `attachment; filename="artifact-${artifactId}"`,
+    "content-disposition": `attachment; filename="${filenameFallback}"; filename*=UTF-8''${encodedFilename}`,
     "content-length": String(row.size_bytes),
     "cache-control": "private, no-store",
     "x-content-type-options": "nosniff",

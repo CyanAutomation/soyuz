@@ -971,13 +971,14 @@ describe("Soyuz Worker API", () => {
     });
 
     const artifactId = "00000000-0000-4000-8000-000000000043";
+    const artifactName = 'summary"; filename="résumé.txt';
     const upload = await callBinary(bindings, `/v1/worker/runs/${runId}/artifacts/${artifactId}`, {
       method: "PUT",
       token: WORKER_TOKEN,
       headers: {
         "content-type": "text/plain",
         "content-length": "12",
-        "x-artifact-name": "summary.txt",
+        "x-artifact-name": artifactName,
         "x-artifact-kind": "report",
         "x-soyuz-worker-id": workerId,
         "x-soyuz-claim-callback-id": "00000000-0000-4000-8000-000000000041",
@@ -985,7 +986,7 @@ describe("Soyuz Worker API", () => {
       body: "run summary\n",
     });
     expect(upload.response.status).toBe(201);
-    expect((upload.body as any).data).toMatchObject({ id: artifactId, name: "summary.txt", kind: "report", size: 12 });
+    expect((upload.body as any).data).toMatchObject({ id: artifactId, name: artifactName, kind: "report", size: 12 });
     expect(r2.put).toHaveBeenCalledWith(
       `runs/${runId}/${artifactId}`,
       expect.any(ReadableStream),
@@ -996,16 +997,18 @@ describe("Soyuz Worker API", () => {
     expect(unauthorized.response.status).toBe(401);
     const list = await call(bindings, `/v1/runs/${runId}/artifacts`, { token: CLIENT_TOKEN });
     expect(list.response.status).toBe(200);
-    expect(list.body.data.artifacts).toEqual([expect.objectContaining({ id: artifactId, name: "summary.txt" })]);
+    expect(list.body.data.artifacts).toEqual([expect.objectContaining({ id: artifactId, name: artifactName })]);
     const download = await callBinary(bindings, `/v1/runs/${runId}/artifacts/${artifactId}`, { token: CLIENT_TOKEN });
     expect(download.response.status).toBe(200);
-    expect(download.response.headers.get("content-disposition")).toContain("attachment");
+    expect(download.response.headers.get("content-disposition")).toBe(
+      "attachment; filename=\"summary___filename__r_sum_.txt\"; filename*=UTF-8''summary%22%3B%20filename%3D%22r%C3%A9sum%C3%A9.txt",
+    );
     expect(download.body).toBe("run summary\n");
 
     const retry = await callBinary(bindings, `/v1/worker/runs/${runId}/artifacts/${artifactId}`, {
       method: "PUT", token: WORKER_TOKEN,
       headers: {
-        "content-type": "text/plain", "content-length": "12", "x-artifact-name": "summary.txt", "x-artifact-kind": "report",
+        "content-type": "text/plain", "content-length": "12", "x-artifact-name": artifactName, "x-artifact-kind": "report",
         "x-soyuz-worker-id": workerId, "x-soyuz-claim-callback-id": "00000000-0000-4000-8000-000000000041",
       },
       body: "run summary\n",
@@ -1014,7 +1017,7 @@ describe("Soyuz Worker API", () => {
     const conflict = await callBinary(bindings, `/v1/worker/runs/${runId}/artifacts/${artifactId}`, {
       method: "PUT", token: WORKER_TOKEN,
       headers: {
-        "content-type": "text/plain", "content-length": "12", "x-artifact-name": "summary.txt", "x-artifact-kind": "report",
+        "content-type": "text/plain", "content-length": "12", "x-artifact-name": artifactName, "x-artifact-kind": "report",
         "x-soyuz-worker-id": workerId, "x-soyuz-claim-callback-id": "00000000-0000-4000-8000-000000000041",
       },
       body: "run summary!",
