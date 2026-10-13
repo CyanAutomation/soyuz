@@ -316,7 +316,6 @@ async function commitClaim(
 ): Promise<RunRow> {
   const now = new Date().toISOString();
   const claimExpiresAt = new Date(Date.now() + leaseSeconds * 1_000).toISOString();
-  const payload = { leaseSeconds };
   try {
     const updated = await transitionRun(env.DB, runId, "claimed", {
       worker_id: workerId,
@@ -327,25 +326,52 @@ async function commitClaim(
       workerId,
       occurredAt: now,
       recordedAt: now,
-      payload,
+      payload: { leaseSeconds },
     });
-    if (updated.worker_id !== workerId) throw new ApiError(409, "RUN_CLAIMED", "Another worker already owns this run");
-    return updated;
+    return requireClaimOwner(updated, workerId);
   } catch (error) {
-    if (error instanceof RunTransitionError) {
-      const latest = await getRun(env.DB, runId);
-      if (latest?.status === "claimed" && latest.worker_id === workerId
-        && latest.claim_callback_id !== callbackId) {
-        throw new ApiError(409, "STALE_CLAIM", "This worker identity already has an active claim from a different execution attempt");
-      }
-      if (latest?.status === "claimed" && latest.worker_id === workerId
-        && latest.claim_callback_id === callbackId) return latest;
-      if ((latest?.status === "claimed" || latest?.status === "running") && latest.worker_id !== workerId) {
-        throw new ApiError(409, "RUN_CLAIMED", "Another worker already owns this run");
-      }
-    }
-    throw error;
+    return recoverClaimRace(env, runId, workerId, callbackId, error);
   }
+}
+
+function requireClaimOwner(row: RunRow, workerId: string): RunRow {
+  if (row.worker_id !== workerId) throw new ApiError(409, "RUN_CLAIMED", "Another worker already owns this run");
+  return row;
+}
+
+async function recoverClaimRace(
+  env: Env,
+  runId: string,
+  workerId: string,
+  callbackId: string,
+  error: unknown,
+): Promise<RunRow> {
+  if (!(error instanceof RunTransitionError)) throw error;
+  const latest = await getRun(env.DB, runId);
+  if (isSupersededClaim(latest, workerId, callbackId)) {
+    throw new ApiError(409, "STALE_CLAIM", "This worker identity already has an active claim from a different execution attempt");
+  }
+  if (isSameActiveClaim(latest, workerId, callbackId)) return latest;
+  if (isOwnedByAnotherWorker(latest, workerId)) {
+    throw new ApiError(409, "RUN_CLAIMED", "Another worker already owns this run");
+  }
+  throw error;
+}
+
+function isSupersededClaim(row: RunRow | null, workerId: string, callbackId: string): boolean {
+  return row?.status === "claimed" && row.worker_id === workerId && row.claim_callback_id !== callbackId;
+}
+
+function isSameActiveClaim(row: RunRow | null, workerId: string, callbackId: string): row is RunRow {
+  return row?.status === "claimed" && row.worker_id === workerId && row.claim_callback_id === callbackId;
+}
+
+function isOwnedByAnotherWorker(row: RunRow | null, workerId: string): boolean {
+  return isActiveClaim(row) && row?.worker_id !== workerId;
+}
+
+function isActiveClaim(row: RunRow | null): boolean {
+  return row?.status === "claimed" || row?.status === "running";
 }
 
 async function parseCallbackBody<T>(

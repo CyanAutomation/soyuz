@@ -22,11 +22,30 @@ export async function runProductionSmoke({
   log = (message) => console.log(message),
 } = {}) {
   const config = readConfig(env, execute);
+  const visibleQueueMessages = await runPreflight(config, fetchImpl, log);
+  if (!execute) return { status: "preflight_passed", visibleQueueMessages };
+  return runSmokeExecution(config, fetchImpl, { sleep, now, log, visibleQueueMessages });
+}
+
+async function runPreflight(config, fetchImpl, log) {
+  await checkWorkerHealth(config, fetchImpl);
+  await ensureNoActiveRuns(config, fetchImpl);
+  const queueBase = queueApiBase(config);
+  const queueHeaders = { authorization: `Bearer ${config.queueToken}` };
+  await ensureSafeQueueConsumer(fetchImpl, queueBase, queueHeaders);
+  const visibleQueueMessages = await countVisibleQueueMessages(fetchImpl, queueBase, queueHeaders);
+  log("Preflight passed: Worker healthy, no active runs, Queue HTTP pull/DLQ configured, and Queue peek empty.");
+  return visibleQueueMessages;
+}
+
+async function checkWorkerHealth(config, fetchImpl) {
   const health = await requestJson(fetchImpl, `${config.baseUrl}/health`);
   if (health.status !== "ok" || health.contractVersion !== "1") {
     throw new SoyuzSmokeError("WORKER_UNHEALTHY", "Soyuz /health did not report a healthy contract-v1 Worker.");
   }
+}
 
+async function ensureNoActiveRuns(config, fetchImpl) {
   for (const status of ACTIVE_STATUSES) {
     const page = await requestJson(fetchImpl, `${config.baseUrl}/v1/runs?status=${encodeURIComponent(status)}&limit=1`, {
       headers: { authorization: `Bearer ${config.clientToken}` },
@@ -36,9 +55,13 @@ export async function runProductionSmoke({
       throw new SoyuzSmokeError("ACTIVE_RUNS_PRESENT", "Active Soyuz runs exist; review them before starting a smoke run.");
     }
   }
+}
 
-  const queueBase = `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/queues/${config.queueId}`;
-  const queueHeaders = { authorization: `Bearer ${config.queueToken}` };
+function queueApiBase(config) {
+  return `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/queues/${config.queueId}`;
+}
+
+async function ensureSafeQueueConsumer(fetchImpl, queueBase, queueHeaders) {
   const consumerResponse = await requestJson(fetchImpl, `${queueBase}/consumers`, { headers: queueHeaders });
   if (!consumerResponse.success || !Array.isArray(consumerResponse.result)) {
     throw new SoyuzSmokeError("QUEUE_CONSUMER_READ_FAILED", "Cloudflare did not return Queue consumer configuration.");
@@ -50,7 +73,9 @@ export async function runProductionSmoke({
   if (!safePullConsumer) {
     throw new SoyuzSmokeError("QUEUE_CONSUMER_UNSAFE", "Soyuz Queue needs an HTTP pull consumer with a dead-letter queue.");
   }
+}
 
+async function countVisibleQueueMessages(fetchImpl, queueBase, queueHeaders) {
   const peek = await requestJson(fetchImpl, `${queueBase}/messages/peek`, {
     method: "POST",
     headers: queueHeaders,
@@ -63,11 +88,15 @@ export async function runProductionSmoke({
   if (visibleQueueMessages > 0) {
     throw new SoyuzSmokeError("QUEUE_NOT_EMPTY", "Soyuz Queue has visible messages; review ownership before submitting a smoke run.");
   }
+  return visibleQueueMessages;
+}
 
-  log("Preflight passed: Worker healthy, no active runs, Queue HTTP pull/DLQ configured, and Queue peek empty.");
-  if (!execute) return { status: "preflight_passed", visibleQueueMessages };
+async function runSmokeExecution(config, fetchImpl, { sleep, now, log, visibleQueueMessages }) {
+  const runId = await submitSmokeRun(config, fetchImpl, log);
+  return pollSmokeRun(config, fetchImpl, runId, { sleep, now, log, visibleQueueMessages });
+}
 
-  const timeoutSeconds = config.runTimeoutSeconds;
+async function submitSmokeRun(config, fetchImpl, log) {
   const submission = await requestJson(fetchImpl, `${config.baseUrl}/v1/runs`, {
     method: "POST",
     headers: {
@@ -80,7 +109,7 @@ export async function runProductionSmoke({
       taskPrompt: TASK_PROMPT,
       taskMode: "inspect",
       publishMode: "none",
-      timeoutSeconds,
+      timeoutSeconds: config.runTimeoutSeconds,
       idempotencyKey: config.idempotencyKey,
     }),
   }, [200, 202]);
@@ -89,7 +118,10 @@ export async function runProductionSmoke({
     throw new SoyuzSmokeError("RUN_ID_INVALID", "Soyuz did not return a valid run ID. Reuse the same idempotency key when checking the outcome.");
   }
   log(`Smoke run submitted: ${runId}`);
+  return runId;
+}
 
+async function pollSmokeRun(config, fetchImpl, runId, { sleep, now, log, visibleQueueMessages }) {
   const deadline = now() + config.maxWaitSeconds * 1_000;
   let lastStatus = "unknown";
   while (now() < deadline) {
@@ -109,20 +141,7 @@ export async function runProductionSmoke({
     lastStatus = run.status;
 
     if (TERMINAL_STATUSES.has(run.status) && workerRun.status === run.status) {
-      if (run.status === "completed") {
-        const eventsResponse = await requestJson(fetchImpl, `${config.baseUrl}/v1/runs/${encodeURIComponent(runId)}/events?after=0&limit=100`, {
-          headers: { authorization: `Bearer ${config.clientToken}` },
-        });
-        const types = new Set(eventsResponse.data?.events?.map((event) => event.type));
-        if (!types.has("run.started") || !types.has("run.completed")) {
-          throw new SoyuzSmokeError("CALLBACKS_NOT_VERIFIED", "Run completed without both start and completion events.");
-        }
-        if (run.publishMode !== "none" || run.result?.publishedUrl) {
-          throw new SoyuzSmokeError("UNEXPECTED_PUBLICATION", "Smoke run did not preserve the no-publication setting.");
-        }
-        log(`Smoke run completed: ${runId}; start/completion callbacks recorded; no publication occurred.`);
-        return { status: "completed", runId, visibleQueueMessages };
-      }
+      if (run.status === "completed") return verifyCompletedSmokeRun(config, fetchImpl, run, runId, log, visibleQueueMessages);
       log(`Smoke run ended in ${run.status} (class=${run.failureClass ?? "unknown"}): ${runId}`);
       return { status: run.status, runId, failureClass: run.failureClass ?? null, visibleQueueMessages };
     }
@@ -135,20 +154,23 @@ export async function runProductionSmoke({
   return { status: "timed_out", runId, lastStatus, visibleQueueMessages };
 }
 
-function readConfig(env, execute) {
-  const baseUrlRaw = required(env, "SOYUZ_BASE_URL");
-  let baseUrl;
-  try {
-    const parsed = new URL(baseUrlRaw);
-    if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname))) {
-      throw new Error("scheme");
-    }
-    if (parsed.search || parsed.hash || parsed.username || parsed.password) throw new Error("url components");
-    baseUrl = parsed.toString().replace(/\/+$/, "");
-  } catch {
-    throw new SoyuzSmokeError("CONFIG_INVALID", "SOYUZ_BASE_URL must be an HTTPS URL without credentials, query, or fragment.");
+async function verifyCompletedSmokeRun(config, fetchImpl, run, runId, log, visibleQueueMessages) {
+  const eventsResponse = await requestJson(fetchImpl, `${config.baseUrl}/v1/runs/${encodeURIComponent(runId)}/events?after=0&limit=100`, {
+    headers: { authorization: `Bearer ${config.clientToken}` },
+  });
+  const types = new Set(eventsResponse.data?.events?.map((event) => event.type));
+  if (!types.has("run.started") || !types.has("run.completed")) {
+    throw new SoyuzSmokeError("CALLBACKS_NOT_VERIFIED", "Run completed without both start and completion events.");
   }
+  if (run.publishMode !== "none" || run.result?.publishedUrl) {
+    throw new SoyuzSmokeError("UNEXPECTED_PUBLICATION", "Smoke run did not preserve the no-publication setting.");
+  }
+  log(`Smoke run completed: ${runId}; start/completion callbacks recorded; no publication occurred.`);
+  return { status: "completed", runId, visibleQueueMessages };
+}
 
+function readConfig(env, execute) {
+  const baseUrl = parseBaseUrl(required(env, "SOYUZ_BASE_URL"));
   const clientToken = requiredToken(env, "CLIENT_API_TOKEN");
   const workerToken = requiredToken(env, "SOYUZ_WORKER_API_TOKEN");
   const queueToken = requiredToken(env, "SOYUZ_QUEUE_API_TOKEN");
@@ -159,24 +181,44 @@ function readConfig(env, execute) {
   }
 
   const config = { baseUrl, clientToken, workerToken, queueToken, accountId, queueId };
-  if (!execute) return config;
+  return execute ? { ...config, ...readExecutionConfig(env) } : config;
+}
+
+function parseBaseUrl(baseUrlRaw) {
+  try {
+    const parsed = new URL(baseUrlRaw);
+    if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname))) {
+      throw new Error("scheme");
+    }
+    if (parsed.search || parsed.hash || parsed.username || parsed.password) throw new Error("url components");
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    throw new SoyuzSmokeError("CONFIG_INVALID", "SOYUZ_BASE_URL must be an HTTPS URL without credentials, query, or fragment.");
+  }
+}
+
+function readExecutionConfig(env) {
   if (env.SOYUZ_SMOKE_ACK_EXECUTION !== "yes") {
     throw new SoyuzSmokeError("EXECUTION_NOT_ACKNOWLEDGED", "Set SOYUZ_SMOKE_ACK_EXECUTION=yes only after authorizing one bounded, non-publishing run.");
   }
 
   const repoUrl = required(env, "DISPOSABLE_REPO_URL");
+  validateRepositoryUrl(repoUrl);
+  const idempotencyKey = required(env, "SMOKE_IDEMPOTENCY_KEY");
+  if (!isUuid(idempotencyKey)) throw new SoyuzSmokeError("CONFIG_INVALID", "SMOKE_IDEMPOTENCY_KEY must be a UUID.");
+  const runTimeoutSeconds = boundedInteger(env.SOYUZ_SMOKE_TIMEOUT_SECONDS, 180, 60, 600, "SOYUZ_SMOKE_TIMEOUT_SECONDS");
+  const maxWaitSeconds = boundedInteger(env.SOYUZ_SMOKE_MAX_WAIT_SECONDS, runTimeoutSeconds + 120, runTimeoutSeconds, 1_800, "SOYUZ_SMOKE_MAX_WAIT_SECONDS");
+  const pollIntervalMs = boundedInteger(env.SOYUZ_SMOKE_POLL_INTERVAL_MS, 5_000, 1_000, 30_000, "SOYUZ_SMOKE_POLL_INTERVAL_MS");
+  return { repoUrl, idempotencyKey, runTimeoutSeconds, maxWaitSeconds, pollIntervalMs };
+}
+
+function validateRepositoryUrl(repoUrl) {
   try {
     const parsed = new URL(repoUrl);
     if (parsed.protocol !== "https:" || parsed.username || parsed.password) throw new Error("url");
   } catch {
     throw new SoyuzSmokeError("CONFIG_INVALID", "DISPOSABLE_REPO_URL must be an HTTPS repository URL without embedded credentials.");
   }
-  const idempotencyKey = required(env, "SMOKE_IDEMPOTENCY_KEY");
-  if (!isUuid(idempotencyKey)) throw new SoyuzSmokeError("CONFIG_INVALID", "SMOKE_IDEMPOTENCY_KEY must be a UUID.");
-  const runTimeoutSeconds = boundedInteger(env.SOYUZ_SMOKE_TIMEOUT_SECONDS, 180, 60, 600, "SOYUZ_SMOKE_TIMEOUT_SECONDS");
-  const maxWaitSeconds = boundedInteger(env.SOYUZ_SMOKE_MAX_WAIT_SECONDS, runTimeoutSeconds + 120, runTimeoutSeconds, 1_800, "SOYUZ_SMOKE_MAX_WAIT_SECONDS");
-  const pollIntervalMs = boundedInteger(env.SOYUZ_SMOKE_POLL_INTERVAL_MS, 5_000, 1_000, 30_000, "SOYUZ_SMOKE_POLL_INTERVAL_MS");
-  return { ...config, repoUrl, idempotencyKey, runTimeoutSeconds, maxWaitSeconds, pollIntervalMs };
 }
 
 async function requestJson(fetchImpl, url, init = {}, acceptedStatuses = [200]) {
@@ -256,22 +298,28 @@ function isUuid(value) {
   return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-async function main() {
-  const args = process.argv.slice(2);
+export async function runSmokeCli(args, { run = runProductionSmoke, writeError = (message) => console.error(message) } = {}) {
   if (args.some((argument) => argument !== "--run")) {
-    console.error("Usage: node scripts/soyuz-production-smoke.mjs [--run]");
-    process.exitCode = 2;
-    return;
+    writeError("Usage: node scripts/soyuz-production-smoke.mjs [--run]");
+    return 2;
   }
   try {
-    const result = await runProductionSmoke({ execute: args.includes("--run") });
-    if (result.status !== "preflight_passed" && result.status !== "completed") process.exitCode = 1;
+    const result = await run({ execute: args.includes("--run") });
+    return isSuccessfulSmokeResult(result) ? 0 : 1;
   } catch (error) {
     const code = error instanceof SoyuzSmokeError ? error.code : "UNEXPECTED_ERROR";
     const message = error instanceof SoyuzSmokeError ? error.message : "The smoke check stopped unexpectedly.";
-    console.error(`Soyuz smoke check failed (${code}): ${message}`);
-    process.exitCode = 1;
+    writeError(`Soyuz smoke check failed (${code}): ${message}`);
+    return 1;
   }
+}
+
+function isSuccessfulSmokeResult(result) {
+  return result.status === "preflight_passed" || result.status === "completed";
+}
+
+async function main() {
+  process.exitCode = await runSmokeCli(process.argv.slice(2));
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) await main();
