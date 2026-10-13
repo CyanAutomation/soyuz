@@ -1,0 +1,12 @@
+{
+  // Wrangler serves these dashboard assets from HTML links rather than JS imports.
+  "entry": [
+    "public/dashboard/app.js",
+    "public/dashboard/style.css"
+  ],
+  // Stryker resolves these plugin packages by name from stryker.unit.config.mjs.
+  "ignoreDependencies": [
+    "@stryker-mutator/typescript-checker",
+    "@stryker-mutator/vitest-runner"
+  ]
+}
