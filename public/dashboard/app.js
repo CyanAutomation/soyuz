@@ -1,3 +1,5 @@
+import { fetchJson } from "./api.js";
+
 const notice = document.querySelector("#notice");
 const runsSection = document.querySelector("#runs");
 const connectButton = document.querySelector("#connect");
@@ -197,13 +199,6 @@ async function downloadArtifact(runId, artifact) {
 
 async function apiJson(path) {
   return fetchJson(path, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" });
-}
-
-async function fetchJson(path, init = {}) {
-  const response = await fetch(path, init);
-  const body = await response.json();
-  if (!response.ok) throw new Error("request failed");
-  return body.data ?? body;
 }
 
 function randomString(byteCount) {
