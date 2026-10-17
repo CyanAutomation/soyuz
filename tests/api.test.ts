@@ -9,6 +9,7 @@ import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
 import { oauthProviderOptions } from "../src/auth/oauth";
 
 const CLIENT_TOKEN = "client-test-token-value-long-enough";
+const KASEKI_TOKEN = "kaseki-submit-token-value-long-enough";
 const WORKER_TOKEN = "worker-test-token-value-long-enough";
 const CLIENT_KEY = "00000000-0000-4000-8000-000000000010";
 const CALLBACK_ID = "00000000-0000-4000-8000-000000000011";
@@ -554,6 +555,90 @@ describe("Soyuz Worker API", () => {
     expect(conflict.response.status).toBe(409);
     expect(conflict.body.error.code).toBe("IDEMPOTENCY_KEY_REUSED");
     expect(sent).toHaveLength(1);
+  });
+
+  it("[RUN-ORIGIN-01] derives Kaseki provenance from its scoped credential and scopes idempotency", async () => {
+    const { bindings, sent } = testEnv();
+    const kaseki = {
+      ...bindings,
+      KASEKI_SUBMISSION_API_TOKEN: KASEKI_TOKEN,
+      KASEKI_SUBMISSION_IDENTITY: "kaseki-prod",
+    };
+    const key = "00000000-0000-4000-8000-000000000060";
+    const clientRun = await submit(bindings, {}, key);
+    const kasekiRun = await call(kaseki, "/v1/runs", {
+      method: "POST",
+      token: KASEKI_TOKEN,
+      headers: { "Idempotency-Key": key },
+      body: validRequest(),
+    });
+
+    expect(clientRun.body.data.origin).toEqual({ type: "api_client", id: "client-api" });
+    expect(kasekiRun.response.status).toBe(202);
+    expect(kasekiRun.body.data.origin).toEqual({ type: "kaseki", id: "kaseki-prod" });
+    expect(kasekiRun.body.data.id).not.toBe(clientRun.body.data.id);
+    expect((await getRun(kaseki.DB, kasekiRun.body.data.id))?.origin_type).toBe("kaseki");
+    expect(sent).toHaveLength(2);
+
+    const deniedRead = await call(kaseki, "/v1/runs", { token: KASEKI_TOKEN });
+    expect(deniedRead.response.status).toBe(403);
+    expect(deniedRead.body.error.code).toBe("INSUFFICIENT_SCOPE");
+  });
+
+  it("[RUN-RETRY-01] retries only terminal runs and records canonical retry lineage", async () => {
+    const { bindings, sent } = testEnv();
+    const kaseki = {
+      ...bindings,
+      KASEKI_SUBMISSION_API_TOKEN: KASEKI_TOKEN,
+      KASEKI_SUBMISSION_IDENTITY: "kaseki-prod",
+    };
+    const source = await submit(bindings);
+    const sourceId = source.body.data.id as string;
+    const workerId = "docker-host-retry";
+    await claimRun(bindings, sourceId, workerId, "00000000-0000-4000-8000-000000000061");
+    await call(bindings, `/v1/worker/runs/${sourceId}/started`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        callbackId: "00000000-0000-4000-8000-000000000062",
+        workerId,
+      },
+    });
+    await call(bindings, `/v1/worker/runs/${sourceId}/completed`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        callbackId: "00000000-0000-4000-8000-000000000063",
+        workerId,
+        exitCode: 0,
+      },
+    });
+
+    const retryKey = "00000000-0000-4000-8000-000000000064";
+    const retryRequest = {
+      method: "POST",
+      token: KASEKI_TOKEN,
+      headers: { "Idempotency-Key": retryKey },
+      body: { idempotencyKey: retryKey },
+    };
+    const retry = await call(kaseki, `/v1/runs/${sourceId}/retry`, retryRequest);
+    const replay = await call(kaseki, `/v1/runs/${sourceId}/retry`, retryRequest);
+
+    expect(retry.response.status).toBe(202);
+    expect(retry.body.data.origin).toEqual({ type: "kaseki", id: "kaseki-prod" });
+    expect(retry.body.data.retryOf).toBe(sourceId);
+    expect(retry.body.data.id).not.toBe(sourceId);
+    expect(replay.response.status).toBe(200);
+    expect(replay.body.data.id).toBe(retry.body.data.id);
+    expect((await getRun(bindings.DB, retry.body.data.id))?.retry_of).toBe(sourceId);
+    expect(sent).toHaveLength(2);
+
+    const nonTerminal = await submit(bindings, {}, "00000000-0000-4000-8000-000000000065");
+    const rejected = await call(kaseki, `/v1/runs/${nonTerminal.body.data.id}/retry`, retryRequest);
+    expect(rejected.response.status).toBe(409);
+    expect(rejected.body.error.code).toBe("RUN_NOT_RETRYABLE");
   });
 
   it("[QUEUE-RETRY-01] retries ambiguous Queue publication failures before marking admission_failed", async () => {

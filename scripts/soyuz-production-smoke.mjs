@@ -69,9 +69,12 @@ async function ensureSafeQueueConsumer(fetchImpl, queueBase, queueHeaders) {
   const safePullConsumer = consumerResponse.result.some((consumer) =>
     consumer?.type === "http_pull"
     && typeof consumer.dead_letter_queue === "string"
-    && consumer.dead_letter_queue.trim().length > 0);
+    && consumer.dead_letter_queue.trim().length > 0
+    && Number.isInteger(consumer.settings?.max_retries)
+    && consumer.settings.max_retries >= 1
+    && consumer.settings.max_retries <= 100);
   if (!safePullConsumer) {
-    throw new SoyuzSmokeError("QUEUE_CONSUMER_UNSAFE", "Soyuz Queue needs an HTTP pull consumer with a dead-letter queue.");
+    throw new SoyuzSmokeError("QUEUE_CONSUMER_UNSAFE", "Soyuz Queue needs an HTTP pull consumer with a finite retry limit and a dead-letter queue.");
   }
 }
 
