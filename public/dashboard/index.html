@@ -16,7 +16,10 @@
         <h1>Run dashboard</h1>
         <p class="muted">Read-only view of run status, progress, and retained artifacts.</p>
       </div>
-      <button id="connect" type="button">Sign in with GitHub</button>
+      <div class="auth-controls">
+        <p id="account" class="meta" hidden></p>
+        <button id="connect" type="button">Sign in with GitHub</button>
+      </div>
     </header>
     <p id="notice" role="status" aria-live="polite">Sign in to view runs.</p>
     <section id="runs" aria-label="Recent runs"></section>
