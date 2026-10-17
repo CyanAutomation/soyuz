@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
+import { AuthorizationError } from "@cloudflare/workers-oauth-provider";
 import {
   allowedGithubUserIds,
+  authorizationErrorResponse,
+  bindConsentToSameOriginRequest,
   canonicalPublicOrigin,
   isAllowedGithubUser,
+  oauthProviderOptions,
   requestNeedsWriteScope,
   renderConsentPage,
 } from "../src/auth/oauth";
+import { vi } from "vitest";
 
 describe("Soyuz OAuth policy", () => {
   it("requires an explicit numeric GitHub user ID allowlist", () => {
@@ -65,5 +70,151 @@ describe("Soyuz OAuth policy", () => {
     expect(html).toContain("localhost:9000&lt;&gt;");
     expect(html).toContain('value="handle&lt;&amp;"');
     expect(html).not.toContain("<script>");
+  });
+
+  it("reports OAuth failures with a support reference while keeping the public error generic", async () => {
+    const requestId = "00000000-0000-4000-8000-000000000123";
+    const request = new Request("https://soyuz.example.test/oauth/callback?code=private-code&state=private-state", {
+      headers: { "x-request-id": requestId, cookie: "session=private-cookie" },
+    });
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      const response = authorizationErrorResponse(new Error("private access token"), request, "github_callback");
+      const body = await response.text();
+
+      expect(response.status).toBe(502);
+      expect(response.headers.get("x-request-id")).toBe(requestId);
+      expect(body).toContain(requestId);
+      expect(body).toContain("GitHub sign-in could not be completed. Retry shortly.");
+      expect(body).not.toContain("private access token");
+      expect(body).not.toContain("private-code");
+
+      expect(log).toHaveBeenCalledOnce();
+      const record = JSON.parse(String(log.mock.calls[0][0]));
+      expect(record).toMatchObject({
+        event: "soyuz.oauth.failure",
+        requestId,
+        stage: "github_callback",
+        errorType: "unexpected_error",
+      });
+      expect(JSON.stringify(record)).not.toContain("private access token");
+      expect(JSON.stringify(record)).not.toContain("private-code");
+      expect(JSON.stringify(record)).not.toContain("private-state");
+      expect(JSON.stringify(record)).not.toContain("private-cookie");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("maps known consent transaction failures to safe diagnostic reasons", async () => {
+    const request = new Request("https://soyuz.example.test/oauth/authorize", {
+      headers: { "x-request-id": "00000000-0000-4000-8000-000000000125" },
+    });
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      const error = new AuthorizationError("invalid_request", {
+        description: "This authorization was not started in this browser; start again",
+      });
+      const response = authorizationErrorResponse(error, request, "authorize");
+      const record = JSON.parse(String(log.mock.calls[0][0]));
+
+      expect(response.status).toBe(400);
+      expect(record).toMatchObject({
+        errorType: "authorization_error",
+        errorCode: "invalid_request",
+        failureReason: "consent_binding_cookie_missing",
+      });
+      expect(JSON.stringify(record)).not.toContain("This authorization was not started in this browser");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("logs the OAuth provider's stable error reason and adds a request reference without logging details", () => {
+    const requestId = "00000000-0000-4000-8000-000000000124";
+    const log = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const options = oauthProviderOptions("https://soyuz.example.test");
+    const responseHeaders: Record<string, string> = { "content-type": "application/json" };
+
+    try {
+      const result = options.onError?.({
+        code: "invalid_client",
+        description: "private diagnostic description",
+        status: 400,
+        headers: responseHeaders,
+        internal: {
+          category: "client-id-metadata-document",
+          reason: "metadata_resolution_failed",
+          detail: { secret: "private diagnostic detail" },
+        },
+        request: new Request("https://soyuz.example.test/oauth/token?client_secret=private-secret", {
+          headers: { "x-request-id": requestId, authorization: "Bearer private-token" },
+        }),
+      });
+
+      expect(result).toBeUndefined();
+      expect(responseHeaders["x-request-id"]).toBe(requestId);
+      expect(log).toHaveBeenCalledOnce();
+      const record = JSON.parse(String(log.mock.calls[0][0]));
+      expect(record).toMatchObject({
+        event: "soyuz.oauth.provider_error",
+        requestId,
+        category: "client-id-metadata-document",
+        reason: "metadata_resolution_failed",
+        oauthCode: "invalid_client",
+        status: 400,
+      });
+      const serialized = JSON.stringify(record);
+      expect(serialized).not.toContain("private diagnostic description");
+      expect(serialized).not.toContain("private diagnostic detail");
+      expect(serialized).not.toContain("private-secret");
+      expect(serialized).not.toContain("private-token");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("restores the hashed consent binding only for same-origin form posts", async () => {
+    const handle = "opaque-private-consent-handle";
+    const env = { SOYUZ_PUBLIC_URL: "https://soyuz.example.test" };
+    const request = new Request("https://soyuz.example.test/oauth/authorize", {
+      method: "POST",
+      headers: { origin: "null", "sec-fetch-site": "same-origin" },
+    });
+    const bound = await bindConsentToSameOriginRequest(request, handle, env);
+    const cookie = bound.headers.get("cookie") ?? "";
+
+    expect(bound).not.toBe(request);
+    expect(cookie).toMatch(/^__Host-oauth-consent-[a-f0-9]{16}=[a-f0-9]{64}$/);
+    expect(cookie).not.toContain(handle);
+
+    const crossSite = new Request(request.url, {
+      method: "POST",
+      headers: { origin: "https://attacker.example.test", "sec-fetch-site": "cross-site" },
+    });
+    expect(await bindConsentToSameOriginRequest(crossSite, handle, env)).toBe(crossSite);
+  });
+
+  it("does not duplicate a malformed cookie entry that already names the consent binding", async () => {
+    const handle = "opaque-private-consent-handle";
+    const env = { SOYUZ_PUBLIC_URL: "https://soyuz.example.test" };
+    const headers = { origin: "null", "sec-fetch-site": "same-origin" };
+    const initial = await bindConsentToSameOriginRequest(
+      new Request("https://soyuz.example.test/oauth/authorize", { method: "POST", headers }),
+      handle,
+      env,
+    );
+    const bindingCookieName = initial.headers.get("cookie")!.split("=")[0];
+    const existing = new Request("https://soyuz.example.test/oauth/authorize", {
+      method: "POST",
+      headers: { ...headers, cookie: `flag; ${bindingCookieName}` },
+    });
+
+    const result = await bindConsentToSameOriginRequest(existing, handle, env);
+
+    expect(result).toBe(existing);
+    expect(result.headers.get("cookie")).toBe(`flag; ${bindingCookieName}`);
   });
 });

@@ -8,6 +8,8 @@ import {
   type OAuthProviderOptions,
 } from "@cloudflare/workers-oauth-provider";
 import type { Env } from "../env";
+import { requestIdFor } from "../api/http";
+import { sha256Hex } from "../lib/sha256";
 import {
   isAllowedGithubUser,
   SOYUZ_READ_SCOPE,
@@ -22,6 +24,27 @@ export { requestNeedsWriteScope } from "./oauth-resource";
 const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const GITHUB_USER_URL = "https://api.github.com/user";
+const OAUTH_COOKIE_PREFIX = "__Host-oauth-";
+const OAUTH_ERROR_CODES = new Set([
+  "invalid_client", "invalid_request", "unauthorized_client", "access_denied",
+  "unsupported_response_type", "invalid_scope", "server_error", "temporarily_unavailable",
+  "invalid_grant", "unsupported_grant_type", "invalid_token", "insufficient_scope",
+]);
+const AUTHORIZATION_ERROR_CODES = new Set([
+  "invalid_request", "invalid_target", "unauthorized_client", "access_denied",
+  "unsupported_response_type", "invalid_scope", "server_error", "temporarily_unavailable",
+]);
+const GITHUB_FAILURE_CODES = new Set([
+  "GITHUB_TOKEN_EXCHANGE_FAILED", "GITHUB_TOKEN_MISSING",
+  "GITHUB_IDENTITY_LOOKUP_FAILED", "GITHUB_IDENTITY_INVALID",
+]);
+const AUTHORIZATION_FAILURE_REASONS = new Map([
+  ["Missing transaction handle", "consent_handle_missing"],
+  ["This authorization was not started in this browser; start again", "consent_binding_cookie_missing"],
+  ["This authorization belongs to a different browser session; start again", "consent_binding_mismatch"],
+  ["This authorization expired or was already used; start again", "consent_transaction_expired"],
+  ["Approved scopes must be ones this server supports", "consent_scope_invalid"],
+]);
 
 interface GitHubUser {
   id: number;
@@ -70,9 +93,22 @@ export function oauthProviderOptions(origin: string): OAuthProviderOptions<Env> 
       "/dashboard/api/": { fetch: handleDashboardApiRequest },
     },
     defaultHandler: { fetch: handleOAuthPageRequest },
+    onError: ({ code, status, headers, internal, request }) => {
+      const requestId = request ? requestIdFor(request) : crypto.randomUUID();
+      headers["x-request-id"] = requestId;
+      console.warn(JSON.stringify({
+        event: "soyuz.oauth.provider_error",
+        requestId,
+        category: safeSlug(internal.category, /^[a-z][a-z0-9-]{0,63}$/),
+        reason: safeSlug(internal.reason, /^[a-z][a-z0-9_]{0,63}$/),
+        oauthCode: OAUTH_ERROR_CODES.has(code) ? code : "other",
+        status: Number.isInteger(status) && status >= 400 && status <= 599 ? status : 0,
+      }));
+    },
     authorizeEndpoint: "/oauth/authorize",
     tokenEndpoint: "/oauth/token",
     clientRegistrationEndpoint: "/oauth/register",
+    cookiePrefix: OAUTH_COOKIE_PREFIX,
     scopesSupported: [SOYUZ_READ_SCOPE, SOYUZ_WRITE_SCOPE, "offline_access"],
     requiredScopes: [SOYUZ_READ_SCOPE],
     resourceMetadata: {
@@ -106,7 +142,7 @@ ${details.redirectIsLoopback ? "<p><strong>This sends access to an app on your c
 
 async function handleOAuthPageRequest(request: Request, env: Env, _context: ExecutionContext): Promise<Response> {
   const helpers = env.OAUTH_PROVIDER;
-  if (!helpers) return plainOAuthError(503, "OAuth storage is not available.");
+  if (!helpers) return oauthConfigurationErrorResponse(request, "provider_context", "oauth_provider_unavailable", "OAuth storage is not available.");
   const path = new URL(request.url).pathname;
   if (path === "/oauth/authorize") return handleAuthorizationPage(request, env, helpers);
   if (path === "/oauth/callback") return handleGithubCallback(request, env, helpers);
@@ -122,7 +158,7 @@ async function handleAuthorizationPage(request: Request, env: Env, helpers: OAut
       const headers = new Headers(transaction.headers);
       headers.set("content-type", "text/html; charset=utf-8");
       headers.set("cache-control", "no-store");
-      headers.set("content-security-policy", "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
+      headers.set("content-security-policy", "default-src 'none'; form-action 'self' https://github.com; base-uri 'none'; frame-ancestors 'none'");
       headers.set("referrer-policy", "no-referrer");
       headers.set("x-content-type-options", "nosniff");
       return new Response(renderConsentPage(details, transaction.handle), { headers });
@@ -130,12 +166,13 @@ async function handleAuthorizationPage(request: Request, env: Env, helpers: OAut
     if (request.method !== "POST") return new Response("Method not allowed", { status: 405, headers: { allow: "GET, POST" } });
     const form = await request.formData();
     const handle = String(form.get("handle") ?? "");
+    const consentRequest = await bindConsentToSameOriginRequest(request, handle, env);
     if (form.get("decision") !== "approve") {
-      const denied = await helpers.denyConsent(request, handle);
+      const denied = await helpers.denyConsent(consentRequest, handle);
       denied.headers.set("cache-control", "no-store");
       return new Response(null, { status: 302, headers: denied.headers });
     }
-    const approved = await helpers.approveConsent(request, handle, {
+    const approved = await helpers.approveConsent(consentRequest, handle, {
       scope: form.getAll("scope").map(String),
     });
     const verifier = randomVerifier();
@@ -144,7 +181,7 @@ async function handleAuthorizationPage(request: Request, env: Env, helpers: OAut
       headers: approved.headers,
     });
     const origin = canonicalPublicOrigin(env.SOYUZ_PUBLIC_URL);
-    if (!origin) return plainOAuthError(503, "OAuth is not configured.");
+    if (!origin) return oauthConfigurationErrorResponse(request, "authorize", "public_origin_invalid", "OAuth is not configured.");
     const authorizeUrl = new URL(GITHUB_AUTHORIZE_URL);
     authorizeUrl.searchParams.set("client_id", env.GITHUB_OAUTH_CLIENT_ID ?? "");
     authorizeUrl.searchParams.set("redirect_uri", `${origin}/oauth/callback`);
@@ -155,10 +192,48 @@ async function handleAuthorizationPage(request: Request, env: Env, helpers: OAut
     authorizeUrl.searchParams.set("allow_signup", "false");
     transaction.headers.set("location", authorizeUrl.toString());
     transaction.headers.set("cache-control", "no-store");
+    const requestId = requestIdFor(request);
+    transaction.headers.set("x-request-id", requestId);
+    console.info(JSON.stringify({
+      event: "soyuz.oauth.upstream_redirect",
+      requestId,
+      destination: authorizeUrl.origin,
+    }));
     return new Response(null, { status: 302, headers: transaction.headers });
   } catch (error) {
-    return authorizationErrorResponse(error);
+    return authorizationErrorResponse(error, request, "authorize");
   }
+}
+
+export async function bindConsentToSameOriginRequest(
+  request: Request,
+  handle: string,
+  env: Pick<Env, "SOYUZ_PUBLIC_URL">,
+): Promise<Request> {
+  if (!handle) return request;
+  const handleHash = await sha256Hex(handle);
+  const cookieName = `${OAUTH_COOKIE_PREFIX}consent-${handleHash.slice(0, 16)}`;
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  if (cookieHeader.split(";").some((part) => {
+    const separator = part.indexOf("=");
+    const name = separator === -1 ? part : part.slice(0, separator);
+    return name.trim() === cookieName;
+  })) return request;
+
+  const origin = canonicalPublicOrigin(env.SOYUZ_PUBLIC_URL);
+  const requestOrigin = new URL(request.url).origin;
+  const originHeader = request.headers.get("origin");
+  const sameOriginForm = origin !== null
+    && requestOrigin === origin
+    && request.headers.get("sec-fetch-site") === "same-origin"
+    && (originHeader === origin || originHeader === "null");
+  if (!sameOriginForm) return request;
+
+  // Some browser shells omit the provider's Lax binding cookie on their own same-origin form POST.
+  // Fetch Metadata plus the one-use, KV-backed handle preserves CSRF protection in that case.
+  const headers = new Headers(request.headers);
+  headers.set("cookie", cookieHeader ? `${cookieHeader}; ${cookieName}=${handleHash}` : `${cookieName}=${handleHash}`);
+  return new Request(request.url, { method: request.method, headers });
 }
 
 async function handleGithubCallback(request: Request, env: Env, helpers: OAuthHelpers): Promise<Response> {
@@ -171,7 +246,7 @@ async function handleGithubCallback(request: Request, env: Env, helpers: OAuthHe
 
     const origin = canonicalPublicOrigin(env.SOYUZ_PUBLIC_URL);
     if (!origin || !env.GITHUB_OAUTH_CLIENT_ID || !env.GITHUB_OAUTH_CLIENT_SECRET) {
-      return plainOAuthError(503, "OAuth is not configured.");
+      return oauthConfigurationErrorResponse(request, "github_callback", "oauth_configuration_missing", "OAuth is not configured.");
     }
     const user = await fetchGithubUser(code, resumed.data.verifier, env, origin);
     if (!isAllowedGithubUser(user.id, env.SOYUZ_OAUTH_ALLOWED_GITHUB_IDS)) {
@@ -189,7 +264,7 @@ async function handleGithubCallback(request: Request, env: Env, helpers: OAuthHe
     resumed.headers.set("referrer-policy", "no-referrer");
     return new Response(null, { status: 302, headers: resumed.headers });
   } catch (error) {
-    return authorizationErrorResponse(error);
+    return authorizationErrorResponse(error, request, "github_callback");
   }
 }
 
@@ -233,11 +308,57 @@ function upstreamErrorRedirect(resumed: { request: Parameters<OAuthHelpers["comp
   return new Response(null, { status: 302, headers: resumed.headers });
 }
 
-function authorizationErrorResponse(error: unknown): Response {
-  return authorizationRedirect(error)
-    ?? (isUnverifiedAuthorizationFailure(error)
-      ? plainOAuthError(400, "The authorization request could not be verified. Start again from your MCP client.")
-      : plainOAuthError(502, "GitHub sign-in could not be completed. Retry shortly."));
+export function authorizationErrorResponse(error: unknown, request: Request, stage: string): Response {
+  const requestId = requestIdFor(request);
+  const diagnostic = oauthFailureDiagnostic(error);
+  console.error(JSON.stringify({
+    event: "soyuz.oauth.failure",
+    requestId,
+    stage: safeSlug(stage, /^[a-z][a-z0-9_]{0,63}$/),
+    ...diagnostic,
+  }));
+  const redirect = authorizationRedirect(error);
+  if (redirect) {
+    redirect.headers.set("x-request-id", requestId);
+    return redirect;
+  }
+  if (isUnverifiedAuthorizationFailure(error)) {
+    return plainOAuthError(400, "The authorization request could not be verified. Start again from your MCP client.", requestId);
+  }
+  return plainOAuthError(502, "GitHub sign-in could not be completed. Retry shortly.", requestId);
+}
+
+function oauthFailureDiagnostic(error: unknown): { errorType: string; errorCode?: string; failureReason?: string } {
+  if (error instanceof AuthorizationError) {
+    return {
+      errorType: "authorization_error",
+      errorCode: AUTHORIZATION_ERROR_CODES.has(error.code) ? error.code : "other",
+      ...(AUTHORIZATION_FAILURE_REASONS.has(error.description)
+        ? { failureReason: AUTHORIZATION_FAILURE_REASONS.get(error.description) }
+        : {}),
+    };
+  }
+  if (error instanceof CimdFetchError) return { errorType: "cimd_fetch_error", errorCode: "metadata_resolution_failed" };
+  if (error instanceof Error && GITHUB_FAILURE_CODES.has(error.message)) {
+    return { errorType: "github_upstream_error", errorCode: error.message };
+  }
+  return { errorType: "unexpected_error" };
+}
+
+function oauthConfigurationErrorResponse(request: Request, stage: string, errorCode: string, message: string): Response {
+  const requestId = requestIdFor(request);
+  console.error(JSON.stringify({
+    event: "soyuz.oauth.failure",
+    requestId,
+    stage: safeSlug(stage, /^[a-z][a-z0-9_]{0,63}$/),
+    errorType: "configuration_error",
+    errorCode: safeSlug(errorCode, /^[a-z][a-z0-9_]{0,63}$/),
+  }));
+  return plainOAuthError(503, message, requestId);
+}
+
+function safeSlug(value: string, pattern: RegExp): string {
+  return pattern.test(value) ? value : "other";
 }
 
 function authorizationRedirect(error: unknown): Response | null {
@@ -252,8 +373,8 @@ function isUnverifiedAuthorizationFailure(error: unknown): boolean {
   return error instanceof AuthorizationError || error instanceof CimdFetchError;
 }
 
-function plainOAuthError(status: number, message: string): Response {
-  return new Response(`<!doctype html><meta charset="utf-8"><title>Soyuz sign-in</title><p>${escapeHtml(message)}</p>`, {
+function plainOAuthError(status: number, message: string, requestId: string): Response {
+  return new Response(`<!doctype html><meta charset="utf-8"><title>Soyuz sign-in</title><p>${escapeHtml(message)}</p><p>Reference: <code>${escapeHtml(requestId)}</code></p>`, {
     status,
     headers: {
       "content-type": "text/html; charset=utf-8",
@@ -261,6 +382,7 @@ function plainOAuthError(status: number, message: string): Response {
       "content-security-policy": "default-src 'none'; base-uri 'none'; frame-ancestors 'none'",
       "referrer-policy": "no-referrer",
       "x-content-type-options": "nosniff",
+      "x-request-id": requestId,
     },
   });
 }
