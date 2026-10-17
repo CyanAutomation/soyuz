@@ -9,6 +9,8 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `CONTRACT-VERSION-01` | Soyuz/Kaseki messages use contract version 1. | [Transport contract: overview](CONTRACT.md) |
 | `AUTH-CONFIG-01` | Missing server-side API keys return 503. | [Transport contract: errors](CONTRACT.md#errors) |
 | `AUTH-ROTATE-01` | Rotated or revoked credentials are rejected; static tokens do not expire automatically. | [Transport contract: errors](CONTRACT.md#errors) |
+| `OAUTH-05` | The protected dashboard identity endpoint returns the allowlisted user's GitHub login and enforces the existing OAuth access policy. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |
+| `OAUTH-06` | RFC 7009 revocation invalidates the dashboard's OAuth access token. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |
 | `HEALTH-DB-01` | Health and run history report D1 unavailability safely. | [Transport contract: public endpoints and errors](CONTRACT.md#public-endpoints) |
 | `RUN-VALIDATE-01` | REST run requests are structurally validated before admission. | [Transport contract: run request](CONTRACT.md#run-request) |
 | `RUN-ADMISSION-01` | Accepted REST runs persist and publish a versioned Queue message. | [Transport contract: run request and Queue message](CONTRACT.md#queue-message) |
@@ -63,6 +65,10 @@ The initial local run reported a 90.63% mutation score across 113 mutants. It al
 
 | ID | Internal invariant |
 | --- | --- |
+| `DASHBOARD-AUTH-STATUS-01` | Dashboard API errors preserve their HTTP status for auth-state handling. |
+| `DASHBOARD-AUTH-UI-01` | Dashboard auth controls render signed-out, busy, and signed-in states. |
+| `DASHBOARD-AUTH-FLOW-01` | Dashboard sign-in displays the verified GitHub login; sign-out clears run data and requests token revocation. |
+| `OAUTH-REVOKE-FORM-01` | Dashboard revocation submits the access token and public client ID to the provider endpoint. |
 | `RUN-ID-BOUNDS-01` | The UUIDv7 encoder rejects timestamps outside its 48-bit field. |
 | `SERIALIZE-CYCLE-01` | Stable serialization detects circular references. |
 | `SERIALIZE-SHARED-01` | Reusing an object in separate branches is not mistaken for a cycle. |

@@ -80,7 +80,7 @@ export async function handleDashboardApiRequest(
   const path = url.pathname.slice(API_PREFIX.length) || "/";
   const segments = path.split("/").filter(Boolean);
   const requestId = requestIdFor(request);
-  return routeDashboardApiRequest(request, env, url, segments, requestId);
+  return routeDashboardApiRequest(request, env, url, segments, requestId, access.context);
 }
 
 async function routeDashboardApiRequest(
@@ -89,7 +89,11 @@ async function routeDashboardApiRequest(
   url: URL,
   segments: string[],
   requestId: string,
+  context: OAuthResourceContext<OAuthProps>,
 ): Promise<Response> {
+  if (segments.length === 1 && segments[0] === "me") {
+    return successResponse(requestId, { githubLogin: context.props.githubLogin });
+  }
   if (segments.length === 1 && segments[0] === "runs") {
     return listDashboardRuns(env, url, requestId);
   }
