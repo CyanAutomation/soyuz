@@ -3,26 +3,24 @@ import {
   CimdFetchError,
   OAuthProvider,
   authorizationErrorRedirect,
-  insufficientScope,
   type ConsentDescription,
   type OAuthHelpers,
   type OAuthProviderOptions,
-  type OAuthResourceAuth,
-  type OAuthResourceContext,
 } from "@cloudflare/workers-oauth-provider";
-import { listRunsPage, readRun, readRunEventsPage, RunApplicationError } from "../application/runs";
-import { parseEventPayload, parseResult, type RunEventRow, type RunRow } from "../db/runs";
 import type { Env } from "../env";
-import { isUuid } from "../lib/uuid";
+import { requestIdFor } from "../api/http";
 import { sha256Hex } from "../lib/sha256";
-import { handleClientArtifacts } from "../api/artifacts";
-import { errorResponse, requestIdFor, successResponse } from "../api/http";
-import { createSoyuzMcpHandler } from "../mcp/server";
+import {
+  isAllowedGithubUser,
+  SOYUZ_READ_SCOPE,
+  SOYUZ_WRITE_SCOPE,
+  type OAuthProps,
+} from "./oauth-policy";
+import { handleDashboardApiRequest, handleOAuthMcpRequest } from "./oauth-resource";
 
-export const SOYUZ_READ_SCOPE = "soyuz:read";
-export const SOYUZ_WRITE_SCOPE = "soyuz:write";
-const API_PREFIX = "/dashboard/api";
-const MAX_MCP_AUTH_INSPECTION_BYTES = 1_000_000;
+export { allowedGithubUserIds, isAllowedGithubUser } from "./oauth-policy";
+export { requestNeedsWriteScope } from "./oauth-resource";
+
 const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const GITHUB_USER_URL = "https://api.github.com/user";
@@ -48,11 +46,6 @@ const AUTHORIZATION_FAILURE_REASONS = new Map([
   ["Approved scopes must be ones this server supports", "consent_scope_invalid"],
 ]);
 
-interface OAuthProps {
-  githubUserId: string;
-  githubLogin: string;
-}
-
 interface GitHubUser {
   id: number;
   login: string;
@@ -70,18 +63,6 @@ export function canonicalPublicOrigin(value: string | undefined): string | null 
   } catch {
     return null;
   }
-}
-
-export function allowedGithubUserIds(raw: string | undefined): Set<string> {
-  if (!raw) return new Set();
-  const entries = raw.split(",").map((value) => value.trim());
-  if (entries.length === 0 || entries.some((value) => !/^\d{1,20}$/.test(value))) return new Set();
-  return new Set(entries);
-}
-
-export function isAllowedGithubUser(userId: unknown, rawAllowlist: string | undefined): boolean {
-  if (typeof userId !== "string" && (typeof userId !== "number" || !Number.isSafeInteger(userId))) return false;
-  return allowedGithubUserIds(rawAllowlist).has(String(userId));
 }
 
 export function isOAuthConfigured(env: Env): boolean {
@@ -141,48 +122,6 @@ export function oauthProviderOptions(origin: string): OAuthProviderOptions<Env> 
   };
 }
 
-export async function requestNeedsWriteScope(request: Request): Promise<boolean> {
-  if (request.method !== "POST") return false;
-  const length = request.headers.get("content-length");
-  if (length && /^\d+$/.test(length) && Number(length) > MAX_MCP_AUTH_INSPECTION_BYTES) return true;
-  try {
-    const body = request.clone().body;
-    if (!body) return false;
-    const reader = body.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    while (true) {
-      const result = await reader.read();
-      if (result.done) break;
-      size += result.value.byteLength;
-      if (size > MAX_MCP_AUTH_INSPECTION_BYTES) {
-        await reader.cancel();
-        return true;
-      }
-      chunks.push(result.value);
-    }
-    const bytes = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    const message: unknown = JSON.parse(new TextDecoder().decode(bytes));
-    return containsWriteCall(message);
-  } catch {
-    return false;
-  }
-}
-
-function containsWriteCall(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(containsWriteCall);
-  if (!value || typeof value !== "object") return false;
-  const message = value as { method?: unknown; params?: unknown };
-  if (message.method !== "tools/call" || !message.params || typeof message.params !== "object") return false;
-  const name = (message.params as { name?: unknown }).name;
-  return name === "create_run" || name === "cancel_run";
-}
-
 export function renderConsentPage(details: ConsentDescription, handle: string): string {
   const clientName = escapeHtml(details.clientName);
   const domain = details.clientDomain
@@ -199,103 +138,6 @@ ${details.redirectIsLoopback ? "<p><strong>This sends access to an app on your c
 <p>GitHub will only be asked to confirm your account identity with the read:user permission.</p>
 <form method="post"><input type="hidden" name="handle" value="${escapeHtml(handle)}">${scopes}<p>
 <button name="decision" value="approve">Allow</button> <button name="decision" value="deny">Deny</button></p></form></main></body></html>`;
-}
-
-async function handleOAuthMcpRequest(
-  request: Request,
-  env: Env,
-  context: ExecutionContext,
-): Promise<Response> {
-  if (!hasOAuthContext(context)) return errorResponse("oauth", 401, "UNAUTHORIZED", "OAuth token context is unavailable.");
-  const rejected = authorizeOAuthUser(context.props, context.auth.scope, env, context.auth);
-  if (rejected) return rejected;
-  if (await requestNeedsWriteScope(request) && !context.auth.scope.includes(SOYUZ_WRITE_SCOPE)) {
-    return insufficientScope(context.auth, [SOYUZ_READ_SCOPE, SOYUZ_WRITE_SCOPE]);
-  }
-  return createSoyuzMcpHandler(env).fetch(request);
-}
-
-async function handleDashboardApiRequest(
-  request: Request,
-  env: Env,
-  context: ExecutionContext,
-): Promise<Response> {
-  if (!hasOAuthContext(context)) return errorResponse("oauth", 401, "UNAUTHORIZED", "OAuth token context is unavailable.");
-  const rejected = authorizeOAuthUser(context.props, context.auth.scope, env, context.auth);
-  if (rejected) return rejected;
-  if (request.method !== "GET") return errorResponse(requestIdFor(request), 405, "METHOD_NOT_ALLOWED", "The dashboard is read-only.");
-
-  const url = new URL(request.url);
-  const path = url.pathname.slice(API_PREFIX.length) || "/";
-  const segments = path.split("/").filter(Boolean);
-  const requestId = requestIdFor(request);
-  if (segments.length === 1 && segments[0] === "runs") {
-    try {
-      const page = await listRunsPage(env, {
-        limit: url.searchParams.get("limit") ?? 50,
-        status: url.searchParams.get("status"),
-        cursor: url.searchParams.get("cursor"),
-      });
-      return successResponse(requestId, { runs: page.rows.map(dashboardRunSummary), nextCursor: page.nextCursor });
-    } catch (error) {
-      return dashboardErrorResponse(error, requestId);
-    }
-  }
-  if (segments.length < 2 || segments[0] !== "runs" || !isUuid(segments[1])) {
-    return errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
-  }
-
-  const runId = segments[1];
-  if (segments.length === 2) {
-    try {
-      return successResponse(requestId, dashboardRunDetail(await readRun(env, runId)));
-    } catch (error) {
-      return dashboardErrorResponse(error, requestId);
-    }
-  }
-  if (segments.length === 3 && segments[2] === "events") {
-    try {
-      const page = await readRunEventsPage(env, runId, {
-        after: url.searchParams.get("after"),
-        limit: url.searchParams.get("limit") ?? 100,
-      });
-      return successResponse(requestId, {
-        events: page.events.map(dashboardEvent),
-        nextAfter: page.nextAfter,
-      });
-    } catch (error) {
-      return dashboardErrorResponse(error, requestId);
-    }
-  }
-  if ((segments.length === 3 || segments.length === 4) && segments[2] === "artifacts") {
-    const artifactPath = `/v1/runs/${runId}/artifacts${segments[3] ? `/${encodeURIComponent(segments[3])}` : ""}`;
-    return await handleClientArtifacts(request, env, new URL(`${artifactPath}${url.search}`, url.origin), requestId)
-      ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
-  }
-  return errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
-}
-
-function authorizeOAuthUser(
-  props: OAuthProps,
-  scopes: string[],
-  env: Env,
-  auth: OAuthResourceContext<OAuthProps>["auth"],
-): Response | null {
-  if (!isAllowedGithubUser(props?.githubUserId, env.SOYUZ_OAUTH_ALLOWED_GITHUB_IDS)) {
-    return errorResponse("oauth", 403, "ACCESS_DENIED", "This GitHub account is not allowed to access Soyuz.");
-  }
-  if (!scopes.includes(SOYUZ_READ_SCOPE)) return insufficientScope(auth, [SOYUZ_READ_SCOPE]);
-  return null;
-}
-
-function hasOAuthContext(context: ExecutionContext): context is OAuthResourceContext<OAuthProps> {
-  const candidate = context as ExecutionContext & { auth?: unknown; props?: unknown };
-  if (!candidate.props || typeof candidate.props !== "object" || !candidate.auth || typeof candidate.auth !== "object") return false;
-  const props = candidate.props as { githubUserId?: unknown; githubLogin?: unknown };
-  const auth = candidate.auth as Partial<OAuthResourceAuth>;
-  return typeof props.githubUserId === "string" && typeof props.githubLogin === "string"
-    && typeof auth.token === "string" && typeof auth.audience === "string"
-    && Array.isArray(auth.scope) && auth.scope.every((scope) => typeof scope === "string");
 }
 
 async function handleOAuthPageRequest(request: Request, env: Env, _context: ExecutionContext): Promise<Response> {
@@ -372,7 +214,11 @@ export async function bindConsentToSameOriginRequest(
   const handleHash = await sha256Hex(handle);
   const cookieName = `${OAUTH_COOKIE_PREFIX}consent-${handleHash.slice(0, 16)}`;
   const cookieHeader = request.headers.get("cookie") ?? "";
-  if (cookieHeader.split(";").some((part) => part.slice(0, part.indexOf("=")).trim() === cookieName)) return request;
+  if (cookieHeader.split(";").some((part) => {
+    const separator = part.indexOf("=");
+    const name = separator === -1 ? part : part.slice(0, separator);
+    return name.trim() === cookieName;
+  })) return request;
 
   const origin = canonicalPublicOrigin(env.SOYUZ_PUBLIC_URL);
   const requestOrigin = new URL(request.url).origin;
@@ -471,10 +317,14 @@ export function authorizationErrorResponse(error: unknown, request: Request, sta
     stage: safeSlug(stage, /^[a-z][a-z0-9_]{0,63}$/),
     ...diagnostic,
   }));
-  if (error instanceof AuthorizationError && error.redirectTo) {
-    return new Response(null, { status: 302, headers: { location: error.redirectTo, "cache-control": "no-store", "referrer-policy": "no-referrer", "x-request-id": requestId } });
+  const redirect = authorizationRedirect(error);
+  if (redirect) {
+    redirect.headers.set("x-request-id", requestId);
+    return redirect;
   }
-  if (error instanceof AuthorizationError || error instanceof CimdFetchError) return plainOAuthError(400, "The authorization request could not be verified. Start again from your MCP client.", requestId);
+  if (isUnverifiedAuthorizationFailure(error)) {
+    return plainOAuthError(400, "The authorization request could not be verified. Start again from your MCP client.", requestId);
+  }
   return plainOAuthError(502, "GitHub sign-in could not be completed. Retry shortly.", requestId);
 }
 
@@ -509,6 +359,18 @@ function oauthConfigurationErrorResponse(request: Request, stage: string, errorC
 
 function safeSlug(value: string, pattern: RegExp): string {
   return pattern.test(value) ? value : "other";
+}
+
+function authorizationRedirect(error: unknown): Response | null {
+  if (!(error instanceof AuthorizationError) || !error.redirectTo) return null;
+  return new Response(null, {
+    status: 302,
+    headers: { location: error.redirectTo, "cache-control": "no-store", "referrer-policy": "no-referrer" },
+  });
+}
+
+function isUnverifiedAuthorizationFailure(error: unknown): boolean {
+  return error instanceof AuthorizationError || error instanceof CimdFetchError;
 }
 
 function plainOAuthError(status: number, message: string, requestId: string): Response {
@@ -549,80 +411,4 @@ function escapeHtml(value: string): string {
     "\"": "&#34;",
     "'": "&#39;",
   })[character] ?? character);
-}
-
-function dashboardRunSummary(row: RunRow): Record<string, unknown> {
-  return {
-    runId: row.id,
-    status: row.status,
-    repoUrl: safeDisplayUrl(row.repo_url),
-    ref: row.git_ref,
-    taskMode: row.task_mode,
-    publishMode: row.publish_mode,
-    stage: row.stage,
-    createdAt: row.created_at,
-    queuedAt: row.queued_at,
-    startedAt: row.started_at,
-    completedAt: row.completed_at,
-  };
-}
-
-function dashboardRunDetail(row: RunRow): Record<string, unknown> {
-  const result = parseResult(row);
-  const publishedUrl = typeof result?.publishedUrl === "string" ? safeDisplayUrl(result.publishedUrl) : null;
-  return {
-    ...dashboardRunSummary(row),
-    updatedAt: row.updated_at,
-    outcomeSummary: typeof result?.summary === "string" ? result.summary.slice(0, 2_000) : null,
-    publishedUrl,
-    changedFileCount: typeof result?.changedFileCount === "number" ? result.changedFileCount : null,
-    failureClass: row.failure_class,
-    cancellation: {
-      state: row.status === "cancel_requested" ? "requested" : row.status === "cancelled" ? "cancelled" : "none",
-      requestedAt: row.cancel_requested_at,
-    },
-  };
-}
-
-const DASHBOARD_EVENT_KEYS = new Set([
-  "source", "status", "percent", "progressPercent", "current", "total", "completed", "passed", "failed", "exitCode", "durationMs", "changedFileCount", "failureClass",
-]);
-
-function dashboardEvent(row: RunEventRow): Record<string, unknown> {
-  const payload: Record<string, string | number | boolean> = {};
-  for (const [key, value] of Object.entries(parseEventPayload(row))) {
-    if (!DASHBOARD_EVENT_KEYS.has(key)) continue;
-    if (typeof value === "string" && value.length <= 160) payload[key] = value;
-    else if (typeof value === "number" && Number.isFinite(value)) payload[key] = value;
-    else if (typeof value === "boolean") payload[key] = value;
-  }
-  return {
-    sequence: row.sequence,
-    eventId: row.event_id,
-    type: row.type,
-    stage: row.stage,
-    step: row.step,
-    timestamp: row.occurred_at,
-    payload,
-  };
-}
-
-function safeDisplayUrl(value: string): string {
-  try {
-    const url = new URL(value);
-    url.username = "";
-    url.password = "";
-    url.search = "";
-    url.hash = "";
-    return url.toString();
-  } catch {
-    return "about:invalid";
-  }
-}
-
-function dashboardErrorResponse(error: unknown, requestId: string): Response {
-  if (error instanceof RunApplicationError) {
-    return errorResponse(requestId, error.status, error.code, error.publicMessage, { details: error.details });
-  }
-  return errorResponse(requestId, 503, "RUN_OPERATION_UNAVAILABLE", "Soyuz could not read run history. Retry shortly.");
 }

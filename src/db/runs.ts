@@ -188,44 +188,85 @@ export async function transitionRun(
 ): Promise<RunRow> {
   const current = await getRun(db, id);
   if (!current) throw new RunNotFoundError(`Run ${id} was not found`);
-  if (guard?.expectedStatus && current.status !== guard.expectedStatus) {
-    throw new RunTransitionError(current.status, to);
-  }
-  if (guard?.claimCallbackId && current.claim_callback_id !== guard.claimCallbackId) {
-    throw new RunEventError("STALE_CLAIM", "Worker claim was superseded by a newer execution attempt");
-  }
+  assertTransitionGuards(current, to, guard);
   if (current.status === to) return current;
   if (!canTransition(current.status, to)) throw new RunTransitionError(current.status, to);
 
-  const assignments = ["status = ?", "updated_at = ?"];
-  const values: Array<string | number | null> = [to, event.recordedAt];
+  const results = await db.batch([
+    transitionUpdateStatement(db, id, to, patch, event, current.status, guard),
+    eventStatement(db, id, event, to, true),
+  ]);
+  return readTransitionResult(db, id, to, guard, Number(results[0]?.meta?.changes ?? 0));
+}
+
+function assertTransitionGuards(
+  current: RunRow,
+  to: RunStatus,
+  guard?: { claimOwner?: string; claimNotExpiredAt?: string; claimCallbackId?: string; expectedStatus?: RunStatus },
+): void {
+  if (guard?.expectedStatus && current.status !== guard.expectedStatus) throw new RunTransitionError(current.status, to);
+  if (guard?.claimCallbackId && current.claim_callback_id !== guard.claimCallbackId) {
+    throw new RunEventError("STALE_CLAIM", "Worker claim was superseded by a newer execution attempt");
+  }
+}
+
+function transitionUpdateStatement(
+  db: D1Database,
+  id: string,
+  to: RunStatus,
+  patch: RunPatch,
+  event: RunEventInput,
+  currentStatus: RunStatus,
+  guard?: { claimOwner?: string; claimNotExpiredAt?: string; claimCallbackId?: string },
+): D1PreparedStatement {
+  const patchFields = runPatchAssignments(patch);
+  const filter = transitionWhereClause(id, currentStatus, guard);
+  const assignments = ["status = ?", "updated_at = ?", ...patchFields.assignments];
+  const values: Array<string | number | null> = [to, event.recordedAt, ...patchFields.values, ...filter.values];
+  return db.prepare(`UPDATE runs SET ${assignments.join(", ")} WHERE ${filter.sql}`).bind(...values);
+}
+
+function runPatchAssignments(patch: RunPatch): { assignments: string[]; values: Array<string | number | null> } {
+  const assignments: string[] = [];
+  const values: Array<string | number | null> = [];
   for (const [column, value] of Object.entries(patch) as Array<[keyof RunPatch, string | number | null]>) {
     if (value === undefined) continue;
     if (!RUN_PATCH_COLUMNS.has(column)) throw new Error(`Invalid run patch column: ${String(column)}`);
     assignments.push(`${column} = ?`);
     values.push(value);
   }
-  let where = "id = ? AND status = ?";
-  values.push(id, current.status);
+  return { assignments, values };
+}
+
+function transitionWhereClause(
+  id: string,
+  currentStatus: RunStatus,
+  guard?: { claimOwner?: string; claimNotExpiredAt?: string; claimCallbackId?: string },
+): { sql: string; values: string[] } {
+  let sql = "id = ? AND status = ?";
+  const values = [id, currentStatus];
   if (guard?.claimOwner) {
-    where += " AND worker_id = ?";
+    sql += " AND worker_id = ?";
     values.push(guard.claimOwner);
   }
   if (guard?.claimNotExpiredAt) {
-    where += " AND julianday(claim_expires_at) > julianday(?)";
+    sql += " AND julianday(claim_expires_at) > julianday(?)";
     values.push(guard.claimNotExpiredAt);
   }
   if (guard?.claimCallbackId) {
-    where += " AND ? = (SELECT event_id FROM run_events WHERE run_id = ? AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1)";
+    sql += " AND ? = (SELECT event_id FROM run_events WHERE run_id = ? AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1)";
     values.push(guard.claimCallbackId, id);
   }
+  return { sql, values };
+}
 
-  const results = await db.batch([
-    db.prepare(`UPDATE runs SET ${assignments.join(", ")} WHERE ${where}`).bind(...values),
-    eventStatement(db, id, event, to, true),
-  ]);
-
-  const changed = Number(results[0]?.meta?.changes ?? 0);
+async function readTransitionResult(
+  db: D1Database,
+  id: string,
+  to: RunStatus,
+  guard: { claimCallbackId?: string } | undefined,
+  changed: number,
+): Promise<RunRow> {
   const latest = await getRun(db, id);
   if (!latest) throw new RunNotFoundError(`Run ${id} was not found`);
   if (guard?.claimCallbackId && latest.claim_callback_id !== guard.claimCallbackId) {
@@ -246,41 +287,74 @@ export async function updateStartedRun(
 ): Promise<RunRow> {
   const current = await getRun(db, id);
   if (!current) throw new RunNotFoundError(`Run ${id} was not found`);
+  assertStartOwnership(current, workerId, claimCallbackId);
+  if (current.status !== "claimed") throw new RunEventError("RUN_NOT_ACTIVE", "Run is not in a state that accepts a started callback");
+  return startClaimedRun(db, current, workerId, startedAt, stage, event, claimCallbackId);
+}
+
+function assertStartOwnership(current: RunRow, workerId: string, claimCallbackId?: string): void {
   if (current.worker_id && current.worker_id !== workerId) {
     throw new RunEventError("WORKER_MISMATCH", "A different worker already owns this run");
   }
   if (claimCallbackId && current.claim_callback_id !== claimCallbackId) {
     throw new RunEventError("STALE_CLAIM", "Worker claim was superseded by a newer execution attempt");
   }
+}
 
-  if (current.status === "claimed") {
-    if (!current.claim_expires_at || Date.parse(current.claim_expires_at) <= Date.parse(event.recordedAt)) {
-      throw new RunEventError("CLAIM_EXPIRED", "Worker claim expired before the run started");
-    }
-    try {
-      return await transitionRun(db, id, "running", {
-        worker_id: workerId,
-        started_at: current.started_at ?? startedAt,
-        stage: stage ?? current.stage,
-        claim_expires_at: null,
-        last_heartbeat_at: event.recordedAt,
-        operational_health: "healthy",
-      }, event, { claimOwner: workerId, claimNotExpiredAt: event.recordedAt, claimCallbackId });
-    } catch (error) {
-      if (error instanceof RunTransitionError && error.current === "claimed") {
-        const latest = await getRun(db, id);
-        if (claimCallbackId && latest?.claim_callback_id !== claimCallbackId) {
-          throw new RunEventError("STALE_CLAIM", "Worker claim was superseded by a newer execution attempt");
-        }
-        if (latest?.claim_expires_at && Date.parse(latest.claim_expires_at) <= Date.parse(event.recordedAt)) {
-          throw new RunEventError("CLAIM_EXPIRED", "Worker claim expired before the run started");
-        }
-      }
-      throw error;
-    }
+async function startClaimedRun(
+  db: D1Database,
+  current: RunRow,
+  workerId: string,
+  startedAt: string,
+  stage: string | null,
+  event: RunEventInput,
+  claimCallbackId?: string,
+): Promise<RunRow> {
+  if (!current.claim_expires_at || Date.parse(current.claim_expires_at) <= Date.parse(event.recordedAt)) {
+    throw new RunEventError("CLAIM_EXPIRED", "Worker claim expired before the run started");
   }
+  try {
+    return await transitionRun(db, current.id, "running", {
+      worker_id: workerId,
+      started_at: current.started_at ?? startedAt,
+      stage: stage ?? current.stage,
+      claim_expires_at: null,
+      last_heartbeat_at: event.recordedAt,
+      operational_health: "healthy",
+    }, event, { claimOwner: workerId, claimNotExpiredAt: event.recordedAt, claimCallbackId });
+  } catch (error) {
+    await verifyClaimedStartFailure(db, current.id, event, claimCallbackId, error);
+    throw error;
+  }
+}
 
-  throw new RunEventError("RUN_NOT_ACTIVE", "Run is not in a state that accepts a started callback");
+async function verifyClaimedStartFailure(
+  db: D1Database,
+  id: string,
+  event: RunEventInput,
+  claimCallbackId: string | undefined,
+  error: unknown,
+): Promise<void> {
+  if (!isClaimTransitionFailure(error)) return;
+  const latest = await getRun(db, id);
+  if (hasClaimCallbackChanged(latest, claimCallbackId)) {
+    throw new RunEventError("STALE_CLAIM", "Worker claim was superseded by a newer execution attempt");
+  }
+  if (isLatestClaimExpired(latest, event.recordedAt)) {
+    throw new RunEventError("CLAIM_EXPIRED", "Worker claim expired before the run started");
+  }
+}
+
+function isClaimTransitionFailure(error: unknown): error is RunTransitionError {
+  return error instanceof RunTransitionError && error.current === "claimed";
+}
+
+function hasClaimCallbackChanged(latest: RunRow | null, claimCallbackId: string | undefined): boolean {
+  return Boolean(claimCallbackId && latest?.claim_callback_id !== claimCallbackId);
+}
+
+function isLatestClaimExpired(latest: RunRow | null, recordedAt: string): boolean {
+  return Boolean(latest?.claim_expires_at && Date.parse(latest.claim_expires_at) <= Date.parse(recordedAt));
 }
 
 function eventStatement(
@@ -321,24 +395,42 @@ export async function findRunEvent(db: D1Database, runId: string, eventId: strin
 }
 
 export async function recordWorkerEvent(db: D1Database, runId: string, input: RunEventInput): Promise<RunEventRow> {
-  const current = await getRun(db, runId);
-  if (!current) throw new RunNotFoundError(`Run ${runId} was not found`);
-  if (current.worker_id !== input.workerId) {
-    throw new RunEventError("WORKER_MISMATCH", "Worker does not own this run");
-  }
-  if (input.claimCallbackId && current.claim_callback_id !== input.claimCallbackId) {
-    throw new RunEventError("STALE_CLAIM", "Worker claim was superseded by a newer execution attempt");
-  }
+  const current = await requireWorkerEventRun(db, runId, input);
   const existing = await findRunEvent(db, runId, input.eventId);
   if (existing) {
     assertSameEvent(existing, input);
     await updateLatestStage(db, runId, input);
     return existing;
   }
+  assertWorkerEventState(current);
+
+  const inserted = await insertWorkerEvent(db, runId, input);
+  const saved = await findSavedWorkerEvent(db, runId, input);
+  assertSameEvent(saved, input);
+  if (Number(inserted.meta.changes ?? 0) > 0 || input.type === "stage.changed") {
+    await updateLatestStage(db, runId, input);
+  }
+  if (input.type === "worker.heartbeat") await recordWorkerHeartbeat(db, runId, input);
+  return saved;
+}
+
+async function requireWorkerEventRun(db: D1Database, runId: string, input: RunEventInput): Promise<RunRow> {
+  const current = await getRun(db, runId);
+  if (!current) throw new RunNotFoundError(`Run ${runId} was not found`);
+  if (current.worker_id !== input.workerId) throw new RunEventError("WORKER_MISMATCH", "Worker does not own this run");
+  if (input.claimCallbackId && current.claim_callback_id !== input.claimCallbackId) {
+    throw new RunEventError("STALE_CLAIM", "Worker claim was superseded by a newer execution attempt");
+  }
+  return current;
+}
+
+function assertWorkerEventState(current: RunRow): void {
   if (current.status !== "running" && current.status !== "cancel_requested") {
     throw new RunEventError("RUN_NOT_ACTIVE", "Run no longer accepts operational events");
   }
+}
 
+async function insertWorkerEvent(db: D1Database, runId: string, input: RunEventInput): Promise<D1Result> {
   const claimGuard = input.claimCallbackId
     ? " AND ? = (SELECT event_id FROM run_events WHERE run_id = ? AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1)"
     : "";
@@ -357,7 +449,7 @@ export async function recordWorkerEvent(db: D1Database, runId: string, input: Ru
     input.workerId ?? "",
   ];
   if (input.claimCallbackId) insertParameters.push(input.claimCallbackId, runId);
-  const inserted = await db.prepare(`
+  return db.prepare(`
     INSERT OR IGNORE INTO run_events (
       run_id, contract_version, event_id, type, worker_id, stage, step,
       occurred_at, recorded_at, payload_json
@@ -368,7 +460,9 @@ export async function recordWorkerEvent(db: D1Database, runId: string, input: Ru
         AND status IN ('running', 'cancel_requested')
     )${claimGuard}
   `).bind(...insertParameters).run();
+}
 
+async function findSavedWorkerEvent(db: D1Database, runId: string, input: RunEventInput): Promise<RunEventRow> {
   const saved = await findRunEvent(db, runId, input.eventId);
   if (!saved) {
     const latest = await getRun(db, runId);
@@ -380,30 +474,27 @@ export async function recordWorkerEvent(db: D1Database, runId: string, input: Ru
     }
     throw new RunEventError("RUN_NOT_ACTIVE", "Run no longer accepts operational events");
   }
-  assertSameEvent(saved, input);
-  if (Number(inserted.meta.changes ?? 0) > 0 || input.type === "stage.changed") {
-    await updateLatestStage(db, runId, input);
-  }
-  if (input.type === "worker.heartbeat") {
-    const heartbeatClaimGuard = input.claimCallbackId
-      ? " AND ? = (SELECT event_id FROM run_events WHERE run_id = ? AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1)"
-      : "";
-    const heartbeatParameters: Array<string | number> = [
-      input.recordedAt,
-      input.recordedAt,
-      runId,
-      input.workerId ?? "",
-      input.recordedAt,
-    ];
-    if (input.claimCallbackId) heartbeatParameters.push(input.claimCallbackId, runId);
-    await db.prepare(`
-      UPDATE runs SET last_heartbeat_at = ?, operational_health = 'healthy', updated_at = ?
-      WHERE id = ? AND worker_id = ? AND status IN ('running', 'cancel_requested')
-        AND (last_heartbeat_at IS NULL OR julianday(last_heartbeat_at) <= julianday(?))
-      ${heartbeatClaimGuard}
-    `).bind(...heartbeatParameters).run();
-  }
   return saved;
+}
+
+async function recordWorkerHeartbeat(db: D1Database, runId: string, input: RunEventInput): Promise<void> {
+  const claimGuard = input.claimCallbackId
+    ? " AND ? = (SELECT event_id FROM run_events WHERE run_id = ? AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1)"
+    : "";
+  const parameters: Array<string | null> = [
+    input.recordedAt,
+    input.recordedAt,
+    runId,
+    input.workerId ?? "",
+    input.recordedAt,
+  ];
+  if (input.claimCallbackId) parameters.push(input.claimCallbackId, runId);
+  await db.prepare(`
+    UPDATE runs SET last_heartbeat_at = ?, operational_health = 'healthy', updated_at = ?
+    WHERE id = ? AND worker_id = ? AND status IN ('running', 'cancel_requested')
+      AND (last_heartbeat_at IS NULL OR julianday(last_heartbeat_at) <= julianday(?))
+    ${claimGuard}
+  `).bind(...parameters).run();
 }
 
 export async function listStaleRunningRuns(
@@ -491,21 +582,22 @@ export async function listRuns(
   status?: RunStatus,
   cursor?: RunCursor,
 ): Promise<RunRow[]> {
+  const filters: string[] = [];
+  const values: Array<string | number> = [];
+  if (status !== undefined) {
+    filters.push("status = ?");
+    values.push(status);
+  }
+  if (cursor) {
+    filters.push("(created_at, id) < (?, ?)");
+    values.push(cursor.createdAt, cursor.id);
+  }
+  const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
   const rows = await db.prepare(`
-    SELECT * FROM runs
-    WHERE (? IS NULL OR status = ?)
-      AND (? IS NULL OR created_at < ? OR (created_at = ? AND id < ?))
+    SELECT * FROM runs ${where}
     ORDER BY created_at DESC, id DESC
     LIMIT ?
-  `).bind(
-    status ?? null,
-    status ?? null,
-    cursor ? 1 : null,
-    cursor?.createdAt ?? null,
-    cursor?.createdAt ?? null,
-    cursor?.id ?? null,
-    limit,
-  ).all<RunRow>();
+  `).bind(...values, limit).all<RunRow>();
   return rows.results;
 }
 

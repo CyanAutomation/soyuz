@@ -275,6 +275,37 @@ describe("Soyuz Worker API", () => {
     expect(revoked.body.error.code).toBe("ACCESS_DENIED");
   });
 
+  it("[OAUTH-04] serves sanitized dashboard run details and event pages", async () => {
+    const { bindings } = testEnv({ oauth: true });
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    await bindings.DB.prepare("UPDATE runs SET repo_url = ?, result_json = ? WHERE id = ?")
+      .bind(
+        "https://user:embedded-secret@github.com/example/private-project?access_token=embedded-token",
+        JSON.stringify({ summary: "Completed safely", publishedUrl: "https://user:embedded-secret@github.com/example/private-project?token=embedded-token", changedFileCount: 3 }),
+        runId,
+      ).run();
+    const accessToken = await createOAuthAccessToken(bindings);
+
+    const detail = await call(bindings, `/dashboard/api/runs/${runId}`, { token: accessToken });
+    expect(detail.response.status).toBe(200);
+    expect(detail.body.data).toMatchObject({
+      runId,
+      repoUrl: "https://github.com/example/private-project",
+      outcomeSummary: "Completed safely",
+      publishedUrl: "https://github.com/example/private-project",
+      changedFileCount: 3,
+    });
+    expect(JSON.stringify(detail.body.data)).not.toContain("embedded-secret");
+    expect(JSON.stringify(detail.body.data)).not.toContain("embedded-token");
+
+    const events = await call(bindings, `/dashboard/api/runs/${runId}/events`, { token: accessToken });
+    expect(events.response.status).toBe(200);
+    expect(events.body.data.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "run.admitting", payload: { status: "admitting" } }),
+    ]));
+  });
+
   it("[OAUTH-02] keeps the dashboard read-only and requires write scope for MCP mutations", async () => {
     const { bindings } = testEnv({ oauth: true });
     const accessToken = await createOAuthAccessToken(bindings);
@@ -788,6 +819,30 @@ describe("Soyuz Worker API", () => {
     expect((await getRun(bindings.DB, runId))?.stage).toBe("prepare");
   });
 
+  it("[WORKER-START-02] rejects a started callback after its claim lease expires", async () => {
+    const { bindings } = testEnv();
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-expired-claim";
+    await claimRun(bindings, runId, workerId, "00000000-0000-4000-8000-000000000085");
+    await bindings.DB.prepare("UPDATE runs SET claim_expires_at = ? WHERE id = ?")
+      .bind(new Date(Date.now() - 1_000).toISOString(), runId).run();
+
+    const started = await call(bindings, `/v1/worker/runs/${runId}/started`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        callbackId: "00000000-0000-4000-8000-000000000086",
+        workerId,
+      },
+    });
+
+    expect(started.response.status).toBe(409);
+    expect(started.body.error.code).toBe("CLAIM_EXPIRED");
+    expect(await getRun(bindings.DB, runId)).toMatchObject({ status: "claimed", worker_id: workerId });
+  });
+
   it("[WORKER-EVENT-01/CALLBACK-IDEMPOTENCY-01] stores one event when the worker retries its callback", async () => {
     const { bindings } = testEnv();
     const created = await submit(bindings);
@@ -926,13 +981,14 @@ describe("Soyuz Worker API", () => {
     });
 
     const artifactId = "00000000-0000-4000-8000-000000000043";
+    const artifactName = 'summary"; filename="résumé.txt';
     const upload = await callBinary(bindings, `/v1/worker/runs/${runId}/artifacts/${artifactId}`, {
       method: "PUT",
       token: WORKER_TOKEN,
       headers: {
         "content-type": "text/plain",
         "content-length": "12",
-        "x-artifact-name": "summary.txt",
+        "x-artifact-name": artifactName,
         "x-artifact-kind": "report",
         "x-soyuz-worker-id": workerId,
         "x-soyuz-claim-callback-id": "00000000-0000-4000-8000-000000000041",
@@ -940,7 +996,7 @@ describe("Soyuz Worker API", () => {
       body: "run summary\n",
     });
     expect(upload.response.status).toBe(201);
-    expect((upload.body as any).data).toMatchObject({ id: artifactId, name: "summary.txt", kind: "report", size: 12 });
+    expect((upload.body as any).data).toMatchObject({ id: artifactId, name: artifactName, kind: "report", size: 12 });
     expect(r2.put).toHaveBeenCalledWith(
       `runs/${runId}/${artifactId}`,
       expect.any(ReadableStream),
@@ -951,16 +1007,18 @@ describe("Soyuz Worker API", () => {
     expect(unauthorized.response.status).toBe(401);
     const list = await call(bindings, `/v1/runs/${runId}/artifacts`, { token: CLIENT_TOKEN });
     expect(list.response.status).toBe(200);
-    expect(list.body.data.artifacts).toEqual([expect.objectContaining({ id: artifactId, name: "summary.txt" })]);
+    expect(list.body.data.artifacts).toEqual([expect.objectContaining({ id: artifactId, name: artifactName })]);
     const download = await callBinary(bindings, `/v1/runs/${runId}/artifacts/${artifactId}`, { token: CLIENT_TOKEN });
     expect(download.response.status).toBe(200);
-    expect(download.response.headers.get("content-disposition")).toContain("attachment");
+    expect(download.response.headers.get("content-disposition")).toBe(
+      "attachment; filename=\"summary___filename__r_sum_.txt\"; filename*=UTF-8''summary%22%3B%20filename%3D%22r%C3%A9sum%C3%A9.txt",
+    );
     expect(download.body).toBe("run summary\n");
 
     const retry = await callBinary(bindings, `/v1/worker/runs/${runId}/artifacts/${artifactId}`, {
       method: "PUT", token: WORKER_TOKEN,
       headers: {
-        "content-type": "text/plain", "content-length": "12", "x-artifact-name": "summary.txt", "x-artifact-kind": "report",
+        "content-type": "text/plain", "content-length": "12", "x-artifact-name": artifactName, "x-artifact-kind": "report",
         "x-soyuz-worker-id": workerId, "x-soyuz-claim-callback-id": "00000000-0000-4000-8000-000000000041",
       },
       body: "run summary\n",
@@ -969,7 +1027,7 @@ describe("Soyuz Worker API", () => {
     const conflict = await callBinary(bindings, `/v1/worker/runs/${runId}/artifacts/${artifactId}`, {
       method: "PUT", token: WORKER_TOKEN,
       headers: {
-        "content-type": "text/plain", "content-length": "12", "x-artifact-name": "summary.txt", "x-artifact-kind": "report",
+        "content-type": "text/plain", "content-length": "12", "x-artifact-name": artifactName, "x-artifact-kind": "report",
         "x-soyuz-worker-id": workerId, "x-soyuz-claim-callback-id": "00000000-0000-4000-8000-000000000041",
       },
       body: "run summary!",
@@ -977,6 +1035,20 @@ describe("Soyuz Worker API", () => {
     expect(conflict.response.status).toBe(409);
     expect((conflict.body as any).error.code).toBe("ARTIFACT_ID_CONFLICT");
     expect(r2.objects.size).toBe(1);
+  });
+
+  it("[ARTIFACTS-09] rejects an unsupported artifact kind before reading run state", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const result = await callBinary(bindings, "/v1/worker/runs/00000000-0000-4000-8000-000000000051/artifacts/00000000-0000-4000-8000-000000000052", {
+      method: "PUT",
+      token: WORKER_TOKEN,
+      headers: { "content-length": "1", "x-artifact-kind": "image/png" },
+      body: "x",
+    });
+
+    expect(result.response.status).toBe(400);
+    expect((result.body as any).error.code).toBe("ARTIFACT_KIND_INVALID");
   });
 
   it("[ARTIFACTS-02] rejects artifact uploads after a run has completed", async () => {
@@ -1001,6 +1073,64 @@ describe("Soyuz Worker API", () => {
       body: "late",
     });
     expect(upload.response.status).toBe(409);
+    expect(r2.put).not.toHaveBeenCalled();
+  });
+
+  it("[ARTIFACTS-10] rechecks ownership when a run completes during artifact reservation", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-artifact-race";
+    const claimId = "00000000-0000-4000-8000-000000000061";
+    await claimRun(bindings, runId, workerId, claimId);
+    await call(bindings, `/v1/worker/runs/${runId}/started`, {
+      method: "POST", token: WORKER_TOKEN,
+      body: { contractVersion: "1", callbackId: "00000000-0000-4000-8000-000000000062", workerId },
+    });
+
+    const racingDatabase = {
+      prepare(query: string) {
+        const statement = bindings.DB.prepare(query);
+        if (!query.includes("INSERT INTO run_artifacts")) return statement;
+        return {
+          bind: (...values: any[]) => {
+            const bound = statement.bind(...values);
+            return {
+              run: async () => {
+                const completed = await call(bindings, `/v1/worker/runs/${runId}/completed`, {
+                  method: "POST", token: WORKER_TOKEN,
+                  body: {
+                    contractVersion: "1",
+                    callbackId: "00000000-0000-4000-8000-000000000063",
+                    workerId,
+                    completedAt: new Date().toISOString(),
+                    exitCode: 0,
+                  },
+                });
+                expect(completed.response.status).toBe(200);
+                return bound.run();
+              },
+            };
+          },
+        } as unknown as ReturnType<Env["DB"]["prepare"]>;
+      },
+    } as unknown as Env["DB"];
+    const racingBindings = { ...bindings, DB: racingDatabase };
+    const upload = await callBinary(racingBindings, `/v1/worker/runs/${runId}/artifacts/00000000-0000-4000-8000-000000000064`, {
+      method: "PUT",
+      token: WORKER_TOKEN,
+      headers: {
+        "content-length": "1",
+        "x-artifact-kind": "report",
+        "x-soyuz-worker-id": workerId,
+        "x-soyuz-claim-callback-id": claimId,
+      },
+      body: "x",
+    });
+
+    expect(upload.response.status).toBe(409);
+    expect((upload.body as any).error.code).toBe("RUN_NOT_ACTIVE");
     expect(r2.put).not.toHaveBeenCalled();
   });
 
