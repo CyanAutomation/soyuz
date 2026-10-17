@@ -80,6 +80,7 @@ npx wrangler queues create soyuz-runs
 npx wrangler r2 bucket create soyuz-artifacts
 # Create the soyuz-oauth KV namespace and add its returned ID as OAUTH_KV in wrangler.jsonc.
 npx wrangler secret put CLIENT_API_TOKEN
+npx wrangler secret put KASEKI_SUBMISSION_API_TOKEN
 npx wrangler secret put WORKER_API_TOKEN
 npx wrangler secret put GITHUB_OAUTH_CLIENT_ID
 npx wrangler secret put GITHUB_OAUTH_CLIENT_SECRET
@@ -88,7 +89,7 @@ npm run db:migrate:remote
 npm run deploy
 ```
 
-Set `SOYUZ_PUBLIC_URL` and `SOYUZ_OAUTH_ALLOWED_GITHUB_IDS` as Worker variables or secrets. Apply remote D1 migrations only through the separately authorized migration procedure in the [deployment guide](docs/DEPLOYMENT.md).
+Set `SOYUZ_PUBLIC_URL`, `SOYUZ_OAUTH_ALLOWED_GITHUB_IDS`, and (for Kaseki submission routing) `KASEKI_SUBMISSION_IDENTITY` as Worker variables or secrets. Keep `KASEKI_SUBMISSION_API_TOKEN` distinct from the general client and worker tokens. Apply remote D1 migrations only through the separately authorized migration procedure in the [deployment guide](docs/DEPLOYMENT.md).
 
 Enable the Queue's HTTP pull consumer for the Kaseki host separately in Cloudflare. See [deployment and secret setup](docs/DEPLOYMENT.md) and [Kaseki integration](docs/KASEKI-INTEGRATION.md) for the required pull permissions and acknowledgement contract.
 

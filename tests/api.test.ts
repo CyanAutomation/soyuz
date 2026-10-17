@@ -9,6 +9,7 @@ import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
 import { oauthProviderOptions } from "../src/auth/oauth";
 
 const CLIENT_TOKEN = "client-test-token-value-long-enough";
+const KASEKI_TOKEN = "kaseki-submit-token-value-long-enough";
 const WORKER_TOKEN = "worker-test-token-value-long-enough";
 const CLIENT_KEY = "00000000-0000-4000-8000-000000000010";
 const CALLBACK_ID = "00000000-0000-4000-8000-000000000011";
@@ -263,6 +264,18 @@ describe("Soyuz Worker API", () => {
     expect(workerMisconfigured.response.status).toBe(503);
     expect(workerMisconfigured.body.error.code).toBe("AUTHENTICATION_UNAVAILABLE");
     expect(workerMisconfigured.body.error.message).toContain("not configured");
+
+    const duplicateClientAndKasekiKey = {
+      ...bindings,
+      KASEKI_SUBMISSION_API_TOKEN: CLIENT_TOKEN,
+    };
+    const duplicateKey = await call(duplicateClientAndKasekiKey, "/v1/runs", {
+      method: "POST",
+      token: CLIENT_TOKEN,
+      body: validRequest(),
+    });
+    expect(duplicateKey.response.status).toBe(503);
+    expect(duplicateKey.body.error.code).toBe("AUTHENTICATION_UNAVAILABLE");
   });
 
   it("[OAUTH-01] serves dashboard data only to an allowlisted OAuth user", async () => {
@@ -554,6 +567,188 @@ describe("Soyuz Worker API", () => {
     expect(conflict.response.status).toBe(409);
     expect(conflict.body.error.code).toBe("IDEMPOTENCY_KEY_REUSED");
     expect(sent).toHaveLength(1);
+  });
+
+  it("[RUN-ORIGIN-01] derives Kaseki provenance from its scoped credential and scopes idempotency", async () => {
+    const { bindings, sent } = testEnv();
+    const kaseki = {
+      ...bindings,
+      KASEKI_SUBMISSION_API_TOKEN: KASEKI_TOKEN,
+      KASEKI_SUBMISSION_IDENTITY: "kaseki-prod",
+    };
+    const key = "00000000-0000-4000-8000-000000000060";
+    const clientRun = await submit(bindings, {}, key);
+    const kasekiRun = await call(kaseki, "/v1/runs", {
+      method: "POST",
+      token: KASEKI_TOKEN,
+      headers: { "Idempotency-Key": key },
+      body: validRequest(),
+    });
+
+    expect(clientRun.body.data.origin).toEqual({ type: "api_client", id: "client-api" });
+    expect(kasekiRun.response.status).toBe(202);
+    expect(kasekiRun.body.data.origin).toEqual({ type: "kaseki", id: "kaseki-prod" });
+    expect(kasekiRun.body.data.id).not.toBe(clientRun.body.data.id);
+    expect((await getRun(kaseki.DB, kasekiRun.body.data.id))?.origin_type).toBe("kaseki");
+    expect(sent).toHaveLength(2);
+
+    const crossOriginCancel = await call(kaseki, `/v1/runs/${clientRun.body.data.id}/cancel`, {
+      method: "POST",
+      token: KASEKI_TOKEN,
+    });
+    expect(crossOriginCancel.response.status).toBe(403);
+    expect(crossOriginCancel.body.error.code).toBe("RUN_ORIGIN_MISMATCH");
+    const ownOriginCancel = await call(kaseki, `/v1/runs/${kasekiRun.body.data.id}/cancel`, {
+      method: "POST",
+      token: KASEKI_TOKEN,
+    });
+    expect(ownOriginCancel.response.status).toBe(202);
+    expect(ownOriginCancel.body.data.status).toBe("cancelled");
+
+    const deniedRead = await call(kaseki, "/v1/runs", { token: KASEKI_TOKEN });
+    expect(deniedRead.response.status).toBe(403);
+    expect(deniedRead.body.error.code).toBe("INSUFFICIENT_SCOPE");
+  });
+
+  it("[RUN-RETRY-01] retries only terminal runs and records canonical retry lineage", async () => {
+    const { bindings, sent } = testEnv();
+    const kaseki = {
+      ...bindings,
+      KASEKI_SUBMISSION_API_TOKEN: KASEKI_TOKEN,
+      KASEKI_SUBMISSION_IDENTITY: "kaseki-prod",
+    };
+    const source = await call(kaseki, "/v1/runs", {
+      method: "POST",
+      token: KASEKI_TOKEN,
+      headers: { "Idempotency-Key": "00000000-0000-4000-8000-000000000066" },
+      body: validRequest(),
+    });
+    expect(source.response.status).toBe(202);
+    const sourceId = source.body.data.id as string;
+    const workerId = "docker-host-retry";
+    await claimRun(bindings, sourceId, workerId, "00000000-0000-4000-8000-000000000061");
+    await call(bindings, `/v1/worker/runs/${sourceId}/started`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        callbackId: "00000000-0000-4000-8000-000000000062",
+        workerId,
+      },
+    });
+    await call(bindings, `/v1/worker/runs/${sourceId}/completed`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        callbackId: "00000000-0000-4000-8000-000000000063",
+        workerId,
+        exitCode: 0,
+      },
+    });
+
+    const retryKey = "00000000-0000-4000-8000-000000000064";
+    const retryRequest = {
+      method: "POST",
+      token: KASEKI_TOKEN,
+      headers: { "Idempotency-Key": retryKey },
+      body: { idempotencyKey: retryKey },
+    };
+    const retry = await call(kaseki, `/v1/runs/${sourceId}/retry`, retryRequest);
+    const replay = await call(kaseki, `/v1/runs/${sourceId}/retry`, retryRequest);
+
+    expect(retry.response.status).toBe(202);
+    expect(retry.body.data.origin).toEqual({ type: "kaseki", id: "kaseki-prod" });
+    expect(retry.body.data.retryOf).toBe(sourceId);
+    expect(retry.body.data.id).not.toBe(sourceId);
+    expect(replay.response.status).toBe(200);
+    expect(replay.body.data.id).toBe(retry.body.data.id);
+    expect((await getRun(bindings.DB, retry.body.data.id))?.retry_of).toBe(sourceId);
+    expect(sent).toHaveLength(2);
+
+    const nonTerminal = await call(kaseki, "/v1/runs", {
+      method: "POST",
+      token: KASEKI_TOKEN,
+      headers: { "Idempotency-Key": "00000000-0000-4000-8000-000000000065" },
+      body: validRequest(),
+    });
+    const rejected = await call(kaseki, `/v1/runs/${nonTerminal.body.data.id}/retry`, retryRequest);
+    expect(rejected.response.status).toBe(409);
+    expect(rejected.body.error.code).toBe("RUN_NOT_RETRYABLE");
+
+    const foreignSource = await submit(bindings, {}, "00000000-0000-4000-8000-000000000067");
+    const foreignRetryKey = "00000000-0000-4000-8000-000000000068";
+    const foreignRetry = await call(kaseki, `/v1/runs/${foreignSource.body.data.id}/retry`, {
+      method: "POST",
+      token: KASEKI_TOKEN,
+      headers: { "Idempotency-Key": foreignRetryKey },
+      body: { idempotencyKey: foreignRetryKey },
+    });
+    expect(foreignRetry.response.status).toBe(403);
+    expect(foreignRetry.body.error.code).toBe("RUN_ORIGIN_MISMATCH");
+  });
+
+  it("[RUN-RETRY-TERMINAL-01] retries cancelled and admission_failed Kaseki runs", async () => {
+    const cancelledEnv = testEnv();
+    const kaseki = {
+      ...cancelledEnv.bindings,
+      KASEKI_SUBMISSION_API_TOKEN: KASEKI_TOKEN,
+      KASEKI_SUBMISSION_IDENTITY: "kaseki-prod",
+    };
+    const cancelledSource = await call(kaseki, "/v1/runs", {
+      method: "POST",
+      token: KASEKI_TOKEN,
+      headers: { "Idempotency-Key": "00000000-0000-4000-8000-000000000069" },
+      body: validRequest(),
+    });
+    const cancelledId = cancelledSource.body.data.id as string;
+    await call(kaseki, `/v1/runs/${cancelledId}/cancel`, { method: "POST", token: KASEKI_TOKEN });
+
+    const retryCancelledKey = "00000000-0000-4000-8000-000000000070";
+    const retryCancelled = await call(kaseki, `/v1/runs/${cancelledId}/retry`, {
+      method: "POST",
+      token: KASEKI_TOKEN,
+      headers: { "Idempotency-Key": retryCancelledKey },
+      body: { idempotencyKey: retryCancelledKey },
+    });
+    expect(retryCancelled.response.status).toBe(202);
+    expect(retryCancelled.body.data.retryOf).toBe(cancelledId);
+
+    const failingEnv = testEnv({ queueFailure: true });
+    const failingKaseki = {
+      ...failingEnv.bindings,
+      KASEKI_SUBMISSION_API_TOKEN: KASEKI_TOKEN,
+      KASEKI_SUBMISSION_IDENTITY: "kaseki-prod",
+    };
+    const failedAdmission = await call(failingKaseki, "/v1/runs", {
+      method: "POST",
+      token: KASEKI_TOKEN,
+      headers: { "Idempotency-Key": "00000000-0000-4000-8000-000000000071" },
+      body: validRequest(),
+    });
+    const admissionFailedId = failedAdmission.body.error.details.runId as string;
+    const now = new Date().toISOString();
+    await transitionRun(failingEnv.bindings.DB, admissionFailedId, "admission_failed", {
+      completed_at: now,
+      failure_class: "queue_publish_failed",
+      failure_message: "test queue publication failure",
+    }, {
+      eventId: "test:admission-failed",
+      type: "run.admission_failed",
+      occurredAt: now,
+      recordedAt: now,
+      payload: { failureClass: "queue_publish_failed", attempts: 5 },
+    }, { expectedStatus: "admitting" });
+
+    const retryAdmissionFailedKey = "00000000-0000-4000-8000-000000000072";
+    const retryAdmissionFailed = await call(kaseki, `/v1/runs/${admissionFailedId}/retry`, {
+      method: "POST",
+      token: KASEKI_TOKEN,
+      headers: { "Idempotency-Key": retryAdmissionFailedKey },
+      body: { idempotencyKey: retryAdmissionFailedKey },
+    });
+    expect(retryAdmissionFailed.response.status).toBe(202);
+    expect(retryAdmissionFailed.body.data.retryOf).toBe(admissionFailedId);
   });
 
   it("[QUEUE-RETRY-01] retries ambiguous Queue publication failures before marking admission_failed", async () => {

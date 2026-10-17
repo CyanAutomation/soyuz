@@ -1,6 +1,6 @@
 import { IdempotencyKeySchema, RunRequestSchema, type RunRequest } from "../contracts/run-request";
 import { CONTRACT_VERSION, type QueuedRun } from "../contracts/queue-message";
-import { RUN_STATUSES, canTransition, type RunStatus } from "../domain/run-state-machine";
+import { RUN_STATUSES, canTransition, isTerminalStatus, type RunStatus } from "../domain/run-state-machine";
 import {
   getRun as getRunRow,
   getRunByIdempotencyKey,
@@ -15,6 +15,7 @@ import {
   type RunEventInput,
   type RunEventRow,
   type RunRow,
+  parseRequest,
 } from "../db/runs";
 import type { Env } from "../env";
 import { stableStringify } from "../lib/canonical-json";
@@ -52,18 +53,27 @@ export interface RunEventsPage {
   nextAfter: number;
 }
 
+export interface RunOrigin {
+  type: "api_client" | "kaseki" | "mcp";
+  id: string;
+}
+
+export const DEFAULT_RUN_ORIGIN: RunOrigin = { type: "api_client", id: "client-api" };
+
 export async function createRun(
   env: Env,
   input: unknown,
   requestId: string,
   headerIdempotencyKey?: string | null,
+  origin: RunOrigin = DEFAULT_RUN_ORIGIN,
+  retryOf?: string,
 ): Promise<RunAdmission> {
   try {
     const runRequest = parseRunRequest(input, headerIdempotencyKey);
     const idempotencyKey = runRequest.idempotencyKey ?? null;
-    const requestHash = await runRequestFingerprint(runRequest);
+    const requestHash = await runRequestFingerprint(runRequest, retryOf);
     if (idempotencyKey) {
-      const existing = await getRunByIdempotencyKey(env.DB, idempotencyKey);
+      const existing = await getRunByIdempotencyKey(env.DB, idempotencyKey, origin.type, origin.id);
       if (existing) return replayOrConflict(existing, requestHash);
     }
 
@@ -76,6 +86,8 @@ export async function createRun(
       runRequest,
       requestHash,
       idempotencyKey,
+      origin,
+      retryOf,
       correlationId,
       requestId: traceRequestId,
       createdAt: now,
@@ -96,6 +108,41 @@ export async function createRun(
     if (error instanceof RunApplicationError) throw error;
     throw new RunApplicationError(503, "RUN_ADMISSION_UNAVAILABLE", "Soyuz could not reach a required service to accept the run. Retry shortly; if this continues, contact the service administrator.", undefined, true);
   }
+}
+
+export async function retryRun(
+  env: Env,
+  sourceRunId: string,
+  input: unknown,
+  requestId: string,
+  headerIdempotencyKey: string | null | undefined,
+  origin: RunOrigin,
+): Promise<RunAdmission> {
+  let bodyKey: unknown;
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    bodyKey = (input as Record<string, unknown>).idempotencyKey;
+  }
+  if (typeof bodyKey !== "string" || !IdempotencyKeySchema.safeParse(bodyKey).success) {
+    throw new RunApplicationError(400, "INVALID_IDEMPOTENCY_KEY", "Retry requires a UUID idempotencyKey");
+  }
+  if (headerIdempotencyKey && bodyKey.toLowerCase() !== headerIdempotencyKey.toLowerCase()) {
+    throw new RunApplicationError(400, "IDEMPOTENCY_KEY_MISMATCH", "Body idempotencyKey must match the Idempotency-Key header");
+  }
+
+  const source = await readRun(env, sourceRunId);
+  assertRunOrigin(source, origin);
+  if (!isTerminalStatus(source.status)) {
+    throw new RunApplicationError(409, "RUN_NOT_RETRYABLE", "Only terminal runs can be retried", { runId: sourceRunId, status: source.status });
+  }
+  const request = parseRequest(source);
+  return createRun(
+    env,
+    { ...request, idempotencyKey: bodyKey.toLowerCase() },
+    requestId,
+    headerIdempotencyKey ?? bodyKey,
+    origin,
+    sourceRunId,
+  );
 }
 
 function parseRunRequest(input: unknown, headerIdempotencyKey?: string | null): RunRequest {
@@ -137,6 +184,8 @@ interface RunPersistenceInput {
   runRequest: RunRequest;
   requestHash: string;
   idempotencyKey: string | null;
+  origin: RunOrigin;
+  retryOf?: string;
   correlationId: string;
   requestId: string;
   createdAt: string;
@@ -149,13 +198,16 @@ async function insertRunOrReplay(env: Env, input: RunPersistenceInput): Promise<
       request: input.runRequest,
       requestHash: input.requestHash,
       idempotencyKey: input.idempotencyKey,
+      originType: input.origin.type,
+      originId: input.origin.id,
+      retryOf: input.retryOf,
       correlationId: input.correlationId,
       requestId: input.requestId,
       createdAt: input.createdAt,
     });
   } catch {
     if (input.idempotencyKey) {
-      const raced = await getRunByIdempotencyKey(env.DB, input.idempotencyKey);
+      const raced = await getRunByIdempotencyKey(env.DB, input.idempotencyKey, input.origin.type, input.origin.id);
       if (raced) return replayOrConflict(raced, input.requestHash);
     }
     throw new RunApplicationError(
@@ -295,10 +347,10 @@ export async function readRunEventsPage(
 export async function requestRunCancellation(
   env: Env,
   runId: string,
-  requestedBy = "client",
+  origin: RunOrigin = DEFAULT_RUN_ORIGIN,
 ): Promise<{ row: RunRow; statusCode: 200 | 202 }> {
   try {
-    return await retryCancellation(env, runId, requestedBy);
+    return await retryCancellation(env, runId, origin);
   } catch (error) {
     if (error instanceof RunApplicationError) throw error;
     if (error instanceof RunNotFoundError) throw new RunApplicationError(404, "RUN_NOT_FOUND", "Run was not found");
@@ -312,11 +364,11 @@ export async function requestRunCancellation(
 async function retryCancellation(
   env: Env,
   runId: string,
-  requestedBy: string,
+  origin: RunOrigin,
 ): Promise<{ row: RunRow; statusCode: 200 | 202 }> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      return await cancelOnce(env, runId, requestedBy);
+      return await cancelOnce(env, runId, origin);
     } catch (error) {
       if (!(error instanceof RunTransitionError) || attempt === 2) throw error;
       // Re-read canonical state and choose the cancellation transition again.
@@ -328,14 +380,15 @@ async function retryCancellation(
 async function cancelOnce(
   env: Env,
   runId: string,
-  requestedBy: string,
+  origin: RunOrigin,
 ): Promise<{ row: RunRow; statusCode: 200 | 202 }> {
   const row = await getRunRow(env.DB, runId);
   if (!row) throw new RunApplicationError(404, "RUN_NOT_FOUND", "Run was not found");
+  assertRunOrigin(row, origin);
   if (row.status === "cancel_requested" || row.status === "cancelled") return { row, statusCode: 200 };
 
   const now = new Date().toISOString();
-  const transition = cancellationTransition(row.status, requestedBy, now);
+  const transition = cancellationTransition(row.status, `${origin.type}:${origin.id}`, now);
   const updated = await transitionRun(
     env.DB,
     runId,
@@ -345,6 +398,17 @@ async function cancelOnce(
     { expectedStatus: row.status },
   );
   return { row: updated, statusCode: 202 };
+}
+
+function assertRunOrigin(row: RunRow, origin: RunOrigin): void {
+  if (row.origin_type !== origin.type || row.origin_id !== origin.id) {
+    throw new RunApplicationError(
+      403,
+      "RUN_ORIGIN_MISMATCH",
+      "Run was created by a different origin and cannot be modified with this credential",
+      { runId: row.id },
+    );
+  }
 }
 
 function cancellationTransition(
@@ -372,9 +436,9 @@ function cancellationTransition(
   };
 }
 
-async function runRequestFingerprint(request: RunRequest): Promise<string> {
+async function runRequestFingerprint(request: RunRequest, retryOf?: string): Promise<string> {
   const { idempotencyKey: _key, tracing: _tracing, ...executionRequest } = request;
-  return sha256Hex(stableStringify(executionRequest));
+  return sha256Hex(stableStringify(retryOf ? { request: executionRequest, retryOf } : executionRequest));
 }
 
 function replayOrConflict(row: RunRow, requestHash: string): RunAdmission {

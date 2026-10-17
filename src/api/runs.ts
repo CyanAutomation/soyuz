@@ -1,11 +1,13 @@
 import {
   createRun,
   listRunsPage,
+  retryRun as retryCanonicalRun,
   readRun,
   readRunEventsPage,
   requestRunCancellation,
   RunApplicationError,
 } from "../application/runs";
+import type { RunOrigin } from "../application/runs";
 import {
   parseRequest,
   parseResult,
@@ -16,10 +18,10 @@ import { isUuid } from "../lib/uuid";
 import { ApiError, errorResponse, parseJsonBody, successResponse } from "./http";
 import { publicEvent } from "./public-event";
 
-export async function handleClientRuns(request: Request, env: Env, url: URL, requestId: string): Promise<Response | null> {
+export async function handleClientRuns(request: Request, env: Env, url: URL, requestId: string, origin: RunOrigin): Promise<Response | null> {
   const segments = url.pathname.split("/").filter(Boolean);
   if (url.pathname === "/v1/runs" && request.method === "POST") {
-    return submitRun(request, env, requestId);
+    return submitRun(request, env, requestId, origin);
   }
   if (url.pathname === "/v1/runs" && request.method === "GET") {
     return listRunRoute(url, env, requestId);
@@ -29,6 +31,10 @@ export async function handleClientRuns(request: Request, env: Env, url: URL, req
   const runId = segments[2];
   if (!isUuid(runId)) return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
 
+  if (segments.length === 4 && segments[3] === "retry" && request.method === "POST") {
+    return retryCanonicalRunRoute(request, runId, env, requestId, origin);
+  }
+
   if (segments.length === 3 && request.method === "GET") {
     return getRunRoute(runId, env, requestId);
   }
@@ -36,15 +42,25 @@ export async function handleClientRuns(request: Request, env: Env, url: URL, req
     return getRunEventsRoute(runId, url, env, requestId);
   }
   if (segments.length === 4 && segments[3] === "cancel" && request.method === "POST") {
-    return cancelRun(runId, env, requestId);
+    return cancelRun(runId, env, requestId, origin);
   }
   return null;
 }
 
-async function submitRun(request: Request, env: Env, requestId: string): Promise<Response> {
+async function submitRun(request: Request, env: Env, requestId: string, origin: RunOrigin): Promise<Response> {
   try {
     const body = await parseJsonBody(request, requestId);
-    const admission = await createRun(env, body, requestId, request.headers.get("idempotency-key"));
+    const admission = await createRun(env, body, requestId, request.headers.get("idempotency-key"), origin);
+    return successResponse(requestId, publicRun(admission.row), admission.statusCode);
+  } catch (error) {
+    return applicationErrorResponse(error, requestId);
+  }
+}
+
+async function retryCanonicalRunRoute(request: Request, runId: string, env: Env, requestId: string, origin: RunOrigin): Promise<Response> {
+  try {
+    const body = await parseJsonBody(request, requestId);
+    const admission = await retryCanonicalRun(env, runId, body, requestId, request.headers.get("idempotency-key"), origin);
     return successResponse(requestId, publicRun(admission.row), admission.statusCode);
   } catch (error) {
     return applicationErrorResponse(error, requestId);
@@ -90,9 +106,9 @@ async function getRunEventsRoute(runId: string, url: URL, env: Env, requestId: s
   }
 }
 
-async function cancelRun(runId: string, env: Env, requestId: string): Promise<Response> {
+async function cancelRun(runId: string, env: Env, requestId: string, origin: RunOrigin): Promise<Response> {
   try {
-    const result = await requestRunCancellation(env, runId);
+    const result = await requestRunCancellation(env, runId, origin);
     return successResponse(requestId, publicRun(result.row), result.statusCode);
   } catch (error) {
     return applicationErrorResponse(error, requestId);
@@ -129,6 +145,8 @@ export function publicRun(row: RunRow): Record<string, unknown> {
     claimExpiresAt: row.claim_expires_at,
     lastHeartbeatAt: row.last_heartbeat_at,
     operationalHealth: row.operational_health,
+    origin: { type: row.origin_type, id: row.origin_id },
+    retryOf: row.retry_of,
     exitCode: row.exit_code,
     failureClass: row.failure_class,
     failureMessage: row.failure_message,
@@ -155,6 +173,8 @@ function publicRunSummary(row: RunRow): Record<string, unknown> {
     completedAt: row.completed_at,
     updatedAt: row.updated_at,
     operationalHealth: row.operational_health,
+    origin: { type: row.origin_type, id: row.origin_id },
+    retryOf: row.retry_of,
     exitCode: row.exit_code,
     failureClass: row.failure_class,
   };
