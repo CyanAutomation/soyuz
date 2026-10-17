@@ -1,6 +1,6 @@
 import { IdempotencyKeySchema, RunRequestSchema, type RunRequest } from "../contracts/run-request";
 import { CONTRACT_VERSION, type QueuedRun } from "../contracts/queue-message";
-import { RUN_STATUSES, canTransition, type RunStatus } from "../domain/run-state-machine";
+import { RUN_STATUSES, canTransition, isTerminalStatus, type RunStatus } from "../domain/run-state-machine";
 import {
   getRun as getRunRow,
   getRunByIdempotencyKey,
@@ -130,8 +130,9 @@ export async function retryRun(
   }
 
   const source = await readRun(env, sourceRunId);
-  if (source.status !== "completed" && source.status !== "failed") {
-    throw new RunApplicationError(409, "RUN_NOT_RETRYABLE", "Only completed or failed runs can be retried", { runId: sourceRunId, status: source.status });
+  assertRunOrigin(source, origin);
+  if (!isTerminalStatus(source.status)) {
+    throw new RunApplicationError(409, "RUN_NOT_RETRYABLE", "Only terminal runs can be retried", { runId: sourceRunId, status: source.status });
   }
   const request = parseRequest(source);
   return createRun(
@@ -346,10 +347,10 @@ export async function readRunEventsPage(
 export async function requestRunCancellation(
   env: Env,
   runId: string,
-  requestedBy = "client",
+  origin: RunOrigin = DEFAULT_RUN_ORIGIN,
 ): Promise<{ row: RunRow; statusCode: 200 | 202 }> {
   try {
-    return await retryCancellation(env, runId, requestedBy);
+    return await retryCancellation(env, runId, origin);
   } catch (error) {
     if (error instanceof RunApplicationError) throw error;
     if (error instanceof RunNotFoundError) throw new RunApplicationError(404, "RUN_NOT_FOUND", "Run was not found");
@@ -363,11 +364,11 @@ export async function requestRunCancellation(
 async function retryCancellation(
   env: Env,
   runId: string,
-  requestedBy: string,
+  origin: RunOrigin,
 ): Promise<{ row: RunRow; statusCode: 200 | 202 }> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      return await cancelOnce(env, runId, requestedBy);
+      return await cancelOnce(env, runId, origin);
     } catch (error) {
       if (!(error instanceof RunTransitionError) || attempt === 2) throw error;
       // Re-read canonical state and choose the cancellation transition again.
@@ -379,14 +380,15 @@ async function retryCancellation(
 async function cancelOnce(
   env: Env,
   runId: string,
-  requestedBy: string,
+  origin: RunOrigin,
 ): Promise<{ row: RunRow; statusCode: 200 | 202 }> {
   const row = await getRunRow(env.DB, runId);
   if (!row) throw new RunApplicationError(404, "RUN_NOT_FOUND", "Run was not found");
+  assertRunOrigin(row, origin);
   if (row.status === "cancel_requested" || row.status === "cancelled") return { row, statusCode: 200 };
 
   const now = new Date().toISOString();
-  const transition = cancellationTransition(row.status, requestedBy, now);
+  const transition = cancellationTransition(row.status, `${origin.type}:${origin.id}`, now);
   const updated = await transitionRun(
     env.DB,
     runId,
@@ -396,6 +398,17 @@ async function cancelOnce(
     { expectedStatus: row.status },
   );
   return { row: updated, statusCode: 202 };
+}
+
+function assertRunOrigin(row: RunRow, origin: RunOrigin): void {
+  if (row.origin_type !== origin.type || row.origin_id !== origin.id) {
+    throw new RunApplicationError(
+      403,
+      "RUN_ORIGIN_MISMATCH",
+      "Run was created by a different origin and cannot be modified with this credential",
+      { runId: row.id },
+    );
+  }
 }
 
 function cancellationTransition(
