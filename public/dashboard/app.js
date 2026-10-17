@@ -1,19 +1,25 @@
 import { fetchJson } from "./api.js";
+import { revokeAccessToken } from "./auth-api.js";
+import { renderAuthUi } from "./auth-ui.js";
 
 const notice = document.querySelector("#notice");
 const runsSection = document.querySelector("#runs");
 const connectButton = document.querySelector("#connect");
+const accountLabel = document.querySelector("#account");
 const oauthKeys = ["state", "verifier", "clientId", "redirectUri"];
 let accessToken = null;
+let oauthClientId = null;
 
 connectButton.addEventListener("click", () => {
-  void connect();
+  if (accessToken) void signOut();
+  else void connect();
 });
 
+renderAuthUi(connectButton, accountLabel, "signed-out");
 void finishSignIn();
 
 async function connect() {
-  connectButton.disabled = true;
+  renderAuthUi(connectButton, accountLabel, "signing-in");
   notice.textContent = "Starting GitHub sign-in…";
   try {
     const redirectUri = `${location.origin}/dashboard/`;
@@ -49,7 +55,7 @@ async function connect() {
     location.assign(authorize);
   } catch {
     notice.textContent = "Sign-in could not start. Check the service configuration and try again.";
-    connectButton.disabled = false;
+    renderAuthUi(connectButton, accountLabel, "signed-out");
   }
 }
 
@@ -59,20 +65,65 @@ async function finishSignIn() {
   if (!code) return;
   if (!oauthStateMatches(params)) {
     notice.textContent = "Sign-in could not be verified. Start again.";
+    renderAuthUi(connectButton, accountLabel, "signed-out");
     return;
   }
 
+  renderAuthUi(connectButton, accountLabel, "signing-in");
   notice.textContent = "Finishing sign-in…";
   try {
     const token = await exchangeAuthorizationCode(code);
     accessToken = token.access_token;
+    oauthClientId = sessionStorage.getItem("soyuz.dashboard.clientId");
+    if (typeof accessToken !== "string" || !accessToken || !oauthClientId) {
+      throw new Error("OAuth token response was incomplete");
+    }
+    const identity = await apiJson("/dashboard/api/me");
+    if (typeof identity.githubLogin !== "string") throw new Error("OAuth identity response was invalid");
     clearOAuthState();
     history.replaceState(null, "", "/dashboard/");
-    await loadRuns();
+    renderAuthUi(connectButton, accountLabel, "signed-in", identity.githubLogin);
+    try {
+      await loadRuns();
+    } catch {
+      if (accessToken) notice.textContent = "You are signed in, but recent runs could not be loaded. Try again shortly.";
+    }
   } catch {
-    notice.textContent = "GitHub sign-in failed. Start again.";
     clearOAuthState();
+    if (accessToken && oauthClientId) {
+      try {
+        await revokeAccessToken(accessToken, oauthClientId);
+      } catch {
+        // Clear local sign-in state even when the provider cannot confirm revocation.
+      }
+    }
+    clearLocalSession("GitHub sign-in failed. Start again.");
   }
+}
+
+async function signOut() {
+  const token = accessToken;
+  const clientId = oauthClientId;
+  accessToken = null;
+  oauthClientId = null;
+  renderAuthUi(connectButton, accountLabel, "signing-out");
+  runsSection.replaceChildren();
+  notice.textContent = "Signing out…";
+
+  try {
+    if (token && clientId) await revokeAccessToken(token, clientId);
+    clearLocalSession("Signed out.");
+  } catch {
+    clearLocalSession("Signed out on this page. Soyuz could not confirm token revocation; the token expires within one hour.");
+  }
+}
+
+function clearLocalSession(message) {
+  accessToken = null;
+  oauthClientId = null;
+  runsSection.replaceChildren();
+  renderAuthUi(connectButton, accountLabel, "signed-out");
+  notice.textContent = message;
 }
 
 function oauthStateMatches(params) {
@@ -100,9 +151,11 @@ function clearOAuthState() {
 }
 
 async function loadRuns() {
+  const token = accessToken;
   notice.textContent = "Loading recent runs…";
   runsSection.replaceChildren();
   const result = await apiJson("/dashboard/api/runs?limit=50");
+  if (!token || token !== accessToken) return;
   if (!result.runs.length) {
     notice.textContent = "No runs have been recorded yet.";
     return;
@@ -136,11 +189,14 @@ function renderRun(run) {
 }
 
 async function loadRunDetails(runId, container) {
+  const token = accessToken;
+  if (!token) return;
   try {
     const [detail, artifacts] = await Promise.all([
       apiJson(`/dashboard/api/runs/${encodeURIComponent(runId)}`),
       apiJson(`/dashboard/api/runs/${encodeURIComponent(runId)}/artifacts`),
     ]);
+    if (token !== accessToken) return;
     appendRunSummary(container, detail);
     appendRunArtifacts(container, runId, artifacts.artifacts);
   } catch {
@@ -180,25 +236,44 @@ function createArtifactButton(runId, artifact) {
 }
 
 async function downloadArtifact(runId, artifact) {
+  const token = accessToken;
+  if (!token) return;
   try {
     const response = await fetch(`/dashboard/api/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(artifact.id)}`, {
-      headers: { authorization: `Bearer ${accessToken}` },
+      headers: { authorization: `Bearer ${token}` },
       cache: "no-store",
     });
-    if (!response.ok) throw new Error("download failed");
-    const objectUrl = URL.createObjectURL(await response.blob());
+    if (!response.ok) {
+      clearSessionWhenUnauthorized({ status: response.status });
+      throw new Error("download failed");
+    }
+    if (token !== accessToken) return;
+    const blob = await response.blob();
+    if (token !== accessToken) return;
+    const objectUrl = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = objectUrl;
     link.download = artifact.name;
     link.click();
     URL.revokeObjectURL(objectUrl);
   } catch {
-    notice.textContent = "Artifact download failed. It may have expired.";
+    if (token === accessToken) notice.textContent = "Artifact download failed. It may have expired.";
   }
 }
 
 async function apiJson(path) {
-  return fetchJson(path, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" });
+  try {
+    return await fetchJson(path, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" });
+  } catch (error) {
+    clearSessionWhenUnauthorized(error);
+    throw error;
+  }
+}
+
+function clearSessionWhenUnauthorized(error) {
+  if (accessToken && (error?.status === 401 || error?.status === 403)) {
+    clearLocalSession("Your Soyuz sign-in expired or access was removed. Sign in again.");
+  }
 }
 
 function randomString(byteCount) {

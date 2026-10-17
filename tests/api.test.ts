@@ -38,6 +38,10 @@ function testEnv(options: { queueFailure?: boolean; artifacts?: Env["ARTIFACTS"]
 }
 
 async function createOAuthAccessToken(env: Env, scope: string[] = ["soyuz:read"]): Promise<string> {
+  return (await createOAuthCredentials(env, scope)).accessToken;
+}
+
+async function createOAuthCredentials(env: Env, scope: string[] = ["soyuz:read"]): Promise<{ accessToken: string; clientId: string }> {
   const helpers = getOAuthApi(oauthProviderOptions("https://soyuz.test"), env);
   const redirectUri = "https://client.example.test/callback";
   const client = await helpers.createClient({
@@ -84,7 +88,7 @@ async function createOAuthAccessToken(env: Env, scope: string[] = ["soyuz:read"]
   }), env);
   const token = await response.json() as { access_token?: string; error?: string };
   if (!response.ok || !token.access_token) throw new Error(`OAuth token exchange failed: ${token.error ?? response.status}`);
-  return token.access_token;
+  return { accessToken: token.access_token, clientId: client.clientId };
 }
 
 function apiRequest(
@@ -273,6 +277,41 @@ describe("Soyuz Worker API", () => {
     const revoked = await call(bindings, "/dashboard/api/runs", { token: accessToken });
     expect(revoked.response.status).toBe(403);
     expect(revoked.body.error.code).toBe("ACCESS_DENIED");
+  });
+
+  it("[OAUTH-05] returns the authenticated GitHub login from the protected dashboard identity endpoint", async () => {
+    const { bindings } = testEnv({ oauth: true });
+    const credentials = await createOAuthCredentials(bindings);
+
+    const identity = await call(bindings, "/dashboard/api/me", { token: credentials.accessToken });
+    expect(identity.response.status).toBe(200);
+    expect(identity.body.data).toEqual({ githubLogin: "allowed-test-user" });
+
+    bindings.SOYUZ_OAUTH_ALLOWED_GITHUB_IDS = "456";
+    const rejected = await call(bindings, "/dashboard/api/me", { token: credentials.accessToken });
+    expect(rejected.response.status).toBe(403);
+    expect(rejected.body.error.code).toBe("ACCESS_DENIED");
+  });
+
+  it("[OAUTH-06] revokes the dashboard access token so it can no longer read the dashboard", async () => {
+    const { bindings } = testEnv({ oauth: true });
+    const credentials = await createOAuthCredentials(bindings);
+    const before = await call(bindings, "/dashboard/api/me", { token: credentials.accessToken });
+    expect(before.response.status).toBe(200);
+
+    const revoked = await handleRequest(new Request("https://soyuz.test/oauth/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        token: credentials.accessToken,
+        token_type_hint: "access_token",
+        client_id: credentials.clientId,
+      }),
+    }), bindings);
+    expect(revoked.status).toBe(200);
+
+    const after = await call(bindings, "/dashboard/api/me", { token: credentials.accessToken });
+    expect(after.response.status).toBe(401);
   });
 
   it("[OAUTH-04] serves sanitized dashboard run details and event pages", async () => {
