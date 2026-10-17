@@ -108,7 +108,7 @@ async function getRunEventsRoute(runId: string, url: URL, env: Env, requestId: s
 
 async function cancelRun(runId: string, env: Env, requestId: string, origin: RunOrigin): Promise<Response> {
   try {
-    const result = await requestRunCancellation(env, runId, `${origin.type}:${origin.id}`);
+    const result = await requestRunCancellation(env, runId, origin);
     return successResponse(requestId, publicRun(result.row), result.statusCode);
   } catch (error) {
     return applicationErrorResponse(error, requestId);

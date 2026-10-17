@@ -194,7 +194,7 @@ function createSoyuzMcpServer(env: Env, requestInfo?: Request): McpServer {
       openWorldHint: true,
     },
   }, async ({ runId }) => executeTool(async () => {
-    const result = await requestRunCancellation(env, runId);
+    const result = await requestRunCancellation(env, runId, { type: "mcp", id: "mcp-client" });
     return mcpRunDetail(result.row);
   }));
 

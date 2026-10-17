@@ -16,7 +16,7 @@ V1 rejects `webhookConfig`. Kaseki's current webhook option can carry a signing 
 
 Clients may send an RFC UUID in the request's `idempotencyKey`, the `Idempotency-Key` header, or both (if both are sent they must match). For the same key and equivalent normalized execution request, Soyuz returns the existing run with HTTP 200. Reusing a key for different execution input returns 409 `IDEMPOTENCY_KEY_REUSED`. After migration `0004_run_origin_retry.sql`, keys are scoped by the authenticated origin. The Kaseki host must persist and reuse its key after an uncertain response.
 
-`POST /v1/runs/:id/retry` accepts `{ "idempotencyKey": "<UUID>" }`. It creates one new run only when the source is `completed` or `failed`; the new run includes `retryOf` with the source UUID. Reusing that retry key replays the same new run. Cancellation and retry can use `KASEKI_SUBMISSION_API_TOKEN`; that token is restricted to create/retry/cancel and must be distinct from `CLIENT_API_TOKEN`.
+`POST /v1/runs/:id/retry` accepts `{ "idempotencyKey": "<UUID>" }`. It creates one new run only when the source is terminal (`completed`, `failed`, `cancelled`, or `admission_failed`); the new run includes `retryOf` with the source UUID. Reusing that retry key replays the same new run. Retry and cancellation require the caller's origin to match the source run's origin. The scoped Kaseki credential is restricted to create/retry/cancel and must be distinct from `CLIENT_API_TOKEN`.
 
 Each run response includes an `origin` object derived from the matched credential (for example `{ "type": "kaseki", "id": "kaseki-prod" }`) and `retryOf` (null for a non-retry run). Neither field is accepted from the request body. The same trusted origin and retry lineage appear in the read-only dashboard.
 
@@ -97,7 +97,7 @@ Requirement IDs: `HEALTH-DB-01`, `RUN-READ-REST-01`, `CANCEL-QUEUED-01`, `CANCEL
 | --- | --- | --- |
 | `GET /health` | None | Minimal Worker/D1 health |
 | `POST /v1/runs` | Client | Validate, persist, and enqueue |
-| `POST /v1/runs/:id/retry` | Client or scoped Kaseki | Retry a completed or failed run with a new idempotency key |
+| `POST /v1/runs/:id/retry` | Client or scoped Kaseki | Retry a terminal run from the same origin with a new idempotency key |
 | `GET /v1/runs` | Client | Filtered, cursor-paginated history |
 | `GET /v1/runs/:id` | Client | Canonical run and normalized request |
 | `GET /v1/runs/:id/events` | Client | Append-only event history |
