@@ -196,4 +196,25 @@ describe("Soyuz OAuth policy", () => {
     });
     expect(await bindConsentToSameOriginRequest(crossSite, handle, env)).toBe(crossSite);
   });
+
+  it("does not duplicate a malformed cookie entry that already names the consent binding", async () => {
+    const handle = "opaque-private-consent-handle";
+    const env = { SOYUZ_PUBLIC_URL: "https://soyuz.example.test" };
+    const headers = { origin: "null", "sec-fetch-site": "same-origin" };
+    const initial = await bindConsentToSameOriginRequest(
+      new Request("https://soyuz.example.test/oauth/authorize", { method: "POST", headers }),
+      handle,
+      env,
+    );
+    const bindingCookieName = initial.headers.get("cookie")!.split("=")[0];
+    const existing = new Request("https://soyuz.example.test/oauth/authorize", {
+      method: "POST",
+      headers: { ...headers, cookie: `flag; ${bindingCookieName}` },
+    });
+
+    const result = await bindConsentToSameOriginRequest(existing, handle, env);
+
+    expect(result).toBe(existing);
+    expect(result.headers.get("cookie")).toBe(`flag; ${bindingCookieName}`);
+  });
 });

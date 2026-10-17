@@ -2,7 +2,8 @@ import { hasBearerToken, isBearerTokenConfigured } from "./auth/bearer";
 import { authorizeMcpClient } from "./auth/mcp-client";
 import { getSoyuzOAuthProvider, isOAuthConfigured } from "./auth/oauth";
 import { handleClientRuns } from "./api/runs";
-import { handleClientArtifacts, handleWorkerArtifacts, purgeExpiredArtifacts } from "./api/artifacts";
+import { handleClientArtifacts, purgeExpiredArtifacts } from "./api/artifacts";
+import { handleWorkerArtifacts } from "./api/worker-artifacts";
 import { errorResponse, jsonResponse, requestIdFor } from "./api/http";
 import { handleWorkerCallbacks } from "./api/workers";
 import type { Env } from "./env";
@@ -13,80 +14,146 @@ export async function handleRequest(request: Request, env: Env, context?: Execut
   const requestId = requestIdFor(request);
   const url = new URL(request.url);
   const executionContext = context ?? { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext;
+  switch (requestRoute(url.pathname, request.method)) {
+    case "health":
+      return handleHealth(requestId, env);
+    case "mcp":
+      return handleMcpRequest(request, env, requestId, executionContext);
+    case "dashboard-redirect":
+      return Response.redirect(new URL("/dashboard/", url), 308);
+    case "dashboard-api":
+      return handleDashboardApi(request, env, requestId, executionContext);
+    case "dashboard-assets":
+      return env.ASSETS?.fetch(request) ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
+    case "oauth":
+      return handleOAuthRequest(request, env, requestId, executionContext);
+    case "worker-api":
+      return handleWorkerRequest(request, env, url, requestId);
+    case "client-api":
+      return handleClientRequest(request, env, url, requestId);
+    default:
+      return errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
+  }
+}
 
-  if (url.pathname === "/health" && request.method === "GET") {
-    if (!isBearerTokenConfigured(env.CLIENT_API_TOKEN) || !isBearerTokenConfigured(env.WORKER_API_TOKEN)) {
-      return jsonResponse(503, {
-        status: "unavailable",
-        message: "Soyuz API authentication is not configured. Contact the service administrator.",
-        requestId,
-      });
-    }
-    try {
-      await env.DB.prepare("SELECT 1 AS healthy").first();
-      return jsonResponse(200, { status: "ok", contractVersion: "1", requestId });
-    } catch {
-      return jsonResponse(503, {
-        status: "unavailable",
-        message: "Soyuz cannot reach its run database. Retry shortly, or contact the service administrator if this continues.",
-        requestId,
-      });
-    }
-  }
+type RequestRoute = "health" | "mcp" | "dashboard-redirect" | "dashboard-api" | "dashboard-assets" | "oauth" | "worker-api" | "client-api" | "not-found";
 
-  if (url.pathname === "/mcp" || url.pathname.startsWith("/mcp/")) {
-    if (isOAuthConfigured(env) && !(await hasBearerToken(request, env.CLIENT_API_TOKEN))) {
-      return getSoyuzOAuthProvider(env)!.fetch(request, env, executionContext);
-    }
-    const authFailure = await authorizeMcpClient(request, env, requestId);
-    if (authFailure) return authFailure;
-    return createSoyuzMcpHandler(env).fetch(request);
-  }
+function requestRoute(pathname: string, method: string): RequestRoute {
+  if (isHealthRoute(pathname, method)) return "health";
+  if (isMcpRoute(pathname)) return "mcp";
+  if (pathname === "/dashboard") return "dashboard-redirect";
+  if (isDashboardApiRoute(pathname)) return "dashboard-api";
+  if (isDashboardAssetRoute(pathname)) return "dashboard-assets";
+  if (isOAuthRoute(pathname)) return "oauth";
+  if (pathname.startsWith("/v1/worker/")) return "worker-api";
+  if (isClientApiRoute(pathname)) return "client-api";
+  return "not-found";
+}
 
-  if (url.pathname === "/dashboard") {
-    return Response.redirect(new URL("/dashboard/", url), 308);
-  }
-  if (url.pathname === "/dashboard/api" || url.pathname.startsWith("/dashboard/api/")) {
-    const provider = getSoyuzOAuthProvider(env);
-    if (!provider) return errorResponse(requestId, 503, "OAUTH_UNAVAILABLE", "OAuth dashboard access is not configured.");
-    return provider.fetch(request, env, executionContext);
-  }
-  if (url.pathname === "/dashboard/" || url.pathname.startsWith("/dashboard/")) {
-    return env.ASSETS?.fetch(request) ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
-  }
-  if (url.pathname.startsWith("/oauth/") || url.pathname.startsWith("/.well-known/")) {
-    const provider = getSoyuzOAuthProvider(env);
-    if (!provider) return errorResponse(requestId, 503, "OAUTH_UNAVAILABLE", "OAuth is not configured.");
-    return provider.fetch(request, env, executionContext);
-  }
+function isHealthRoute(pathname: string, method: string): boolean {
+  return pathname === "/health" && method === "GET";
+}
 
-  if (url.pathname.startsWith("/v1/worker/")) {
-    if (!isBearerTokenConfigured(env.WORKER_API_TOKEN)) {
-      return errorResponse(requestId, 503, "AUTHENTICATION_UNAVAILABLE", "Worker API-key authentication is not configured. Contact the service administrator.");
-    }
-    if (!(await hasBearerToken(request, env.WORKER_API_TOKEN))) {
-      return errorResponse(requestId, 401, "UNAUTHORIZED", "Worker API key is missing or invalid. Check that you are using the current worker key.");
-    }
-    const artifactResponse = await handleWorkerArtifacts(request, env, url, requestId);
-    if (artifactResponse) return artifactResponse;
-    const response = await handleWorkerCallbacks(request, env, url, requestId);
-    return response ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
-  }
+function isMcpRoute(pathname: string): boolean {
+  return pathname === "/mcp" || pathname.startsWith("/mcp/");
+}
 
-  if (url.pathname === "/v1" || url.pathname.startsWith("/v1/")) {
-    if (!isBearerTokenConfigured(env.CLIENT_API_TOKEN)) {
-      return errorResponse(requestId, 503, "AUTHENTICATION_UNAVAILABLE", "Client API-key authentication is not configured. Contact the service administrator.");
-    }
-    if (!(await hasBearerToken(request, env.CLIENT_API_TOKEN))) {
-      return errorResponse(requestId, 401, "UNAUTHORIZED", "Client API key is missing or invalid. Check that you are using the current client key.");
-    }
-    const artifactResponse = await handleClientArtifacts(request, env, url, requestId);
-    if (artifactResponse) return artifactResponse;
-    const response = await handleClientRuns(request, env, url, requestId);
-    return response ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
-  }
+function isDashboardApiRoute(pathname: string): boolean {
+  return pathname === "/dashboard/api" || pathname.startsWith("/dashboard/api/");
+}
 
-  return errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
+function isDashboardAssetRoute(pathname: string): boolean {
+  return pathname === "/dashboard/" || pathname.startsWith("/dashboard/");
+}
+
+function isOAuthRoute(pathname: string): boolean {
+  return pathname.startsWith("/oauth/") || pathname.startsWith("/.well-known/");
+}
+
+function isClientApiRoute(pathname: string): boolean {
+  return pathname === "/v1" || pathname.startsWith("/v1/");
+}
+
+async function handleHealth(requestId: string, env: Env): Promise<Response> {
+  if (!isBearerTokenConfigured(env.CLIENT_API_TOKEN) || !isBearerTokenConfigured(env.WORKER_API_TOKEN)) {
+    return jsonResponse(503, {
+      status: "unavailable",
+      message: "Soyuz API authentication is not configured. Contact the service administrator.",
+      requestId,
+    });
+  }
+  try {
+    await env.DB.prepare("SELECT 1 AS healthy").first();
+    return jsonResponse(200, { status: "ok", contractVersion: "1", requestId });
+  } catch {
+    return jsonResponse(503, {
+      status: "unavailable",
+      message: "Soyuz cannot reach its run database. Retry shortly, or contact the service administrator if this continues.",
+      requestId,
+    });
+  }
+}
+
+async function handleMcpRequest(
+  request: Request,
+  env: Env,
+  requestId: string,
+  context: ExecutionContext,
+): Promise<Response> {
+  if (isOAuthConfigured(env) && !(await hasBearerToken(request, env.CLIENT_API_TOKEN))) {
+    return getSoyuzOAuthProvider(env)!.fetch(request, env, context);
+  }
+  const authFailure = await authorizeMcpClient(request, env, requestId);
+  if (authFailure) return authFailure;
+  return createSoyuzMcpHandler(env).fetch(request);
+}
+
+async function handleDashboardApi(
+  request: Request,
+  env: Env,
+  requestId: string,
+  context: ExecutionContext,
+): Promise<Response> {
+  const provider = getSoyuzOAuthProvider(env);
+  if (!provider) return errorResponse(requestId, 503, "OAUTH_UNAVAILABLE", "OAuth dashboard access is not configured.");
+  return provider.fetch(request, env, context);
+}
+
+async function handleOAuthRequest(
+  request: Request,
+  env: Env,
+  requestId: string,
+  context: ExecutionContext,
+): Promise<Response> {
+  const provider = getSoyuzOAuthProvider(env);
+  if (!provider) return errorResponse(requestId, 503, "OAUTH_UNAVAILABLE", "OAuth is not configured.");
+  return provider.fetch(request, env, context);
+}
+
+async function handleWorkerRequest(request: Request, env: Env, url: URL, requestId: string): Promise<Response> {
+  if (!isBearerTokenConfigured(env.WORKER_API_TOKEN)) {
+    return errorResponse(requestId, 503, "AUTHENTICATION_UNAVAILABLE", "Worker API-key authentication is not configured. Contact the service administrator.");
+  }
+  if (!(await hasBearerToken(request, env.WORKER_API_TOKEN))) {
+    return errorResponse(requestId, 401, "UNAUTHORIZED", "Worker API key is missing or invalid. Check that you are using the current worker key.");
+  }
+  const artifactResponse = await handleWorkerArtifacts(request, env, url, requestId);
+  if (artifactResponse) return artifactResponse;
+  const response = await handleWorkerCallbacks(request, env, url, requestId);
+  return response ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
+}
+
+async function handleClientRequest(request: Request, env: Env, url: URL, requestId: string): Promise<Response> {
+  if (!isBearerTokenConfigured(env.CLIENT_API_TOKEN)) {
+    return errorResponse(requestId, 503, "AUTHENTICATION_UNAVAILABLE", "Client API-key authentication is not configured. Contact the service administrator.");
+  }
+  if (!(await hasBearerToken(request, env.CLIENT_API_TOKEN))) {
+    return errorResponse(requestId, 401, "UNAUTHORIZED", "Client API key is missing or invalid. Check that you are using the current client key.");
+  }
+  const artifactResponse = await handleClientArtifacts(request, env, url, requestId);
+  if (artifactResponse) return artifactResponse;
+  const response = await handleClientRuns(request, env, url, requestId);
+  return response ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
 }
 
 export default {
