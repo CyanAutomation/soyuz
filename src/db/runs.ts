@@ -28,6 +28,9 @@ export interface RunRow {
   failure_message: string | null;
   cancel_requested_at: string | null;
   idempotency_key: string | null;
+  origin_type: string;
+  origin_id: string;
+  retry_of: string | null;
   correlation_id: string;
   request_id: string;
   admission_attempts: number;
@@ -124,8 +127,14 @@ export async function getRun(db: D1Database, id: string): Promise<RunRow | null>
   `).bind(id).first<RunRow>();
 }
 
-export async function getRunByIdempotencyKey(db: D1Database, key: string): Promise<RunRow | null> {
-  return db.prepare("SELECT * FROM runs WHERE idempotency_key = ?").bind(key).first<RunRow>();
+export async function getRunByIdempotencyKey(
+  db: D1Database,
+  key: string,
+  originType = "api_client",
+  originId = "client-api",
+): Promise<RunRow | null> {
+  return db.prepare("SELECT * FROM runs WHERE origin_type = ? AND origin_id = ? AND idempotency_key = ?")
+    .bind(originType, originId, key).first<RunRow>();
 }
 
 export async function insertRun(
@@ -135,12 +144,19 @@ export async function insertRun(
     request: RunRequest;
     requestHash: string;
     idempotencyKey: string | null;
+    originType?: string;
+    originId?: string;
+    retryOf?: string | null;
     correlationId: string;
     requestId: string;
     createdAt: string;
   },
 ): Promise<void> {
-  const { id, request, requestHash, idempotencyKey, correlationId, requestId, createdAt } = input;
+  const {
+    id, request, requestHash, idempotencyKey,
+    originType = "api_client", originId = "client-api", retryOf,
+    correlationId, requestId, createdAt,
+  } = input;
   const initialEvent: RunEventInput = {
     eventId: "system:admission:started",
     type: "run.admitting",
@@ -154,9 +170,9 @@ export async function insertRun(
       INSERT INTO runs (
         id, contract_version, repo_url, git_ref, project_name, status, task_mode,
         publish_mode, request_json, request_hash, created_at, updated_at,
-        idempotency_key, correlation_id, request_id, admission_attempts,
+        idempotency_key, origin_type, origin_id, retry_of, correlation_id, request_id, admission_attempts,
         admission_last_attempt_at
-      ) VALUES (?, ?, ?, ?, ?, 'admitting', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+      ) VALUES (?, ?, ?, ?, ?, 'admitting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
     `).bind(
       id,
       CONTRACT_VERSION,
@@ -170,6 +186,9 @@ export async function insertRun(
       createdAt,
       createdAt,
       idempotencyKey,
+      originType,
+      originId,
+      retryOf ?? null,
       correlationId,
       requestId,
       createdAt,

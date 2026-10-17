@@ -1,2 +1,3 @@
 CLIENT_API_TOKEN=replace-with-a-random-client-token-at-least-32-characters
+KASEKI_SUBMISSION_API_TOKEN=replace-with-a-distinct-kaseki-submission-token-at-least-32-characters
 WORKER_API_TOKEN=replace-with-a-different-random-worker-token-at-least-32-characters
