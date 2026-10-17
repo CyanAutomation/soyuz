@@ -33,6 +33,7 @@ Set distinct production Worker secrets before the first deploy. Apply the initia
 
 ```sh
 npx wrangler secret put CLIENT_API_TOKEN
+npx wrangler secret put KASEKI_SUBMISSION_API_TOKEN
 npx wrangler secret put WORKER_API_TOKEN
 npx wrangler secret put GITHUB_OAUTH_CLIENT_ID
 npx wrangler secret put GITHUB_OAUTH_CLIENT_SECRET
@@ -49,7 +50,7 @@ The `ARTIFACTS` R2 binding stores private run files. Worker uploads are limited 
 
 ## API token configuration
 
-**[AUTH-MINIMUM-01]** Cloudflare secrets are not checked into the repository. Soyuz enforces a 16-character minimum for both API tokens; use distinct random values of at least 32 characters as recommended by `.dev.vars.example`. Use the same `WORKER_API_TOKEN` on the Kaseki callback client and status poller. Do not reuse the client token as the worker token. Soyuz does not expire these static secrets automatically; rotate them in Cloudflare and update clients together. A missing Worker-side key makes protected requests return 503 `AUTHENTICATION_UNAVAILABLE`; an outdated client key returns 401 `UNAUTHORIZED`.
+**[AUTH-MINIMUM-01]** Cloudflare secrets are not checked into the repository. Soyuz enforces a 16-character minimum for API tokens; use distinct random values of at least 32 characters as recommended by `.dev.vars.example`. Use the same `WORKER_API_TOKEN` on the Kaseki callback client and status poller. When Kaseki submission routing is enabled, configure a separate `KASEKI_SUBMISSION_API_TOKEN` and set `KASEKI_SUBMISSION_IDENTITY` to a stable deployment label such as `kaseki-prod`. The scoped token is limited to run creation, canonical retry and cancellation; it must differ from `CLIENT_API_TOKEN`. Do not reuse the client token as the worker token. Soyuz does not expire these static secrets automatically; rotate them in Cloudflare and update clients together. A missing Worker-side key makes protected requests return 503 `AUTHENTICATION_UNAVAILABLE`; an outdated client key returns 401 `UNAUTHORIZED`.
 
 ## Configure external HTTP pull
 
@@ -135,7 +136,7 @@ Do not manually pull or acknowledge the test message while validating the Kaseki
 
 `wrangler.jsonc` declares the Worker entry point, compatibility date, D1 binding and database ID, Queue producer binding, R2 bucket, static dashboard assets, required secret names, observability, and cron triggers for reconciliation and daily retention cleanup. Add the `OAUTH_KV` namespace ID returned during bootstrap. Queue pull mode remains an external consumer configuration. The D1 ID is a resource identifier; account IDs and production credentials are not committed here.
 
-Migration `0002_run_liveness.sql` adds heartbeat and operational-health columns; `0003_run_artifacts.sql` adds run artifact metadata and a pending-plus-ready artifact cap. Apply all pending migrations with the separately authorized `npm run db:migrate:remote` procedure before deploying code that reads them. Never recreate the database or discard run history as a migration repair.
+Migration `0002_run_liveness.sql` adds heartbeat and operational-health columns; `0003_run_artifacts.sql` adds run artifact metadata and a pending-plus-ready artifact cap; `0004_run_origin_retry.sql` adds authenticated run provenance, origin-scoped idempotency and retry lineage. Apply all pending migrations with the separately authorized `npm run db:migrate:remote` procedure before deploying code that reads them. Never recreate the database or discard run history as a migration repair.
 
 Generate runtime and binding types after changing Wrangler bindings:
 

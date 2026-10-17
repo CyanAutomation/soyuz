@@ -7,6 +7,7 @@ import { handleWorkerArtifacts } from "./api/worker-artifacts";
 import { errorResponse, jsonResponse, requestIdFor } from "./api/http";
 import { handleWorkerCallbacks } from "./api/workers";
 import type { Env } from "./env";
+import { DEFAULT_RUN_ORIGIN, type RunOrigin } from "./application/runs";
 import { createSoyuzMcpHandler } from "./mcp/server";
 import { reconcileAdmissions, reconcileStalledRuns } from "./queue/reconcile";
 
@@ -144,16 +145,41 @@ async function handleWorkerRequest(request: Request, env: Env, url: URL, request
 }
 
 async function handleClientRequest(request: Request, env: Env, url: URL, requestId: string): Promise<Response> {
-  if (!isBearerTokenConfigured(env.CLIENT_API_TOKEN)) {
+  const kasekiTokenConfigured = isBearerTokenConfigured(env.KASEKI_SUBMISSION_API_TOKEN);
+  if (kasekiTokenConfigured && env.KASEKI_SUBMISSION_API_TOKEN === env.CLIENT_API_TOKEN) {
+    return errorResponse(requestId, 503, "AUTHENTICATION_UNAVAILABLE", "Kaseki submission authentication must use a credential distinct from the general client API key.");
+  }
+  if (!isBearerTokenConfigured(env.CLIENT_API_TOKEN) && !kasekiTokenConfigured) {
     return errorResponse(requestId, 503, "AUTHENTICATION_UNAVAILABLE", "Client API-key authentication is not configured. Contact the service administrator.");
   }
-  if (!(await hasBearerToken(request, env.CLIENT_API_TOKEN))) {
+  let origin: RunOrigin = DEFAULT_RUN_ORIGIN;
+  let authenticated = false;
+  if (kasekiTokenConfigured && await hasBearerToken(request, env.KASEKI_SUBMISSION_API_TOKEN)) {
+    const path = new URL(request.url).pathname;
+    if (!isKasekiSubmissionRoute(path, request.method)) {
+      return errorResponse(requestId, 403, "INSUFFICIENT_SCOPE", "Kaseki submission credentials are limited to run creation, retry, and cancellation.");
+    }
+    const identity = env.KASEKI_SUBMISSION_IDENTITY?.trim() || "kaseki";
+    if (!/^[A-Za-z0-9_.:-]{1,200}$/.test(identity)) {
+      return errorResponse(requestId, 503, "AUTHENTICATION_UNAVAILABLE", "Kaseki submission identity configuration is invalid.");
+    }
+    origin = { type: "kaseki", id: identity };
+    authenticated = true;
+  } else if (await hasBearerToken(request, env.CLIENT_API_TOKEN)) {
+    authenticated = true;
+  }
+  if (!authenticated) {
     return errorResponse(requestId, 401, "UNAUTHORIZED", "Client API key is missing or invalid. Check that you are using the current client key.");
   }
   const artifactResponse = await handleClientArtifacts(request, env, url, requestId);
   if (artifactResponse) return artifactResponse;
-  const response = await handleClientRuns(request, env, url, requestId);
+  const response = await handleClientRuns(request, env, url, requestId, origin);
   return response ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
+}
+
+function isKasekiSubmissionRoute(path: string, method: string): boolean {
+  if (method === "POST" && path === "/v1/runs") return true;
+  return method === "POST" && /^\/v1\/runs\/[0-9a-f-]{36}\/(retry|cancel)$/i.test(path);
 }
 
 export default {

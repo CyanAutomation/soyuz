@@ -46,7 +46,7 @@ function createFetch({ activeStatus, queueMessages = [], consumers, runStatuses 
     ] } })),
     suffixRoute("https://api.cloudflare.com", "/consumers", "GET", () => json({
       success: true,
-      result: consumers ?? [{ type: "http_pull", dead_letter_queue: "soyuz-runs-dlq" }],
+      result: consumers ?? [{ type: "http_pull", dead_letter_queue: "soyuz-runs-dlq", settings: { max_retries: 3 } }],
     })),
     suffixRoute("https://api.cloudflare.com", "/messages/peek", "POST", () => json({
       success: true,
@@ -157,6 +157,14 @@ describe("production Soyuz smoke check", () => {
 
   it("requires an HTTP pull consumer with a dead-letter queue", async () => {
     const { fetchImpl } = createFetch({ consumers: [{ type: "http_pull", dead_letter_queue: "" }] });
+
+    await expect(runProductionSmoke({ env: env(), fetchImpl })).rejects.toMatchObject({
+      code: "QUEUE_CONSUMER_UNSAFE",
+    });
+  });
+
+  it("requires the HTTP pull consumer to have a finite retry limit", async () => {
+    const { fetchImpl } = createFetch({ consumers: [{ type: "http_pull", dead_letter_queue: "soyuz-runs-dlq", settings: {} }] });
 
     await expect(runProductionSmoke({ env: env(), fetchImpl })).rejects.toMatchObject({
       code: "QUEUE_CONSUMER_UNSAFE",

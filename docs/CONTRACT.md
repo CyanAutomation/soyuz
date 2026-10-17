@@ -14,7 +14,11 @@ Requirement IDs: `RUN-VALIDATE-01`, `RUN-IDEMPOTENCY-01`, `RUN-ADMISSION-01`, `Q
 
 V1 rejects `webhookConfig`. Kaseki's current webhook option can carry a signing secret. Passing it through both the D1 request record and Queue needs a defined secret-storage and webhook-delivery owner first. Direct Kaseki API callers can continue using that option until a separately versioned migration is designed.
 
-Clients may send an RFC UUID in the request's `idempotencyKey`, the `Idempotency-Key` header, or both (if both are sent they must match). For the same key and equivalent normalized execution request, Soyuz returns the existing run with HTTP 200. Reusing a key for different execution input returns 409 `IDEMPOTENCY_KEY_REUSED`. If no key is provided, a retry is not deduplicated across separate requests.
+Clients may send an RFC UUID in the request's `idempotencyKey`, the `Idempotency-Key` header, or both (if both are sent they must match). For the same key and equivalent normalized execution request, Soyuz returns the existing run with HTTP 200. Reusing a key for different execution input returns 409 `IDEMPOTENCY_KEY_REUSED`. After migration `0004_run_origin_retry.sql`, keys are scoped by the authenticated origin. The Kaseki host must persist and reuse its key after an uncertain response.
+
+`POST /v1/runs/:id/retry` accepts `{ "idempotencyKey": "<UUID>" }`. It creates one new run only when the source is `completed` or `failed`; the new run includes `retryOf` with the source UUID. Reusing that retry key replays the same new run. Cancellation and retry can use `KASEKI_SUBMISSION_API_TOKEN`; that token is restricted to create/retry/cancel and must be distinct from `CLIENT_API_TOKEN`.
+
+Each run response includes an `origin` object derived from the matched credential (for example `{ "type": "kaseki", "id": "kaseki-prod" }`) and `retryOf` (null for a non-retry run). Neither field is accepted from the request body. The same trusted origin and retry lineage appear in the read-only dashboard.
 
 Example:
 
@@ -93,6 +97,7 @@ Requirement IDs: `HEALTH-DB-01`, `RUN-READ-REST-01`, `CANCEL-QUEUED-01`, `CANCEL
 | --- | --- | --- |
 | `GET /health` | None | Minimal Worker/D1 health |
 | `POST /v1/runs` | Client | Validate, persist, and enqueue |
+| `POST /v1/runs/:id/retry` | Client or scoped Kaseki | Retry a completed or failed run with a new idempotency key |
 | `GET /v1/runs` | Client | Filtered, cursor-paginated history |
 | `GET /v1/runs/:id` | Client | Canonical run and normalized request |
 | `GET /v1/runs/:id/events` | Client | Append-only event history |
@@ -114,6 +119,6 @@ Requirement IDs: `AUTH-CONFIG-01`, `AUTH-ROTATE-01`, `HTTP-BODY-01`, `ERRORS-01`
 
 Request bodies larger than 96 KiB return 413 `REQUEST_TOO_LARGE`.
 
-Invalid JSON returns 400; structurally invalid run requests return 422; an absent or invalid caller key returns 401; a missing server-side API key returns 503 `AUTHENTICATION_UNAVAILABLE`; unknown runs return 404; idempotency conflicts and invalid lifecycle transitions return 409; temporary D1 or Queue admission problems return 503 with a user-facing message and request ID. Internal stack traces and raw binding errors are not returned. Soyuz keys are static bearer secrets without automatic expiry; rotation or revocation invalidates older values.
+Invalid JSON returns 400; structurally invalid run requests return 422; an absent or invalid caller key returns 401; a valid scoped Kaseki key used outside its create/retry/cancel permissions returns 403 `INSUFFICIENT_SCOPE`; a missing server-side API key returns 503 `AUTHENTICATION_UNAVAILABLE`; unknown runs return 404; idempotency conflicts and invalid lifecycle transitions return 409; temporary D1 or Queue admission problems return 503 with a user-facing message and request ID. Internal stack traces and raw binding errors are not returned. Soyuz keys are static bearer secrets without automatic expiry; rotation or revocation invalidates older values.
 
 The MCP endpoint exposes only `create_run`, `list_runs`, `get_run`, `get_run_events`, and `cancel_run`. It uses the same client bearer credential and shared run operations as REST. `create_run` defaults an omitted `publishMode` to `none`; REST keeps its existing `pr` default. MCP does not expose `/v1/worker/**` lifecycle operations. See [the MCP interface and security boundary](MCP.md).

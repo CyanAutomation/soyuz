@@ -54,6 +54,8 @@ export async function handleWorkerCallbacks(request: Request, env: Env, url: URL
         updatedAt: row.updated_at,
         lastHeartbeatAt: row.last_heartbeat_at,
         operationalHealth: row.operational_health,
+        origin: { type: row.origin_type, id: row.origin_id },
+        retryOf: row.retry_of,
       });
     } catch {
       return errorResponse(requestId, 503, "RUN_READ_UNAVAILABLE", "Soyuz cannot reach its run database to read canonical run state. Retry shortly.");

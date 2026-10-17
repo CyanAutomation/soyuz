@@ -119,7 +119,7 @@ function createSoyuzMcpServer(env: Env, requestInfo?: Request): McpServer {
     const admission = await createRun(env, {
       ...input,
       publishMode: input.publishMode ?? "none",
-    }, requestId);
+    }, requestId, input.idempotencyKey, { type: "mcp", id: "mcp-client" });
     return mcpRunSummary(admission.row);
   }));
 
