@@ -29,6 +29,8 @@ jobs:
 
   validate:
     name: Typecheck, tests, and deployment validation
+    needs: dependency-review
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.dependency-review.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
