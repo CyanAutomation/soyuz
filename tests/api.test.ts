@@ -358,6 +358,7 @@ describe("Soyuz Worker API", () => {
     const html = await consent.text();
     expect(consent.status).toBe(200);
     expect(consent.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(consent.headers.get("content-security-policy")).toContain("form-action 'self' https://github.com");
     expect(consent.headers.get("cache-control")).toBe("no-store");
     expect(html).toContain("Consent &lt;script&gt;alert(1)&lt;/script&gt;");
     expect(html).not.toContain("<script>alert(1)</script>");
@@ -366,15 +367,24 @@ describe("Soyuz Worker API", () => {
 
     const handle = html.match(/name="handle" value="([^"]+)"/)?.[1];
     expect(handle).toBeTruthy();
+    const oauthInfo = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const approval = await handleRequest(new Request("https://soyuz.test/oauth/authorize", {
       method: "POST",
       headers: {
-        cookie: cookieHeader(consent),
+        origin: "null",
+        "sec-fetch-site": "same-origin",
         "content-type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams({ handle: handle!, decision: "approve", scope: "soyuz:read" }),
     }), bindings);
     expect(approval.status).toBe(302);
+    expect(approval.headers.get("x-request-id")).toBeTruthy();
+    expect(oauthInfo).toHaveBeenCalledOnce();
+    const oauthEvent = JSON.parse(String(oauthInfo.mock.calls[0][0]));
+    expect(oauthEvent).toMatchObject({ event: "soyuz.oauth.upstream_redirect", destination: "https://github.com" });
+    expect(JSON.stringify(oauthEvent)).not.toContain(handle);
+    expect(JSON.stringify(oauthEvent)).not.toContain("consent-test-state");
+    oauthInfo.mockRestore();
     const githubAuthorize = new URL(approval.headers.get("location")!);
     expect(githubAuthorize.origin).toBe("https://github.com");
     expect(githubAuthorize.pathname).toBe("/login/oauth/authorize");
