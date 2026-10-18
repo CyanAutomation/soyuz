@@ -2,7 +2,7 @@
 
 ## Local setup
 
-Use Node.js 22 or later. Install dependencies, copy the local variable template, and replace both token values with distinct random strings. Soyuz enforces a minimum of 16 characters; the 32-character example values are a stronger recommendation. Then apply the local D1 migration:
+Use Node.js 22.18 or later. Install dependencies, copy the local variable template, and replace both token values with distinct random strings. Soyuz enforces a minimum of 16 characters; the 32-character example values are a stronger recommendation. Then apply the local D1 migration:
 
 ```sh
 npm install
@@ -78,7 +78,7 @@ Create a GitHub environment named `production` and add these environment secrets
 
 Create `CLOUDFLARE_API_TOKEN` with Workers Editor restricted to the existing `soyuz` Worker. Set a one-year expiry and rotate the token in Cloudflare and GitHub before it expires. Give `CLOUDFLARE_D1_READ_API_TOKEN` D1 Read access only, scoped to the production account and `soyuz-runs` database where Cloudflare supports resource-level restriction. Do not grant D1 Edit to either CI token. Restrict the `production` environment to deployments from `main`; production deployments do not require an approval gate. Keep `CLIENT_API_TOKEN` and `WORKER_API_TOKEN` as Cloudflare Worker secrets, not GitHub repository files. The first deployment creates the Worker and therefore must be done separately with an account administrator. If a Wrangler step fails for missing permissions, record its exact command and Cloudflare error and request only the needed permission.
 
-For an authorized production migration, first verify the target database name and ID in `wrangler.jsonc`, then run `npm run db:migrate:remote` manually. This invokes `wrangler d1 migrations apply soyuz-runs --remote` and requires D1 Edit. The Cloudflare account token interface currently applies D1 Edit account-wide, so use an administrator-approved manual session or another approved migration path; never add this permission to a CI token. After it completes, run `node scripts/verify-production-migrations.mjs` with the read-only account and D1 token environment variables, and confirm the reported migration count before deploying. The CI preflight blocks deployment until history matches.
+For an authorized production migration, first verify the target database name and ID in `wrangler.jsonc`, then run `npm run db:migrate:remote` manually. This invokes `wrangler d1 migrations apply soyuz-runs --remote` and requires D1 Edit. The Cloudflare account token interface currently applies D1 Edit account-wide, so use an administrator-approved manual session or another approved migration path; never add this permission to a CI token. After it completes, run `node scripts/verify-production-migrations.ts` with the read-only account and D1 token environment variables, and confirm the reported migration count before deploying. The CI preflight blocks deployment until history matches.
 
 ## Authorized live acceptance check
 

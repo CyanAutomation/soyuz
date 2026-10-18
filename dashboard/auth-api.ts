@@ -1,4 +1,10 @@
-export async function revokeAccessToken(accessToken, clientId, fetcher = fetch) {
+import { type DashboardFetcher } from "./api.js";
+
+export async function revokeAccessToken(
+  accessToken: string,
+  clientId: string,
+  fetcher: DashboardFetcher = fetch,
+): Promise<void> {
   const response = await fetcher("/oauth/token", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },

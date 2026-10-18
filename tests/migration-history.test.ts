@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareMigrationHistory } from "../scripts/migration-history.mjs";
+import { compareMigrationHistory } from "../scripts/migration-history.ts";
 
 describe("production migration compatibility", () => {
   it("accepts the complete ordered migration history", () => {
