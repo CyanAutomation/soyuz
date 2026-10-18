@@ -1,14 +1,50 @@
-import { fetchJson } from "./api.js";
+import { fetchJson, HttpError } from "./api.js";
 import { revokeAccessToken } from "./auth-api.js";
 import { renderAuthUi } from "./auth-ui.js";
 
-const notice = document.querySelector("#notice");
-const runsSection = document.querySelector("#runs");
-const connectButton = document.querySelector("#connect");
-const accountLabel = document.querySelector("#account");
-const oauthKeys = ["state", "verifier", "clientId", "redirectUri"];
-let accessToken = null;
-let oauthClientId = null;
+interface OAuthRegistration {
+  client_id: string;
+}
+
+interface OAuthTokenResponse {
+  access_token: string;
+}
+
+interface DashboardRunSummary {
+  status: string;
+  runId: string;
+  repoUrl: string;
+  ref: string;
+  createdAt: string;
+}
+
+interface DashboardRunListResponse {
+  runs: DashboardRunSummary[];
+}
+
+interface DashboardRunDetail {
+  outcomeSummary: string | null;
+  taskMode: string;
+  publishMode: string;
+}
+
+interface DashboardArtifact {
+  id: string;
+  name: string;
+  size: number;
+}
+
+interface DashboardArtifactListResponse {
+  artifacts: DashboardArtifact[];
+}
+
+const notice = requiredElement<HTMLElement>("#notice");
+const runsSection = requiredElement<HTMLElement>("#runs");
+const connectButton = requiredElement<HTMLButtonElement>("#connect");
+const accountLabel = requiredElement<HTMLElement>("#account");
+const oauthKeys = ["state", "verifier", "clientId", "redirectUri"] as const;
+let accessToken: string | null = null;
+let oauthClientId: string | null = null;
 
 connectButton.addEventListener("click", () => {
   if (accessToken) void signOut();
@@ -23,7 +59,7 @@ async function connect() {
   notice.textContent = "Starting GitHub sign-in…";
   try {
     const redirectUri = `${location.origin}/dashboard/`;
-    const registration = await fetchJson("/oauth/register", {
+    const registration = await fetchJson<OAuthRegistration>("/oauth/register", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -78,7 +114,7 @@ async function finishSignIn() {
     if (typeof accessToken !== "string" || !accessToken || !oauthClientId) {
       throw new Error("OAuth token response was incomplete");
     }
-    const identity = await apiJson("/dashboard/api/me");
+    const identity = await apiJson<{ githubLogin: string }>("/dashboard/api/me");
     if (typeof identity.githubLogin !== "string") throw new Error("OAuth identity response was invalid");
     clearOAuthState();
     history.replaceState(null, "", "/dashboard/");
@@ -118,7 +154,7 @@ async function signOut() {
   }
 }
 
-function clearLocalSession(message) {
+function clearLocalSession(message: string): void {
   accessToken = null;
   oauthClientId = null;
   runsSection.replaceChildren();
@@ -126,21 +162,21 @@ function clearLocalSession(message) {
   notice.textContent = message;
 }
 
-function oauthStateMatches(params) {
+function oauthStateMatches(params: URLSearchParams): boolean {
   const state = params.get("state");
   return Boolean(state && state === sessionStorage.getItem("soyuz.dashboard.state"));
 }
 
-async function exchangeAuthorizationCode(code) {
-  return fetchJson("/oauth/token", {
+async function exchangeAuthorizationCode(code: string): Promise<OAuthTokenResponse> {
+  return fetchJson<OAuthTokenResponse>("/oauth/token", {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         grant_type: "authorization_code",
         code,
-        client_id: sessionStorage.getItem("soyuz.dashboard.clientId"),
-        redirect_uri: sessionStorage.getItem("soyuz.dashboard.redirectUri"),
-        code_verifier: sessionStorage.getItem("soyuz.dashboard.verifier"),
+        client_id: sessionStorage.getItem("soyuz.dashboard.clientId") ?? "",
+        redirect_uri: sessionStorage.getItem("soyuz.dashboard.redirectUri") ?? "",
+        code_verifier: sessionStorage.getItem("soyuz.dashboard.verifier") ?? "",
         resource: `${location.origin}/`,
       }),
     });
@@ -150,11 +186,11 @@ function clearOAuthState() {
   for (const key of oauthKeys) sessionStorage.removeItem(`soyuz.dashboard.${key}`);
 }
 
-async function loadRuns() {
+async function loadRuns(): Promise<void> {
   const token = accessToken;
   notice.textContent = "Loading recent runs…";
   runsSection.replaceChildren();
-  const result = await apiJson("/dashboard/api/runs?limit=50");
+  const result = await apiJson<DashboardRunListResponse>("/dashboard/api/runs?limit=50");
   if (!token || token !== accessToken) return;
   if (!result.runs.length) {
     notice.textContent = "No runs have been recorded yet.";
@@ -164,7 +200,7 @@ async function loadRuns() {
   for (const run of result.runs) runsSection.append(renderRun(run));
 }
 
-function renderRun(run) {
+function renderRun(run: DashboardRunSummary): HTMLElement {
   const card = document.createElement("article");
   card.className = "run";
   const heading = document.createElement("h2");
@@ -188,13 +224,13 @@ function renderRun(run) {
   return card;
 }
 
-async function loadRunDetails(runId, container) {
+async function loadRunDetails(runId: string, container: HTMLDetailsElement): Promise<void> {
   const token = accessToken;
   if (!token) return;
   try {
     const [detail, artifacts] = await Promise.all([
-      apiJson(`/dashboard/api/runs/${encodeURIComponent(runId)}`),
-      apiJson(`/dashboard/api/runs/${encodeURIComponent(runId)}/artifacts`),
+      apiJson<DashboardRunDetail>(`/dashboard/api/runs/${encodeURIComponent(runId)}`),
+      apiJson<DashboardArtifactListResponse>(`/dashboard/api/runs/${encodeURIComponent(runId)}/artifacts`),
     ]);
     if (token !== accessToken) return;
     appendRunSummary(container, detail);
@@ -206,13 +242,13 @@ async function loadRunDetails(runId, container) {
   }
 }
 
-function appendRunSummary(container, detail) {
+function appendRunSummary(container: HTMLDetailsElement, detail: DashboardRunDetail): void {
   const summary = document.createElement("p");
   summary.textContent = detail.outcomeSummary || `Task mode: ${detail.taskMode}; publish mode: ${detail.publishMode}.`;
   container.append(summary);
 }
 
-function appendRunArtifacts(container, runId, artifacts) {
+function appendRunArtifacts(container: HTMLDetailsElement, runId: string, artifacts: DashboardArtifact[]): void {
   if (!artifacts.length) {
     const empty = document.createElement("p");
     empty.className = "meta";
@@ -226,7 +262,7 @@ function appendRunArtifacts(container, runId, artifacts) {
   container.append(list);
 }
 
-function createArtifactButton(runId, artifact) {
+function createArtifactButton(runId: string, artifact: DashboardArtifact): HTMLButtonElement {
   const button = document.createElement("button");
   button.className = "artifact-link";
   button.type = "button";
@@ -235,7 +271,7 @@ function createArtifactButton(runId, artifact) {
   return button;
 }
 
-async function downloadArtifact(runId, artifact) {
+async function downloadArtifact(runId: string, artifact: DashboardArtifact): Promise<void> {
   const token = accessToken;
   if (!token) return;
   try {
@@ -244,7 +280,7 @@ async function downloadArtifact(runId, artifact) {
       cache: "no-store",
     });
     if (!response.ok) {
-      clearSessionWhenUnauthorized({ status: response.status });
+      clearSessionWhenUnauthorized(new HttpError("download failed", response.status));
       throw new Error("download failed");
     }
     if (token !== accessToken) return;
@@ -261,37 +297,43 @@ async function downloadArtifact(runId, artifact) {
   }
 }
 
-async function apiJson(path) {
+async function apiJson<T = unknown>(path: string): Promise<T> {
   try {
-    return await fetchJson(path, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" });
+    return await fetchJson<T>(path, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" });
   } catch (error) {
     clearSessionWhenUnauthorized(error);
     throw error;
   }
 }
 
-function clearSessionWhenUnauthorized(error) {
-  if (accessToken && (error?.status === 401 || error?.status === 403)) {
+function clearSessionWhenUnauthorized(error: unknown): void {
+  if (accessToken && error instanceof HttpError && (error.status === 401 || error.status === 403)) {
     clearLocalSession("Your Soyuz sign-in expired or access was removed. Sign in again.");
   }
 }
 
-function randomString(byteCount) {
+function randomString(byteCount: number): string {
   const bytes = crypto.getRandomValues(new Uint8Array(byteCount));
   return base64Url(bytes);
 }
 
-async function codeChallenge(verifier) {
+async function codeChallenge(verifier: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
   return base64Url(new Uint8Array(digest));
 }
 
-function base64Url(bytes) {
+function base64Url(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function formatBytes(bytes) {
+function formatBytes(bytes: number): string {
   return bytes < 1_000_000 ? `${Math.ceil(bytes / 1_000)} KB` : `${(bytes / 1_000_000).toFixed(1)} MB`;
+}
+
+function requiredElement<T extends Element>(selector: string): T {
+  const element = document.querySelector<T>(selector);
+  if (!element) throw new Error(`Dashboard is missing required element ${selector}`);
+  return element;
 }

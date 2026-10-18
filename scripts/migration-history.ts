@@ -1,5 +1,15 @@
 /** Compare the repository's ordered migration files with D1's applied history. */
-export function compareMigrationHistory(expected, applied) {
+export interface MigrationHistoryComparison {
+  consistent: boolean;
+  missing: string[];
+  unexpected: string[];
+  outOfOrder: boolean;
+}
+
+export function compareMigrationHistory(
+  expected: readonly string[],
+  applied: readonly string[],
+): MigrationHistoryComparison {
   const expectedSet = new Set(expected);
   const appliedSet = new Set(applied);
   const missing = expected.filter((name) => !appliedSet.has(name));

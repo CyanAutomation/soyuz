@@ -1,10 +1,9 @@
 node_modules/
 .wrangler/
-.stryker-tmp/
-/reports/mutation/
 .dev.vars
 .dev.vars.*
 !.dev.vars.example
 worker-configuration.d.ts
 coverage/
 dist/
+public/dashboard/*.js

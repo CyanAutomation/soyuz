@@ -13,5 +13,11 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "worker-configuration.d.ts", "vitest.config.ts", "vitest.unit.config.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "worker-configuration.d.ts", "vitest.config.ts", "vitest.unit.config.ts"],
+  "exclude": [
+    "tests/dashboard-api.test.ts",
+    "tests/soyuz-production-smoke.test.ts",
+    "tests/migration-history.test.ts",
+    "tests/verify-production-database.test.ts"
+  ]
 }

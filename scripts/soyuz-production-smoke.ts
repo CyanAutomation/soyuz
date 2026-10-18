@@ -5,8 +5,46 @@ const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "admissio
 const MAX_RESPONSE_BYTES = 1_000_000;
 const TASK_PROMPT = "Inspect the repository root and return a short summary of its purpose. Do not modify files, install dependencies, or publish changes.";
 
+type Environment = Record<string, string | undefined>;
+type JsonRecord = Record<string, unknown>;
+
+interface BaseConfig {
+  baseUrl: string;
+  clientToken: string;
+  workerToken: string;
+  queueToken: string;
+  accountId: string;
+  queueId: string;
+}
+
+interface ExecutionConfig {
+  repoUrl: string;
+  idempotencyKey: string;
+  runTimeoutSeconds: number;
+  maxWaitSeconds: number;
+  pollIntervalMs: number;
+}
+
+type SmokeConfig = BaseConfig | (BaseConfig & ExecutionConfig);
+
+interface SmokeResult {
+  status: string;
+  [key: string]: unknown;
+}
+
+interface ProductionSmokeOptions {
+  env?: Environment;
+  fetchImpl?: typeof fetch;
+  execute?: boolean;
+  sleep?: (milliseconds: number) => Promise<void>;
+  now?: () => number;
+  log?: (message: string) => void;
+}
+
 export class SoyuzSmokeError extends Error {
-  constructor(code, safeMessage) {
+  readonly code: string;
+
+  constructor(code: string, safeMessage: string) {
     super(safeMessage);
     this.name = "SoyuzSmokeError";
     this.code = code;
@@ -20,14 +58,14 @@ export async function runProductionSmoke({
   sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   now = () => Date.now(),
   log = (message) => console.log(message),
-} = {}) {
+}: ProductionSmokeOptions = {}): Promise<SmokeResult> {
   const config = readConfig(env, execute);
   const visibleQueueMessages = await runPreflight(config, fetchImpl, log);
-  if (!execute) return { status: "preflight_passed", visibleQueueMessages };
+  if (!execute || !("repoUrl" in config)) return { status: "preflight_passed", visibleQueueMessages };
   return runSmokeExecution(config, fetchImpl, { sleep, now, log, visibleQueueMessages });
 }
 
-async function runPreflight(config, fetchImpl, log) {
+async function runPreflight(config: BaseConfig, fetchImpl: typeof fetch, log: (message: string) => void): Promise<number> {
   await checkWorkerHealth(config, fetchImpl);
   await ensureNoActiveRuns(config, fetchImpl);
   const queueBase = queueApiBase(config);
@@ -38,68 +76,92 @@ async function runPreflight(config, fetchImpl, log) {
   return visibleQueueMessages;
 }
 
-async function checkWorkerHealth(config, fetchImpl) {
+async function checkWorkerHealth(config: BaseConfig, fetchImpl: typeof fetch): Promise<void> {
   const health = await requestJson(fetchImpl, `${config.baseUrl}/health`);
   if (health.status !== "ok" || health.contractVersion !== "1") {
     throw new SoyuzSmokeError("WORKER_UNHEALTHY", "Soyuz /health did not report a healthy contract-v1 Worker.");
   }
 }
 
-async function ensureNoActiveRuns(config, fetchImpl) {
+async function ensureNoActiveRuns(config: BaseConfig, fetchImpl: typeof fetch): Promise<void> {
   for (const status of ACTIVE_STATUSES) {
     const page = await requestJson(fetchImpl, `${config.baseUrl}/v1/runs?status=${encodeURIComponent(status)}&limit=1`, {
       headers: { authorization: `Bearer ${config.clientToken}` },
     });
-    if (!Array.isArray(page.data?.runs)) throw new SoyuzSmokeError("RUN_LIST_INVALID", "Soyuz returned an invalid active-run list.");
-    if (page.data.runs.length > 0) {
+    const data = isRecord(page.data) ? page.data : undefined;
+    if (!data || !Array.isArray(data.runs)) throw new SoyuzSmokeError("RUN_LIST_INVALID", "Soyuz returned an invalid active-run list.");
+    if (data.runs.length > 0) {
       throw new SoyuzSmokeError("ACTIVE_RUNS_PRESENT", "Active Soyuz runs exist; review them before starting a smoke run.");
     }
   }
 }
 
-function queueApiBase(config) {
+function queueApiBase(config: BaseConfig): string {
   return `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/queues/${config.queueId}`;
 }
 
-async function ensureSafeQueueConsumer(fetchImpl, queueBase, queueHeaders) {
+async function ensureSafeQueueConsumer(
+  fetchImpl: typeof fetch,
+  queueBase: string,
+  queueHeaders: { authorization: string },
+): Promise<void> {
   const consumerResponse = await requestJson(fetchImpl, `${queueBase}/consumers`, { headers: queueHeaders });
   if (!consumerResponse.success || !Array.isArray(consumerResponse.result)) {
     throw new SoyuzSmokeError("QUEUE_CONSUMER_READ_FAILED", "Cloudflare did not return Queue consumer configuration.");
   }
-  const safePullConsumer = consumerResponse.result.some((consumer) =>
-    consumer?.type === "http_pull"
-    && typeof consumer.dead_letter_queue === "string"
-    && consumer.dead_letter_queue.trim().length > 0
-    && Number.isInteger(consumer.settings?.max_retries)
-    && consumer.settings.max_retries >= 1
-    && consumer.settings.max_retries <= 100);
+  const safePullConsumer = consumerResponse.result.some((consumer) => {
+    if (!isRecord(consumer)) return false;
+    const settings = isRecord(consumer.settings) ? consumer.settings : undefined;
+    return consumer.type === "http_pull"
+      && typeof consumer.dead_letter_queue === "string"
+      && consumer.dead_letter_queue.trim().length > 0
+      && typeof settings?.max_retries === "number"
+      && Number.isInteger(settings.max_retries)
+      && settings.max_retries >= 1
+      && settings.max_retries <= 100;
+  });
   if (!safePullConsumer) {
     throw new SoyuzSmokeError("QUEUE_CONSUMER_UNSAFE", "Soyuz Queue needs an HTTP pull consumer with a finite retry limit and a dead-letter queue.");
   }
 }
 
-async function countVisibleQueueMessages(fetchImpl, queueBase, queueHeaders) {
+async function countVisibleQueueMessages(
+  fetchImpl: typeof fetch,
+  queueBase: string,
+  queueHeaders: { authorization: string },
+): Promise<number> {
   const peek = await requestJson(fetchImpl, `${queueBase}/messages/peek`, {
     method: "POST",
     headers: queueHeaders,
     body: JSON.stringify({ batch_size: 10 }),
   });
-  if (!peek.success || !Array.isArray(peek.result?.messages)) {
+  const result = isRecord(peek.result) ? peek.result : undefined;
+  if (!peek.success || !result || !Array.isArray(result.messages)) {
     throw new SoyuzSmokeError("QUEUE_PEEK_FAILED", "Cloudflare Queue peek did not return a message list.");
   }
-  const visibleQueueMessages = peek.result.messages.length;
+  const visibleQueueMessages = result.messages.length;
   if (visibleQueueMessages > 0) {
     throw new SoyuzSmokeError("QUEUE_NOT_EMPTY", "Soyuz Queue has visible messages; review ownership before submitting a smoke run.");
   }
   return visibleQueueMessages;
 }
 
-async function runSmokeExecution(config, fetchImpl, { sleep, now, log, visibleQueueMessages }) {
+async function runSmokeExecution(
+  config: BaseConfig & ExecutionConfig,
+  fetchImpl: typeof fetch,
+  options: {
+    sleep: (milliseconds: number) => Promise<void>;
+    now: () => number;
+    log: (message: string) => void;
+    visibleQueueMessages: number;
+  },
+): Promise<SmokeResult> {
+  const { sleep, now, log, visibleQueueMessages } = options;
   const runId = await submitSmokeRun(config, fetchImpl, log);
   return pollSmokeRun(config, fetchImpl, runId, { sleep, now, log, visibleQueueMessages });
 }
 
-async function submitSmokeRun(config, fetchImpl, log) {
+async function submitSmokeRun(config: BaseConfig & ExecutionConfig, fetchImpl: typeof fetch, log: (message: string) => void): Promise<string> {
   const submission = await requestJson(fetchImpl, `${config.baseUrl}/v1/runs`, {
     method: "POST",
     headers: {
@@ -116,7 +178,7 @@ async function submitSmokeRun(config, fetchImpl, log) {
       idempotencyKey: config.idempotencyKey,
     }),
   }, [200, 202]);
-  const runId = submission.data?.id;
+  const runId = isRecord(submission.data) ? submission.data.id : undefined;
   if (typeof runId !== "string" || !isUuid(runId)) {
     throw new SoyuzSmokeError("RUN_ID_INVALID", "Soyuz did not return a valid run ID. Reuse the same idempotency key when checking the outcome.");
   }
@@ -124,7 +186,18 @@ async function submitSmokeRun(config, fetchImpl, log) {
   return runId;
 }
 
-async function pollSmokeRun(config, fetchImpl, runId, { sleep, now, log, visibleQueueMessages }) {
+async function pollSmokeRun(
+  config: BaseConfig & ExecutionConfig,
+  fetchImpl: typeof fetch,
+  runId: string,
+  options: {
+    sleep: (milliseconds: number) => Promise<void>;
+    now: () => number;
+    log: (message: string) => void;
+    visibleQueueMessages: number;
+  },
+): Promise<SmokeResult> {
+  const { sleep, now, log, visibleQueueMessages } = options;
   const deadline = now() + config.maxWaitSeconds * 1_000;
   let lastStatus = "unknown";
   while (now() < deadline) {
@@ -136,8 +209,8 @@ async function pollSmokeRun(config, fetchImpl, runId, { sleep, now, log, visible
         headers: { authorization: `Bearer ${config.workerToken}` },
       }),
     ]);
-    const run = runResponse.data;
-    const workerRun = workerResponse.data;
+    const run = isRecord(runResponse.data) ? runResponse.data : undefined;
+    const workerRun = isRecord(workerResponse.data) ? workerResponse.data : undefined;
     if (!run || typeof run.status !== "string" || workerRun?.runId !== runId) {
       throw new SoyuzSmokeError("RUN_READ_INVALID", "Soyuz returned an invalid run status response.");
     }
@@ -145,8 +218,9 @@ async function pollSmokeRun(config, fetchImpl, runId, { sleep, now, log, visible
 
     if (TERMINAL_STATUSES.has(run.status) && workerRun.status === run.status) {
       if (run.status === "completed") return verifyCompletedSmokeRun(config, fetchImpl, run, runId, log, visibleQueueMessages);
-      log(`Smoke run ended in ${run.status} (class=${run.failureClass ?? "unknown"}): ${runId}`);
-      return { status: run.status, runId, failureClass: run.failureClass ?? null, visibleQueueMessages };
+      const failureClass = typeof run.failureClass === "string" ? run.failureClass : null;
+      log(`Smoke run ended in ${run.status} (class=${failureClass ?? "unknown"}): ${runId}`);
+      return { status: run.status, runId, failureClass, visibleQueueMessages };
     }
 
     const remaining = deadline - now();
@@ -157,22 +231,34 @@ async function pollSmokeRun(config, fetchImpl, runId, { sleep, now, log, visible
   return { status: "timed_out", runId, lastStatus, visibleQueueMessages };
 }
 
-async function verifyCompletedSmokeRun(config, fetchImpl, run, runId, log, visibleQueueMessages) {
+async function verifyCompletedSmokeRun(
+  config: BaseConfig,
+  fetchImpl: typeof fetch,
+  run: JsonRecord,
+  runId: string,
+  log: (message: string) => void,
+  visibleQueueMessages: number,
+): Promise<SmokeResult> {
   const eventsResponse = await requestJson(fetchImpl, `${config.baseUrl}/v1/runs/${encodeURIComponent(runId)}/events?after=0&limit=100`, {
     headers: { authorization: `Bearer ${config.clientToken}` },
   });
-  const types = new Set(eventsResponse.data?.events?.map((event) => event.type));
+  const eventData = isRecord(eventsResponse.data) ? eventsResponse.data : undefined;
+  const eventTypes = Array.isArray(eventData?.events)
+    ? eventData.events.flatMap((event) => isRecord(event) && typeof event.type === "string" ? [event.type] : [])
+    : [];
+  const types = new Set(eventTypes);
   if (!types.has("run.started") || !types.has("run.completed")) {
     throw new SoyuzSmokeError("CALLBACKS_NOT_VERIFIED", "Run completed without both start and completion events.");
   }
-  if (run.publishMode !== "none" || run.result?.publishedUrl) {
+  const result = isRecord(run.result) ? run.result : undefined;
+  if (run.publishMode !== "none" || result?.publishedUrl) {
     throw new SoyuzSmokeError("UNEXPECTED_PUBLICATION", "Smoke run did not preserve the no-publication setting.");
   }
   log(`Smoke run completed: ${runId}; start/completion callbacks recorded; no publication occurred.`);
   return { status: "completed", runId, visibleQueueMessages };
 }
 
-function readConfig(env, execute) {
+function readConfig(env: Environment, execute: boolean): SmokeConfig {
   const baseUrl = parseBaseUrl(required(env, "SOYUZ_BASE_URL"));
   const clientToken = requiredToken(env, "CLIENT_API_TOKEN");
   const workerToken = requiredToken(env, "SOYUZ_WORKER_API_TOKEN");
@@ -183,11 +269,11 @@ function readConfig(env, execute) {
     throw new SoyuzSmokeError("CONFIG_INVALID", "CLOUDFLARE_ACCOUNT_ID and SOYUZ_QUEUE_ID must be 32-character hexadecimal IDs.");
   }
 
-  const config = { baseUrl, clientToken, workerToken, queueToken, accountId, queueId };
+  const config: BaseConfig = { baseUrl, clientToken, workerToken, queueToken, accountId, queueId };
   return execute ? { ...config, ...readExecutionConfig(env) } : config;
 }
 
-function parseBaseUrl(baseUrlRaw) {
+function parseBaseUrl(baseUrlRaw: string): string {
   try {
     const parsed = new URL(baseUrlRaw);
     if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname))) {
@@ -200,7 +286,7 @@ function parseBaseUrl(baseUrlRaw) {
   }
 }
 
-function readExecutionConfig(env) {
+function readExecutionConfig(env: Environment): ExecutionConfig {
   if (env.SOYUZ_SMOKE_ACK_EXECUTION !== "yes") {
     throw new SoyuzSmokeError("EXECUTION_NOT_ACKNOWLEDGED", "Set SOYUZ_SMOKE_ACK_EXECUTION=yes only after authorizing one bounded, non-publishing run.");
   }
@@ -215,7 +301,7 @@ function readExecutionConfig(env) {
   return { repoUrl, idempotencyKey, runTimeoutSeconds, maxWaitSeconds, pollIntervalMs };
 }
 
-function validateRepositoryUrl(repoUrl) {
+function validateRepositoryUrl(repoUrl: string): void {
   try {
     const parsed = new URL(repoUrl);
     if (parsed.protocol !== "https:" || parsed.username || parsed.password) throw new Error("url");
@@ -224,7 +310,12 @@ function validateRepositoryUrl(repoUrl) {
   }
 }
 
-async function requestJson(fetchImpl, url, init = {}, acceptedStatuses = [200]) {
+async function requestJson(
+  fetchImpl: typeof fetch,
+  url: string,
+  init: RequestInit = {},
+  acceptedStatuses: readonly number[] = [200],
+): Promise<JsonRecord> {
   let response;
   try {
     response = await fetchImpl(url, { ...init, redirect: "error", signal: AbortSignal.timeout(15_000) });
@@ -232,26 +323,28 @@ async function requestJson(fetchImpl, url, init = {}, acceptedStatuses = [200]) 
     throw new SoyuzSmokeError("REQUEST_FAILED", "A readiness request could not reach Soyuz or Cloudflare.");
   }
   const text = await readResponseText(response);
-  let data;
+  let data: unknown;
   try {
     data = JSON.parse(text);
   } catch {
     throw new SoyuzSmokeError("RESPONSE_INVALID", "A readiness endpoint returned invalid JSON.");
   }
+  if (!isRecord(data)) throw new SoyuzSmokeError("RESPONSE_INVALID", "A readiness endpoint returned invalid JSON.");
   if (!acceptedStatuses.includes(response.status)) {
-    const code = typeof data.error?.code === "string" ? data.error.code : `HTTP_${response.status}`;
+    const error = isRecord(data.error) ? data.error : undefined;
+    const code = typeof error?.code === "string" ? error.code : `HTTP_${response.status}`;
     throw new SoyuzSmokeError("REQUEST_REJECTED", `A readiness endpoint rejected the request (${code}).`);
   }
   return data;
 }
 
-function required(env, name) {
+function required(env: Environment, name: string): string {
   const value = env[name]?.trim();
   if (!value) throw new SoyuzSmokeError("CONFIG_INVALID", `${name} is required.`);
   return value;
 }
 
-function requiredToken(env, name) {
+function requiredToken(env: Environment, name: string): string {
   const value = env[name];
   if (typeof value !== "string" || value.length < 16 || value.length > 1_024 || value.trim() !== value) {
     throw new SoyuzSmokeError("CONFIG_INVALID", `${name} must be a non-whitespace token between 16 and 1024 characters.`);
@@ -259,7 +352,7 @@ function requiredToken(env, name) {
   return value;
 }
 
-async function readResponseText(response) {
+async function readResponseText(response: Response): Promise<string> {
   const reader = response.body?.getReader();
   if (!reader) return "";
 
@@ -289,7 +382,7 @@ async function readResponseText(response) {
   return Buffer.concat(chunks, byteLength).toString("utf8");
 }
 
-function boundedInteger(value, fallback, minimum, maximum, name) {
+function boundedInteger(value: string | undefined, fallback: number, minimum: number, maximum: number, name: string): number {
   const parsed = value === undefined || value === "" ? fallback : Number(value);
   if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
     throw new SoyuzSmokeError("CONFIG_INVALID", `${name} must be an integer from ${minimum} to ${maximum}.`);
@@ -297,13 +390,22 @@ function boundedInteger(value, fallback, minimum, maximum, name) {
   return parsed;
 }
 
-function isUuid(value) {
+function isUuid(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-export async function runSmokeCli(args, { run = runProductionSmoke, writeError = (message) => console.error(message) } = {}) {
+export async function runSmokeCli(
+  args: string[],
+  {
+    run = runProductionSmoke,
+    writeError = (message) => console.error(message),
+  }: {
+    run?: (options: { execute: boolean }) => Promise<SmokeResult>;
+    writeError?: (message: string) => void;
+  } = {},
+): Promise<number> {
   if (args.some((argument) => argument !== "--run")) {
-    writeError("Usage: node scripts/soyuz-production-smoke.mjs [--run]");
+    writeError("Usage: node scripts/soyuz-production-smoke.ts [--run]");
     return 2;
   }
   try {
@@ -317,11 +419,15 @@ export async function runSmokeCli(args, { run = runProductionSmoke, writeError =
   }
 }
 
-function isSuccessfulSmokeResult(result) {
+function isSuccessfulSmokeResult(result: SmokeResult): boolean {
   return result.status === "preflight_passed" || result.status === "completed";
 }
 
-async function main() {
+function isRecord(value: unknown): value is JsonRecord {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+async function main(): Promise<void> {
   process.exitCode = await runSmokeCli(process.argv.slice(2));
 }
 
