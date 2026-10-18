@@ -197,7 +197,7 @@ describe("Soyuz OAuth policy", () => {
     expect(await bindConsentToSameOriginRequest(crossSite, handle, env)).toBe(crossSite);
   });
 
-  it("does not duplicate a malformed cookie entry that already names the consent binding", async () => {
+  it("[OAUTH-CONSENT-COOKIE-01] does not duplicate a malformed cookie entry that names the consent binding", async () => {
     const handle = "opaque-private-consent-handle";
     const env = { SOYUZ_PUBLIC_URL: "https://soyuz.example.test" };
     const headers = { origin: "null", "sec-fetch-site": "same-origin" };
