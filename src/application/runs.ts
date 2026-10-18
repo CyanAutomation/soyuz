@@ -51,6 +51,7 @@ export interface RunEventsPage {
   run: RunRow;
   events: RunEventRow[];
   nextAfter: number;
+  hasMore: boolean;
 }
 
 export interface RunOrigin {
@@ -131,6 +132,9 @@ export async function retryRun(
 
   const source = await readRun(env, sourceRunId);
   assertRunOrigin(source, origin);
+  if (source.request_redacted_at) {
+    throw new RunApplicationError(409, "RUN_REQUEST_REDACTED", "The source run request was redacted after its retention period and cannot be retried");
+  }
   if (!isTerminalStatus(source.status)) {
     throw new RunApplicationError(409, "RUN_NOT_RETRYABLE", "Only terminal runs can be retried", { runId: sourceRunId, status: source.status });
   }
@@ -336,8 +340,10 @@ export async function readRunEventsPage(
   try {
     const run = await getRunRow(env.DB, runId);
     if (!run) throw new RunApplicationError(404, "RUN_NOT_FOUND", "Run was not found");
-    const events = await listRunEvents(env.DB, runId, after, limit);
-    return { run, events, nextAfter: events.at(-1)?.sequence ?? after };
+    const rows = await listRunEvents(env.DB, runId, after, limit + 1);
+    const hasMore = rows.length > limit;
+    const events = rows.slice(0, limit);
+    return { run, events, nextAfter: events.at(-1)?.sequence ?? after, hasMore };
   } catch (error) {
     if (error instanceof RunApplicationError) throw error;
     throw new RunApplicationError(503, "RUN_EVENTS_UNAVAILABLE", "Soyuz cannot reach its run database to read run events. Retry shortly.", undefined, true);

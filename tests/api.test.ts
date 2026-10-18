@@ -5,6 +5,7 @@ import type { Env } from "../src/env";
 import { insertRun, getRun, RunTransitionError, transitionRun } from "../src/db/runs";
 import { reconcileAdmissions, reconcileStalledRuns } from "../src/queue/reconcile";
 import { purgeExpiredArtifacts } from "../src/api/artifacts";
+import { purgeExpiredRunRequests } from "../src/api/retention";
 import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
 import { oauthProviderOptions } from "../src/auth/oauth";
 
@@ -404,6 +405,34 @@ describe("Soyuz Worker API", () => {
     expect(revoked.body.error.code).toBe("ACCESS_DENIED");
   });
 
+  it("[OAUTH-07] includes run liveness fields in dashboard list summaries", async () => {
+    const { bindings } = testEnv({ oauth: true });
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const heartbeat = "2026-10-18T12:00:00.000Z";
+    await bindings.DB.prepare("UPDATE runs SET operational_health = 'suspect_stalled', last_heartbeat_at = ? WHERE id = ?")
+      .bind(heartbeat, runId).run();
+    const accessToken = await createOAuthAccessToken(bindings);
+
+    const response = await call(bindings, "/dashboard/api/runs?limit=50", { token: accessToken });
+    expect(response.response.status).toBe(200);
+    expect(response.body.data.runs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ runId, stage: null, operationalHealth: "suspect_stalled", lastHeartbeatAt: heartbeat }),
+    ]));
+  });
+
+  it("[DASHBOARD-SECURITY-01] adds browser security headers to dashboard assets", async () => {
+    const { bindings } = testEnv();
+    bindings.ASSETS = { fetch: async () => new Response("dashboard", { headers: { "content-type": "text/html; charset=utf-8" } }) } as unknown as Env["ASSETS"];
+
+    const response = await handleRequest(new Request("https://soyuz.test/dashboard/"), bindings);
+    expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("x-frame-options")).toBe("DENY");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
   it("[OAUTH-05] returns the authenticated GitHub login from the protected dashboard identity endpoint", async () => {
     const { bindings } = testEnv({ oauth: true });
     const credentials = await createOAuthCredentials(bindings);
@@ -470,6 +499,22 @@ describe("Soyuz Worker API", () => {
     ]));
   });
 
+  it("[RUN-EVENT-PAGE-01] reports whether another page of run events remains", async () => {
+    const { bindings } = testEnv({ oauth: true });
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const accessToken = await createOAuthAccessToken(bindings);
+
+    const first = await call(bindings, `/dashboard/api/runs/${runId}/events?limit=1`, { token: accessToken });
+    expect(first.body.data.events).toHaveLength(1);
+    expect(first.body.data.hasMore).toBe(true);
+
+    const second = await call(bindings, `/dashboard/api/runs/${runId}/events?after=${first.body.data.nextAfter}&limit=1`, { token: accessToken });
+    expect(second.body.data.events).toHaveLength(1);
+    expect(second.body.data.hasMore).toBe(false);
+    expect(second.body.data.nextAfter).toBeGreaterThan(first.body.data.nextAfter);
+  });
+
   it("[OAUTH-02] keeps the dashboard read-only and requires write scope for MCP mutations", async () => {
     const { bindings } = testEnv({ oauth: true });
     const accessToken = await createOAuthAccessToken(bindings);
@@ -498,6 +543,7 @@ describe("Soyuz Worker API", () => {
     expect(flow.consent.status).toBe(200);
     expect(flow.consent.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
     expect(flow.consent.headers.get("content-security-policy")).toContain("form-action 'self' https://github.com");
+    expect(flow.consent.headers.get("content-security-policy")).toContain("style-src 'self'");
     expect(flow.consent.headers.get("cache-control")).toBe("no-store");
     expect(flow.html).toContain("Consent &lt;script&gt;alert(1)&lt;/script&gt;");
     expect(flow.html).not.toContain("<script>alert(1)</script>");
@@ -589,6 +635,51 @@ describe("Soyuz Worker API", () => {
     expect(rotatedWorkerResponse.body.error.message).toContain("current worker key");
   });
 
+  it("[AUTH-ROTATE-GRACE-01] accepts configured previous client and worker keys until their expiry", async () => {
+    const { bindings } = testEnv();
+    const run = await submit(bindings);
+    const runId = run.body.data.id as string;
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1_000).toISOString();
+    const rotatedClient = {
+      ...bindings,
+      CLIENT_API_TOKEN: "rotated-client-key-value-long-enough",
+      CLIENT_API_TOKEN_PREVIOUS: CLIENT_TOKEN,
+      CLIENT_API_TOKEN_PREVIOUS_EXPIRES_AT: expiresAt,
+    };
+    const previousClient = await call(rotatedClient, "/v1/runs", { token: CLIENT_TOKEN });
+    expect(previousClient.response.status).toBe(200);
+
+    const rotatedWorker = {
+      ...bindings,
+      WORKER_API_TOKEN: "rotated-worker-key-value-long-enough",
+      WORKER_API_TOKEN_PREVIOUS: WORKER_TOKEN,
+      WORKER_API_TOKEN_PREVIOUS_EXPIRES_AT: expiresAt,
+    };
+    const previousWorker = await call(rotatedWorker, `/v1/worker/runs/${runId}`, { token: WORKER_TOKEN });
+    expect(previousWorker.response.status).toBe(200);
+
+    const expiredClient = {
+      ...rotatedClient,
+      CLIENT_API_TOKEN_PREVIOUS_EXPIRES_AT: new Date(Date.now() - 1_000).toISOString(),
+    };
+    const rejectedClient = await call(expiredClient, "/v1/runs", { token: CLIENT_TOKEN });
+    expect(rejectedClient.response.status).toBe(401);
+
+    const rotatedKaseki = {
+      ...bindings,
+      KASEKI_SUBMISSION_API_TOKEN: "rotated-kaseki-key-value-long-enough",
+      KASEKI_SUBMISSION_API_TOKEN_PREVIOUS: KASEKI_TOKEN,
+      KASEKI_SUBMISSION_API_TOKEN_PREVIOUS_EXPIRES_AT: expiresAt,
+    };
+    const previousKaseki = await call(rotatedKaseki, "/v1/runs", {
+      method: "POST",
+      token: KASEKI_TOKEN,
+      headers: { "Idempotency-Key": "00000000-0000-4000-8000-000000000095" },
+      body: validRequest(),
+    });
+    expect(previousKaseki.response.status).toBe(202);
+  });
+
   it("[HEALTH-DB-01] explains when the run database endpoint is unavailable", async () => {
     const { bindings } = testEnv();
     const disconnected = {
@@ -605,6 +696,60 @@ describe("Soyuz Worker API", () => {
     expect(history.response.status).toBe(503);
     expect(history.body.error.code).toBe("RUN_LIST_UNAVAILABLE");
     expect(history.body.error.message).toContain("cannot reach its run database");
+  });
+
+  it("[HEALTH-SCHEMA-01] checks dashboard liveness columns before reporting ready", async () => {
+    const { bindings } = testEnv();
+    const statements: string[] = [];
+    const database = {
+      prepare(sql: string) {
+        statements.push(sql);
+        return bindings.DB.prepare(sql);
+      },
+    } as unknown as Env["DB"];
+    const response = await handleRequest(new Request("https://soyuz.test/health"), { ...bindings, DB: database });
+
+    expect(response.status).toBe(200);
+    expect(statements.some((sql) => sql.includes("last_heartbeat_at") && sql.includes("operational_health"))).toBe(true);
+  });
+
+  it("[RETENTION-REQUEST-01] redacts old terminal request payloads while keeping run and idempotency history", async () => {
+    const { bindings } = testEnv();
+    const old = await submit(bindings, { taskPrompt: "Private prompt older than the retention window" }, "00000000-0000-4000-8000-000000000091");
+    const recent = await submit(bindings, { taskPrompt: "Recent prompt remains available" }, "00000000-0000-4000-8000-000000000092");
+    const active = await submit(bindings, { taskPrompt: "Active prompt remains available" }, "00000000-0000-4000-8000-000000000093");
+    const oldRunId = old.body.data.id as string;
+    const recentRunId = recent.body.data.id as string;
+    const activeRunId = active.body.data.id as string;
+    await bindings.DB.batch([
+      bindings.DB.prepare("UPDATE runs SET status = 'completed', completed_at = '2025-10-17T00:00:00.000Z' WHERE id = ?").bind(oldRunId),
+      bindings.DB.prepare("UPDATE runs SET status = 'completed', completed_at = '2025-10-19T00:00:00.000Z' WHERE id = ?").bind(recentRunId),
+    ]);
+
+    await purgeExpiredRunRequests(bindings, new Date("2026-10-18T00:00:00.000Z"));
+
+    const oldRow = await bindings.DB.prepare("SELECT request_json, request_redacted_at, idempotency_key FROM runs WHERE id = ?")
+      .bind(oldRunId).first<{ request_json: string; request_redacted_at: string | null; idempotency_key: string | null }>();
+    const recentRow = await bindings.DB.prepare("SELECT request_json, request_redacted_at FROM runs WHERE id = ?")
+      .bind(recentRunId).first<{ request_json: string; request_redacted_at: string | null }>();
+    const activeRow = await bindings.DB.prepare("SELECT request_json, request_redacted_at FROM runs WHERE id = ?")
+      .bind(activeRunId).first<{ request_json: string; request_redacted_at: string | null }>();
+
+    expect(JSON.parse(oldRow!.request_json)).toMatchObject({ repoUrl: "https://github.com/example/project", taskPrompt: "[redacted after 365 days]" });
+    expect(oldRow!.request_redacted_at).toBe("2026-10-18T00:00:00.000Z");
+    expect(oldRow!.idempotency_key).toBe("00000000-0000-4000-8000-000000000091");
+    expect(JSON.parse(recentRow!.request_json).taskPrompt).toBe("Recent prompt remains available");
+    expect(recentRow!.request_redacted_at).toBeNull();
+    expect(JSON.parse(activeRow!.request_json).taskPrompt).toBe("Active prompt remains available");
+    expect(activeRow!.request_redacted_at).toBeNull();
+
+    const retry = await call(bindings, `/v1/runs/${oldRunId}/retry`, {
+      method: "POST",
+      token: CLIENT_TOKEN,
+      body: { idempotencyKey: "00000000-0000-4000-8000-000000000094" },
+    });
+    expect(retry.response.status).toBe(409);
+    expect(retry.body.error.code).toBe("RUN_REQUEST_REDACTED");
   });
 
   it("[RUN-ADMISSION-01/QUEUE-MESSAGE-01/CONTRACT-VERSION-01/WORKER-READ-01] persists accepted runs and publishes a versioned Queue message", async () => {

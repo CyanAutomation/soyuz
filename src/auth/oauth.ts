@@ -128,16 +128,18 @@ export function renderConsentPage(details: ConsentDescription, handle: string): 
     ? `Published by <strong>${escapeHtml(details.clientDomain)}</strong>.`
     : "This app registered itself; its name is not verified.";
   const scopes = details.scope.map((scope) =>
-    `<label><input type="checkbox" name="scope" value="${escapeHtml(scope)}" checked> ${escapeHtml(scope)}</label>`,
-  ).join("<br>");
+    `<label class="consent-scope"><input type="checkbox" name="scope" value="${escapeHtml(scope)}" checked><span>${escapeHtml(scope)}</span></label>`,
+  ).join("");
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize ${clientName}</title></head>
-<body><main><h1>Allow ${clientName} to access Soyuz?</h1>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize ${clientName}</title><link rel="stylesheet" href="/dashboard/style.css"></head>
+<body><main class="consent-main"><section class="consent-card" aria-labelledby="consent-title">
+<p class="eyebrow">Soyuz · Run Dashboard</p><h1 id="consent-title">Allow ${clientName} to access Soyuz?</h1>
 <p>${domain} Access will be sent to <strong>${escapeHtml(details.redirectHost)}</strong>.</p>
-${details.redirectIsLoopback ? "<p><strong>This sends access to an app on your computer.</strong> Continue only if you just started signing in from it.</p>" : ""}
-<p>GitHub will only be asked to confirm your account identity with the read:user permission.</p>
-<form method="post"><input type="hidden" name="handle" value="${escapeHtml(handle)}">${scopes}<p>
-<button name="decision" value="approve">Allow</button> <button name="decision" value="deny">Deny</button></p></form></main></body></html>`;
+${details.redirectIsLoopback ? "<p class=\"consent-warning\"><strong>This sends access to an app on your computer.</strong> Continue only if you just started signing in from it.</p>" : ""}
+<p class="consent-provider">GitHub will only be asked to confirm your account identity with the read:user permission.</p>
+<form method="post" class="consent-form"><input type="hidden" name="handle" value="${escapeHtml(handle)}"><fieldset class="consent-scopes"><legend>Soyuz permissions</legend>${scopes}</fieldset>
+<div class="consent-actions"><button class="consent-allow" name="decision" value="approve">Allow</button><button class="consent-deny" name="decision" value="deny">Deny</button></div></form>
+</section></main></body></html>`;
 }
 
 async function handleOAuthPageRequest(request: Request, env: Env, _context: ExecutionContext): Promise<Response> {
@@ -158,7 +160,7 @@ async function handleAuthorizationPage(request: Request, env: Env, helpers: OAut
       const headers = new Headers(transaction.headers);
       headers.set("content-type", "text/html; charset=utf-8");
       headers.set("cache-control", "no-store");
-      headers.set("content-security-policy", "default-src 'none'; form-action 'self' https://github.com; base-uri 'none'; frame-ancestors 'none'");
+      headers.set("content-security-policy", "default-src 'none'; style-src 'self'; form-action 'self' https://github.com; base-uri 'none'; frame-ancestors 'none'");
       headers.set("referrer-policy", "no-referrer");
       headers.set("x-content-type-options", "nosniff");
       return new Response(renderConsentPage(details, transaction.handle), { headers });
