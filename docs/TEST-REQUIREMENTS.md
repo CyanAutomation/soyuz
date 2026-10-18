@@ -57,14 +57,11 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 
 ## Internal helper invariants
 
-These tests protect implementation helpers and are useful for direct callers and mutation checks, but they do not represent behavior that a client can exercise through the JSON API. Keep them separate from user-facing requirement coverage when scoring the suite.
-
-Run `npm run test:mutation:unit` to measure how well the focused helper and lifecycle unit tests detect mutations. This pilot is not part of the regular CI test command.
-
-The initial local run reported a 90.63% mutation score across 113 mutants. It also reported three timeouts, 49 type-check errors, and six survivors. Five survivors are static transition-array mutants: replacing a transition list with an empty list directly makes the transition test fail, although Stryker reports those mutants as surviving. Treat this score as a baseline signal, not a gate, until the Vitest runner's static-mutant behavior is resolved. The remaining survivor changes UUID error-message text, which is not part of the public contract.
+These tests protect implementation helpers and direct callers, but they do not represent behavior that a client can exercise through the JSON API. Keep them separate from user-facing requirement coverage when scoring the suite.
 
 | ID | Internal invariant |
 | --- | --- |
+| `DEPLOY-D1-IDENTITY-01` | The deployment preflight confirms the configured D1 binding matches Cloudflare's database ID and name using the read-only token. |
 | `DASHBOARD-AUTH-STATUS-01` | Dashboard API errors preserve their HTTP status for auth-state handling. |
 | `DASHBOARD-AUTH-UI-01` | Dashboard auth controls render signed-out, busy, and signed-in states. |
 | `DASHBOARD-AUTH-FLOW-01` | Dashboard sign-in displays the verified GitHub login; sign-out clears run data and requests token revocation. |

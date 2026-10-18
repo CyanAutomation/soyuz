@@ -1,12 +1,36 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchJson } from "../public/dashboard/api.js";
-import { renderAuthUi } from "../public/dashboard/auth-ui.js";
-import { revokeAccessToken } from "../public/dashboard/auth-api.js";
+import { fetchJson } from "../dashboard/api.ts";
+import { renderAuthUi } from "../dashboard/auth-ui.ts";
+import { revokeAccessToken } from "../dashboard/auth-api.ts";
+
+interface FakeNode {
+  textContent: string;
+  hidden: boolean;
+  disabled: boolean;
+  dataset: DOMStringMap;
+  children: unknown[];
+  listeners: Record<string, (event?: Event) => void>;
+  addEventListener(event: string, callback: (event?: Event) => void): void;
+  append(...children: unknown[]): void;
+  replaceChildren(...children: unknown[]): void;
+}
+
+interface FakeResponse {
+  ok: boolean;
+  status: number;
+  json(): Promise<unknown>;
+}
+
+interface RecordedRequest {
+  path: string;
+  init: RequestInit;
+}
 
 describe("dashboard API responses", () => {
   it("reports an HTTP error without trying to parse a non-JSON body", async () => {
     const response = {
       ok: false,
+      status: 500,
       json: vi.fn().mockRejectedValue(new SyntaxError("Unexpected token '<'")),
     };
     const fetcher = vi.fn().mockResolvedValue(response);
@@ -31,8 +55,12 @@ describe("dashboard API responses", () => {
   });
 
   it("[DASHBOARD-AUTH-UI-01] renders authenticated and busy states in the dashboard header", () => {
-    const button = { textContent: "", disabled: false, dataset: {} };
-    const account = { hidden: false, textContent: "" };
+    const button: Pick<FakeNode, "textContent" | "disabled" | "dataset"> = {
+      textContent: "",
+      disabled: false,
+      dataset: {} as DOMStringMap,
+    };
+    const account: Pick<FakeNode, "hidden" | "textContent"> = { hidden: false, textContent: "" };
 
     renderAuthUi(button, account, "signed-out");
     expect(button).toMatchObject({ textContent: "Sign in with GitHub", disabled: false });
@@ -81,27 +109,30 @@ describe("dashboard authentication flow", () => {
       ["soyuz.dashboard.clientId", "dashboard-client"],
       ["soyuz.dashboard.redirectUri", "https://soyuz.test/dashboard/"],
     ]);
-    const storage = {
-      getItem: (key) => sessionValues.get(key) ?? null,
-      removeItem: (key) => sessionValues.delete(key),
-      setItem: (key, value) => sessionValues.set(key, value),
+    const storage: Pick<Storage, "getItem" | "removeItem" | "setItem"> = {
+      getItem: (key: string) => sessionValues.get(key) ?? null,
+      removeItem: (key: string) => { sessionValues.delete(key); },
+      setItem: (key: string, value: string) => { sessionValues.set(key, value); },
     };
-    const requests = [];
-    let resolveRuns;
-    const fetcher = vi.fn(async (path, init = {}) => {
+    const requests: RecordedRequest[] = [];
+    let resolveRuns!: (response: FakeResponse) => void;
+    const fetcher = vi.fn(async (path: string, init: RequestInit = {}): Promise<FakeResponse> => {
       requests.push({ path, init });
-      if (path === "/oauth/token" && new URLSearchParams(init.body).has("grant_type")) {
+      const requestBody = init.body instanceof URLSearchParams
+        ? init.body
+        : new URLSearchParams(typeof init.body === "string" ? init.body : "");
+      if (path === "/oauth/token" && requestBody.has("grant_type")) {
         return jsonResponse({ access_token: "dashboard-access-token" });
       }
       if (path === "/dashboard/api/me") return jsonResponse({ githubLogin: "current-user" });
       if (path === "/dashboard/api/runs?limit=50") {
-        return new Promise((resolve) => { resolveRuns = resolve; });
+        return new Promise<FakeResponse>((resolve) => { resolveRuns = resolve; });
       }
-      if (path === "/oauth/token") return { ok: false, status: 503 };
+      if (path === "/oauth/token") return { ok: false, status: 503, json: async () => ({}) };
       throw new Error(`Unexpected request: ${path}`);
     });
 
-    vi.stubGlobal("document", { querySelector: (selector) => nodes.get(selector) });
+    vi.stubGlobal("document", { querySelector: (selector: string) => nodes.get(selector) });
     vi.stubGlobal("location", {
       href: "https://soyuz.test/dashboard/?code=auth-code&state=state-value",
       origin: "https://soyuz.test",
@@ -113,23 +144,25 @@ describe("dashboard authentication flow", () => {
     vi.resetModules();
 
     try {
-      await import("../public/dashboard/app.js");
-      await vi.waitFor(() => expect(nodes.get("#connect").textContent).toBe("Sign out"));
+      await import("../dashboard/app.ts");
+      await vi.waitFor(() => expect(nodeAt(nodes, "#connect").textContent).toBe("Sign out"));
       await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=50")).toBe(true));
-      expect(nodes.get("#account")).toMatchObject({ hidden: false, textContent: "Signed in as @current-user" });
-      expect(nodes.get("#notice").textContent).toBe("Loading recent runs…");
+      expect(nodeAt(nodes, "#account")).toMatchObject({ hidden: false, textContent: "Signed in as @current-user" });
+      expect(nodeAt(nodes, "#notice").textContent).toBe("Loading recent runs…");
 
-      nodes.get("#connect").listeners.click();
-      await vi.waitFor(() => expect(nodes.get("#notice").textContent).toContain("could not confirm token revocation"));
+      nodeAt(nodes, "#connect").listeners.click?.();
+      await vi.waitFor(() => expect(nodeAt(nodes, "#notice").textContent).toContain("could not confirm token revocation"));
       resolveRuns(jsonResponse({ runs: [] }));
       await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(nodes.get("#notice").textContent).toContain("could not confirm token revocation");
-      expect(nodes.get("#connect")).toMatchObject({ textContent: "Sign in with GitHub", disabled: false });
-      expect(nodes.get("#account")).toMatchObject({ hidden: true, textContent: "" });
-      expect(nodes.get("#runs").children).toEqual([]);
-      expect(requests.at(-1).path).toBe("/oauth/token");
-      expect(String(requests.at(-1).init.body)).toContain("token=dashboard-access-token");
-      expect(String(requests.at(-1).init.body)).toContain("client_id=dashboard-client");
+      expect(nodeAt(nodes, "#notice").textContent).toContain("could not confirm token revocation");
+      expect(nodeAt(nodes, "#connect")).toMatchObject({ textContent: "Sign in with GitHub", disabled: false });
+      expect(nodeAt(nodes, "#account")).toMatchObject({ hidden: true, textContent: "" });
+      expect(nodeAt(nodes, "#runs").children).toEqual([]);
+      const lastRequest = requests.at(-1);
+      if (!lastRequest) throw new Error("Expected an OAuth revocation request");
+      expect(lastRequest.path).toBe("/oauth/token");
+      expect(String(lastRequest.init.body)).toContain("token=dashboard-access-token");
+      expect(String(lastRequest.init.body)).toContain("client_id=dashboard-client");
     } finally {
       vi.unstubAllGlobals();
       vi.resetModules();
@@ -137,20 +170,26 @@ describe("dashboard authentication flow", () => {
   });
 });
 
-function createNode() {
+function createNode(): FakeNode {
   return {
     textContent: "",
     hidden: false,
     disabled: false,
-    dataset: {},
+    dataset: {} as DOMStringMap,
     children: [],
     listeners: {},
-    addEventListener(event, callback) { this.listeners[event] = callback; },
-    append(...children) { this.children.push(...children); },
-    replaceChildren(...children) { this.children = [...children]; },
+    addEventListener(event: string, callback: (event?: Event) => void) { this.listeners[event] = callback; },
+    append(...children: unknown[]) { this.children.push(...children); },
+    replaceChildren(...children: unknown[]) { this.children = [...children]; },
   };
 }
 
-function jsonResponse(data) {
+function nodeAt(nodes: Map<string, FakeNode>, selector: string): FakeNode {
+  const node = nodes.get(selector);
+  if (!node) throw new Error(`Missing test node ${selector}`);
+  return node;
+}
+
+function jsonResponse(data: unknown): FakeResponse {
   return { ok: true, status: 200, json: async () => ({ data }) };
 }
