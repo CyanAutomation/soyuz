@@ -100,6 +100,7 @@ async function getRunEventsRoute(runId: string, url: URL, env: Env, requestId: s
     return successResponse(requestId, {
       events: page.events.map(publicEvent),
       nextAfter: page.nextAfter,
+      hasMore: page.hasMore,
     });
   } catch (error) {
     return applicationErrorResponse(error, requestId);

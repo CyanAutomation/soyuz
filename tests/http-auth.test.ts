@@ -19,6 +19,36 @@ describe("HTTP helpers", () => {
     await expect(hasBearerToken(shortRequest, shortToken)).resolves.toBe(false);
   });
 
+  it("[AUTH-ROTATION-GRACE-01] accepts a previous bearer key only during a bounded expiry window", async () => {
+    const current = "current-client-token-value-long-enough";
+    const previous = "previous-client-token-value-long-enough";
+    const request = new Request("https://soyuz.test", {
+      headers: { authorization: `Bearer ${previous}` },
+    });
+    const now = new Date("2026-10-18T00:00:00.000Z");
+
+    await expect(hasBearerToken(request, current, {
+      previousToken: previous,
+      previousTokenExpiresAt: "2026-10-25T00:00:00.000Z",
+      now,
+    })).resolves.toBe(true);
+    await expect(hasBearerToken(request, current, {
+      previousToken: previous,
+      previousTokenExpiresAt: "2026-10-17T23:59:59.000Z",
+      now,
+    })).resolves.toBe(false);
+    await expect(hasBearerToken(request, current, {
+      previousToken: previous,
+      previousTokenExpiresAt: "2026-11-03T00:00:00.000Z",
+      now,
+    })).resolves.toBe(false);
+    await expect(hasBearerToken(request, current, {
+      previousToken: previous,
+      previousTokenExpiresAt: "2026-10-25T00:00:00",
+      now,
+    })).resolves.toBe(false);
+  });
+
   it("[HTTP-BODY-01] parses multibyte JSON and enforces the body limit in bytes", async () => {
     const parsed = await parseJsonBody(
       new Request("https://soyuz.test", { method: "POST", body: JSON.stringify({ value: "é" }) }),

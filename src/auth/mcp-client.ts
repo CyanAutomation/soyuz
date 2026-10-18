@@ -8,8 +8,14 @@ export async function authorizeMcpClient(request: Request, env: Env, requestId: 
     return errorResponse(requestId, 503, "AUTHENTICATION_UNAVAILABLE", "Client API-key authentication is not configured. Contact the service administrator.");
   }
   const [isClientToken, isWorkerToken] = await Promise.all([
-    hasBearerToken(request, env.CLIENT_API_TOKEN),
-    hasBearerToken(request, env.WORKER_API_TOKEN),
+    hasBearerToken(request, env.CLIENT_API_TOKEN, {
+      previousToken: env.CLIENT_API_TOKEN_PREVIOUS,
+      previousTokenExpiresAt: env.CLIENT_API_TOKEN_PREVIOUS_EXPIRES_AT,
+    }),
+    hasBearerToken(request, env.WORKER_API_TOKEN, {
+      previousToken: env.WORKER_API_TOKEN_PREVIOUS,
+      previousTokenExpiresAt: env.WORKER_API_TOKEN_PREVIOUS_EXPIRES_AT,
+    }),
   ]);
   if (isClientToken && !isWorkerToken) return null;
   return errorResponse(requestId, 401, "UNAUTHORIZED", "Client API key is missing or invalid. Check that you are using the current client key.");
