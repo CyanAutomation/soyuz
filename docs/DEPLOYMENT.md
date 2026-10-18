@@ -44,7 +44,11 @@ npm run deploy
 
 `npm run db:migrate:remote` changes production D1 and requires D1 Edit access. Run it only with separate authorization from the Worker deployment. CI/CD never runs production migrations.
 
-Set `SOYUZ_PUBLIC_URL` to the canonical HTTPS origin, such as `https://soyuz.example.com`, and `SOYUZ_OAUTH_ALLOWED_GITHUB_IDS` to a comma-separated allowlist of numeric GitHub user IDs as Worker variables or secrets. Configure the GitHub OAuth App callback URL to `${SOYUZ_PUBLIC_URL}/oauth/callback`. The consent flow requests only GitHub `read:user`; Soyuz stores the GitHub numeric ID/login and does not retain the GitHub access token. The dashboard API and OAuth access tokens remain unavailable unless the `OAUTH_KV` binding, callback origin, OAuth credentials, and non-empty allowlist are configured.
+Set `SOYUZ_PUBLIC_URL` to the canonical HTTPS origin, such as `https://soyuz.example.com`, and `SOYUZ_OAUTH_ALLOWED_GITHUB_IDS` to a comma-separated allowlist of numeric GitHub user IDs as Worker variables or secrets. Configure the GitHub OAuth App callback URL to `${SOYUZ_PUBLIC_URL}/oauth/callback`. The dashboard API and OAuth access tokens remain unavailable unless the `OAUTH_KV` binding, callback origin, OAuth credentials, and non-empty allowlist are configured.
+
+### OAuth consent security
+
+The consent page escapes registered client metadata, sends `Cache-Control: no-store`, and forbids framing with Content Security Policy. Approval accepts same-origin form submissions and is bound to the browser with a hashed transaction cookie. The flow requests only GitHub `read:user`; Soyuz stores the GitHub numeric ID/login and does not retain the GitHub access token.
 
 The `ARTIFACTS` R2 binding stores private run files. Worker uploads are limited to 25,000,000 bytes per file and 100 artifacts per run, require the current worker ID and claim fencing token, and are retained for 30 days. Authenticated client/OAuth reads are streamed as attachments. The daily cron removes expired R2 objects and D1 metadata.
 

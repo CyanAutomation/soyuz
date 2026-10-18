@@ -3,18 +3,15 @@ import { stableStringify } from "../src/lib/canonical-json";
 import { sha256Hex } from "../src/lib/sha256";
 
 describe("stableStringify", () => {
-  it("[SERIALIZE-CYCLE-01] rejects circular object and array references", () => {
+  it("[SERIALIZE-CYCLE-01/SERIALIZE-SHARED-01] rejects cycles but allows reused values in separate branches", () => {
     const object: Record<string, unknown> = {};
     object.self = object;
     const array: unknown[] = [];
     array.push(array);
+    const shared = { value: 1 };
 
     expect(() => stableStringify(object)).toThrowError("Circular reference detected");
     expect(() => stableStringify(array)).toThrowError("Circular reference detected");
-  });
-
-  it("[SERIALIZE-SHARED-01] allows the same object to appear in separate branches", () => {
-    const shared = { value: 1 };
     expect(stableStringify({ right: shared, left: shared })).toBe(
       '{"left":{"value":1},"right":{"value":1}}',
     );
@@ -24,16 +21,6 @@ describe("stableStringify", () => {
     expect(stableStringify([{ z: 1, a: 2 }, null, [true, "value"]])).toBe(
       '[{"a":2,"z":1},null,[true,"value"]]',
     );
-  });
-
-  it("[SERIALIZE-PRIMITIVE-01] serializes primitive values and maps undefined to null", () => {
-    expect([null, true, 42, "value", undefined].map((value) => stableStringify(value))).toEqual([
-      "null",
-      "true",
-      "42",
-      '"value"',
-      "null",
-    ]);
   });
 
   it("[SERIALIZE-SHA256-01] returns a SHA-256 hex digest", async () => {

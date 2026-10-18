@@ -9,10 +9,32 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `CONTRACT-VERSION-01` | Soyuz/Kaseki messages use contract version 1. | [Transport contract: overview](CONTRACT.md) |
 | `AUTH-CONFIG-01` | Missing server-side API keys return 503. | [Transport contract: errors](CONTRACT.md#errors) |
 | `AUTH-ROTATE-01` | Rotated or revoked credentials are rejected; static tokens do not expire automatically. | [Transport contract: errors](CONTRACT.md#errors) |
+| `ARTIFACTS-01` | A running worker can upload an owned artifact and clients need authentication to list or download it. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks); [public endpoints](CONTRACT.md#public-endpoints) |
+| `ARTIFACTS-02` | Artifact uploads are rejected after a run becomes terminal. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `ARTIFACTS-03` | Artifact request bodies must match their declared byte length. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `ARTIFACTS-04` | Expired artifacts are removed from R2 and D1. | [Deployment: worker configuration](DEPLOYMENT.md#worker-configuration) |
+| `ARTIFACTS-05` | Failed R2 deletion leaves artifact metadata available for a later cleanup retry. | [Deployment: worker configuration](DEPLOYMENT.md#worker-configuration) |
+| `ARTIFACTS-06` | The per-run artifact cap includes pending uploads and is enforced atomically. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `ARTIFACTS-07` | Uploads require the current worker and claim fencing identity. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `ARTIFACTS-08` | An R2 cleanup failure remains indexed for the retention sweep. | [Deployment: worker configuration](DEPLOYMENT.md#worker-configuration) |
+| `ARTIFACTS-09` | Unsupported artifact kinds are rejected before run state is read. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `ARTIFACTS-10` | Artifact ownership is rechecked if a run completes during upload reservation. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `ARTIFACTS-IDEMPOTENCY-01` | Replaying an artifact ID with identical bytes is safe; different bytes conflict. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `DEPLOY-MIGRATION-HISTORY-01` | Deployment is blocked when migrations are missing, unexpected, or out of order. | [Deployment: GitHub Actions deployment](DEPLOYMENT.md#github-actions-deployment) |
 | `OAUTH-05` | The protected dashboard identity endpoint returns the allowlisted user's GitHub login and enforces the existing OAuth access policy. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |
 | `OAUTH-06` | RFC 7009 revocation invalidates the dashboard's OAuth access token. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |
+| `OAUTH-01` | Dashboard data is available only to an allowlisted GitHub user. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints); [deployment: OAuth configuration](DEPLOYMENT.md#one-time-cloudflare-bootstrap) |
+| `OAUTH-02` | The dashboard is read-only and OAuth write scope is required for MCP mutations. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints); [MCP authentication](MCP.md#authentication-and-security-boundary) |
+| `OAUTH-03` | Consent content is escaped, non-cacheable, non-framable, and approval is bound to the same-origin browser request. | [Deployment: OAuth consent security](DEPLOYMENT.md#oauth-consent-security) |
+| `OAUTH-CALLBACK-01` | GitHub authorization completes only after consent and redirects an authorization code to the registered client without exposing the GitHub token. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints); [deployment: OAuth configuration](DEPLOYMENT.md#one-time-cloudflare-bootstrap) |
 | `HEALTH-DB-01` | Health and run history report D1 unavailability safely. | [Transport contract: public endpoints and errors](CONTRACT.md#public-endpoints) |
 | `RUN-VALIDATE-01` | REST run requests are structurally validated before admission. | [Transport contract: run request](CONTRACT.md#run-request) |
+| `RUN-ADMISSION-SIZE-01` | An oversized Queue message is not published and the run records admission failure. | [Transport contract: Queue message](CONTRACT.md#queue-message) |
+| `RUN-ORIGIN-01` | Run provenance and idempotency scope derive from the authenticated credential; scoped Kaseki access cannot mutate another origin's run. | [Transport contract: run request](CONTRACT.md#run-request) |
+| `RUN-RETRY-01` | A terminal run can be retried with canonical retry lineage, and an equivalent retry replays the same run. | [Transport contract: run request](CONTRACT.md#run-request) |
+| `RUN-RETRY-ELIGIBILITY-01` | A nonterminal run cannot be retried. | [Transport contract: run request](CONTRACT.md#run-request) |
+| `RUN-RETRY-ORIGIN-01` | A caller cannot retry a run owned by another origin. | [Transport contract: run request](CONTRACT.md#run-request) |
+| `RUN-RETRY-TERMINAL-01` | Cancelled and admission-failed Kaseki runs are valid retry sources. | [Transport contract: run request](CONTRACT.md#run-request) |
 | `RUN-ADMISSION-01` | Accepted REST runs persist and publish a versioned Queue message. | [Transport contract: run request and Queue message](CONTRACT.md#queue-message) |
 | `QUEUE-MESSAGE-01` | Queue messages contain the validated request and stable run identity. | [Transport contract: Queue message](CONTRACT.md#queue-message) |
 | `WORKER-READ-01` | A worker can read the canonical state before execution. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
@@ -20,7 +42,14 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `QUEUE-RETRY-01` | Uncertain publication retries the same run ID and eventually fails admission. | [Transport contract: run request](CONTRACT.md#run-request) |
 | `QUEUE-RETENTION-01` | A queued run older than the recovery interval is republished with the same run ID; recovery attempts are reserved once per interval and preserve `queuedAt`. | [Architecture: Queue retention and recovery](ARCHITECTURE.md#queue-retention-and-recovery) |
 | `WORKER-CLAIM-01` | A claim is replay-safe and selects one worker. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `WORKER-CLAIM-FENCE-00` | A worker cannot establish a second active claim using a reused worker identity. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `WORKER-CLAIM-FENCE-01` | A stale same-worker start is rejected after an expired claim is replaced. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `WORKER-CLAIM-FENCE-02` | Heartbeat and terminal callbacks carrying an obsolete claim token are rejected. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `WORKER-CLAIM-FENCE-03` | A claim superseded after callback validation cannot commit the stale callback. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `WORKER-CLAIM-ID-01` | Reusing a claim callback ID with a different lease conflicts. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `WORKER-CLAIM-RACE-01` | Concurrent workers cannot both claim the same queued run. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
 | `WORKER-START-01` | Replaying a started callback preserves running state. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `WORKER-START-02` | A started callback is rejected after its claim lease expires. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
 | `WORKER-EVENT-01` | Retried operational events are stored once. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
 | `CALLBACK-IDEMPOTENCY-01` | Replaying a callback or event with the same ID and payload is safe. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
 | `WORKER-COMPLETE-01` | Completion callbacks are replay-safe and terminal runs reject late starts. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
@@ -66,9 +95,11 @@ These tests protect implementation helpers and direct callers, but they do not r
 | `DASHBOARD-AUTH-UI-01` | Dashboard auth controls render signed-out, busy, and signed-in states. |
 | `DASHBOARD-AUTH-FLOW-01` | Dashboard sign-in displays the verified GitHub login; sign-out clears run data and requests token revocation. |
 | `OAUTH-REVOKE-FORM-01` | Dashboard revocation submits the access token and public client ID to the provider endpoint. |
+| `DASHBOARD-API-ENVELOPE-01` | The dashboard fetch helper unwraps a successful API `data` envelope. |
+| `DASHBOARD-API-ERROR-01` | Non-success dashboard responses preserve their HTTP error and do not decode an error body as JSON. |
+| `OAUTH-CONSENT-COOKIE-01` | A malformed cookie entry naming the consent binding is not duplicated. |
 | `RUN-ID-BOUNDS-01` | The UUIDv7 encoder rejects timestamps outside its 48-bit field. |
 | `SERIALIZE-CYCLE-01` | Stable serialization detects circular references. |
 | `SERIALIZE-SHARED-01` | Reusing an object in separate branches is not mistaken for a cycle. |
 | `SERIALIZE-ARRAY-01` | Stable serialization preserves nested array values and deterministic object-key ordering. |
-| `SERIALIZE-PRIMITIVE-01` | Stable serialization returns a string for primitive values, mapping undefined to null. |
 | `SERIALIZE-SHA256-01` | The SHA-256 helper returns the standard hexadecimal digest. |
