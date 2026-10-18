@@ -144,10 +144,13 @@ describe("production Soyuz smoke check", () => {
     const run = vi.fn(async () => ({ status: "preflight_passed" }));
 
     await expect(runSmokeCli(["--unknown"], { run, writeError })).resolves.toBe(2);
+    await expect(runSmokeCli(["--run", "--run"], { run, writeError })).resolves.toBe(2);
     await expect(runSmokeCli([], { run, writeError })).resolves.toBe(0);
     await expect(runSmokeCli(["--run"], { run: async () => ({ status: "timed_out" }), writeError })).resolves.toBe(1);
 
+    expect(run).toHaveBeenCalledTimes(1);
     expect(run).toHaveBeenCalledWith({ execute: false });
+    expect(writeError).toHaveBeenCalledTimes(2);
     expect(writeError).toHaveBeenCalledWith("Usage: node scripts/soyuz-production-smoke.ts [--run]");
   });
 

@@ -404,7 +404,7 @@ export async function runSmokeCli(
     writeError?: (message: string) => void;
   } = {},
 ): Promise<number> {
-  if (args.some((argument) => argument !== "--run")) {
+  if (args.length > 1 || (args.length === 1 && args[0] !== "--run")) {
     writeError("Usage: node scripts/soyuz-production-smoke.ts [--run]");
     return 2;
   }
