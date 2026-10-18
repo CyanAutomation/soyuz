@@ -6,7 +6,7 @@ Soyuz is the Cloudflare control plane for Kaseki. It accepts authenticated run r
 
 ## Local development
 
-Requirements: Node.js 22 or later and npm. The local token check enforces a 16-character minimum; the example values are longer to encourage stronger secrets. Keep the client and worker tokens distinct.
+Requirements: Node.js 22.18 or later and npm. The local token check enforces a 16-character minimum; the example values are longer to encourage stronger secrets. Keep the client and worker tokens distinct.
 
 ```sh
 npm install
@@ -30,7 +30,7 @@ curl --fail-with-body --silent --show-error \
 
 An accepted request returns HTTP `202` with a JSON body containing `data.id`, `data.status` (`queued`), and `requestId`. This local request writes to local D1 and the local Queue; it does not execute the request unless a Queue consumer is separately configured. Each invocation without an idempotency key creates a new run.
 
-The [transport contract](docs/CONTRACT.md) documents request fields, responses, pagination, and errors. For Cloudflare's Worker runtime test harness, run `npm test`; `npm run typecheck` refreshes Wrangler's binding/runtime types and checks TypeScript.
+The [transport contract](docs/CONTRACT.md) documents request fields, responses, pagination, and errors. For Cloudflare's Worker runtime test harness, run `npm test`; `npm run typecheck` refreshes Wrangler's binding/runtime types and checks TypeScript. `npm run dev` and `npm run deploy` compile the TypeScript dashboard assets first.
 
 ## API overview
 
@@ -99,4 +99,4 @@ The opt-in Queue consumer and callback client are implemented in [`kaseki-agent`
 
 ## Development and support
 
-Run `npm run typecheck` to generate Wrangler types and check TypeScript, and `npm test` to run the Worker runtime test suite. The [CI workflow](.github/workflows/ci.yml) also validates the deployment bundle. See the [license](LICENSE) for reuse terms and [GitHub Issues](https://github.com/CyanAutomation/soyuz/issues) to report a problem.
+Run `npm run typecheck` to generate Wrangler types and check TypeScript, `npm test` to run the Worker runtime test suite, and `npm run build` to compile the browser dashboard. The [CI workflow](.github/workflows/ci.yml) also validates the deployment bundle. See the [license](LICENSE) for reuse terms and [GitHub Issues](https://github.com/CyanAutomation/soyuz/issues) to report a problem.

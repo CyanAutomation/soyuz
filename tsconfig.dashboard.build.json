@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.browser.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": "public/dashboard",
+    "rootDir": "dashboard",
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": ["dashboard/**/*.ts"],
+  "exclude": []
+}

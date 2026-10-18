@@ -1,12 +1,33 @@
 import { describe, expect, it, vi } from "vitest";
-import { runProductionSmoke, runSmokeCli, SoyuzSmokeError } from "../scripts/soyuz-production-smoke.mjs";
+import { runProductionSmoke, runSmokeCli, SoyuzSmokeError } from "../scripts/soyuz-production-smoke.ts";
 
 const RUN_ID = "11111111-1111-4111-8111-111111111111";
 const BASE_URL = "https://soyuz.example.test";
 const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
 const QUEUE_ID = "abcdef0123456789abcdef0123456789";
 
-function env(overrides = {}) {
+type SmokeEnvironment = Record<string, string | undefined>;
+
+interface MockRequest {
+  url: URL;
+  method: string;
+  headers: RequestInit["headers"] | undefined;
+  body: unknown;
+}
+
+interface MockRoute {
+  matches(request: MockRequest): boolean;
+  respond(request: MockRequest): Response;
+}
+
+interface CreateFetchOptions {
+  activeStatus?: string;
+  queueMessages?: unknown[];
+  consumers?: unknown[];
+  runStatuses?: string[];
+}
+
+function env(overrides: SmokeEnvironment = {}): SmokeEnvironment {
   return {
     SOYUZ_BASE_URL: BASE_URL,
     CLIENT_API_TOKEN: "client-secret-long-enough",
@@ -24,17 +45,22 @@ function env(overrides = {}) {
   };
 }
 
-function json(body, status = 200) {
+function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json" },
   });
 }
 
-function createFetch({ activeStatus, queueMessages = [], consumers, runStatuses = ["queued", "completed"] } = {}) {
-  const calls = [];
+function createFetch({
+  activeStatus,
+  queueMessages = [],
+  consumers,
+  runStatuses = ["queued", "completed"],
+}: CreateFetchOptions = {}) {
+  const calls: MockRequest[] = [];
   const state = { runStatusIndex: 0 };
-  const routes = [
+  const routes: MockRoute[] = [
     exactRoute(BASE_URL, "/health", "GET", () => json({ status: "ok", contractVersion: "1" })),
     exactRoute(BASE_URL, "/v1/runs", "GET", (request) => activeRunsResponse(request, activeStatus)),
     exactRoute(BASE_URL, "/v1/runs", "POST", () => json({ data: { id: RUN_ID, status: "queued" } }, 202)),
@@ -53,36 +79,51 @@ function createFetch({ activeStatus, queueMessages = [], consumers, runStatuses 
       result: { messages: queueMessages },
     })),
   ];
-  const fetchImpl = vi.fn(async (input, init = {}) => dispatchMockFetch(input, init, calls, routes));
+  const fetchImpl = vi.fn<typeof fetch>(async (input, init) => dispatchMockFetch(input, init ?? {}, calls, routes));
   return { fetchImpl, calls };
 }
 
-function exactRoute(origin, pathname, method, respond) {
+function exactRoute(
+  origin: string,
+  pathname: string,
+  method: string,
+  respond: (request: MockRequest) => Response,
+): MockRoute {
   return { matches: (request) => request.url.origin === origin && request.url.pathname === pathname && request.method === method, respond };
 }
 
-function suffixRoute(origin, pathnameSuffix, method, respond) {
+function suffixRoute(
+  origin: string,
+  pathnameSuffix: string,
+  method: string,
+  respond: (request: MockRequest) => Response,
+): MockRoute {
   return { matches: (request) => request.url.origin === origin && request.url.pathname.endsWith(pathnameSuffix) && request.method === method, respond };
 }
 
-function activeRunsResponse(request, activeStatus) {
+function activeRunsResponse(request: MockRequest, activeStatus: string | undefined): Response {
   const requestedStatus = request.url.searchParams.get("status");
   const runs = activeStatus === requestedStatus ? [{ id: RUN_ID, status: activeStatus }] : [];
   return json({ data: { runs, nextCursor: null } });
 }
 
-function canonicalRunResponse(runStatuses, state) {
+function canonicalRunResponse(runStatuses: string[], state: { runStatusIndex: number }): Response {
   const status = runStatuses[Math.min(state.runStatusIndex, runStatuses.length - 1)];
   state.runStatusIndex += 1;
   return json({ data: { id: RUN_ID, status, publishMode: "none", result: null } });
 }
 
-function workerRunResponse(runStatuses, state) {
+function workerRunResponse(runStatuses: string[], state: { runStatusIndex: number }): Response {
   const status = runStatuses[Math.min(state.runStatusIndex - 1, runStatuses.length - 1)];
   return json({ data: { runId: RUN_ID, status } });
 }
 
-function dispatchMockFetch(input, init, calls, routes) {
+function dispatchMockFetch(
+  input: string | URL | Request,
+  init: RequestInit,
+  calls: MockRequest[],
+  routes: MockRoute[],
+): Response {
   const request = readMockRequest(input, init);
   calls.push(request);
   const route = routes.find((candidate) => candidate.matches(request));
@@ -90,7 +131,7 @@ function dispatchMockFetch(input, init, calls, routes) {
   return route.respond(request);
 }
 
-function readMockRequest(input, init) {
+function readMockRequest(input: string | URL | Request, init: RequestInit): MockRequest {
   const url = new URL(String(input));
   const method = init.method ?? "GET";
   const body = typeof init.body === "string" ? JSON.parse(init.body) : undefined;
@@ -107,7 +148,7 @@ describe("production Soyuz smoke check", () => {
     await expect(runSmokeCli(["--run"], { run: async () => ({ status: "timed_out" }), writeError })).resolves.toBe(1);
 
     expect(run).toHaveBeenCalledWith({ execute: false });
-    expect(writeError).toHaveBeenCalledWith("Usage: node scripts/soyuz-production-smoke.mjs [--run]");
+    expect(writeError).toHaveBeenCalledWith("Usage: node scripts/soyuz-production-smoke.ts [--run]");
   });
 
   it("reports bounded and unexpected CLI failures with a failing exit code", async () => {
