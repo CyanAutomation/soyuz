@@ -7,16 +7,48 @@ header { display: flex; align-items: center; justify-content: space-between; gap
 #account { margin: 0; }
 h1 { margin: 0; font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -.04em; }
 .eyebrow { margin: 0 0 .4rem; color: #53657a; font-size: .75rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-.muted, .meta { color: #65758b; }
+.muted, .meta { color: #53657a; }
 button, .artifact-link { border: 0; border-radius: .6rem; background: #1b4e8a; color: white; cursor: pointer; font: inherit; font-weight: 650; padding: .75rem 1rem; text-decoration: none; }
 button:hover, .artifact-link:hover { background: #123d70; }
 button:disabled { cursor: wait; opacity: .7; }
 #notice { min-height: 1.5rem; color: #405268; }
+.run-controls { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; margin: 1.25rem 0; }
+.run-controls label { display: flex; align-items: center; gap: .5rem; font-weight: 650; }
+.run-controls select { min-height: 2.8rem; padding: .45rem .7rem; border: 1px solid #9baabd; border-radius: .55rem; background: white; color: #17202a; font: inherit; }
+.run-controls .meta { margin: 0 0 0 auto; }
 .run { margin: 1rem 0; padding: 1.25rem; border: 1px solid #dde4ed; border-radius: .85rem; background: white; box-shadow: 0 2px 8px #17202a0a; }
 .run h2 { margin: 0; font-size: 1.05rem; overflow-wrap: anywhere; }
 .run .meta { font-size: .9rem; }
+.badge { width: fit-content; margin: .45rem 0; padding: .15rem .55rem; border-radius: 999px; background: #edf2f7; color: #35495e; font-size: .88rem; }
+.status-active { background: #e8f1fc; color: #143f70; }
+.health-warning { background: #fff0e5; color: #713400; font-weight: 700; }
 .run pre { max-height: 18rem; overflow: auto; padding: .8rem; border-radius: .5rem; background: #f5f7fa; white-space: pre-wrap; overflow-wrap: anywhere; }
 .run details { margin-top: .8rem; }
+.details-content { padding-top: .5rem; }
+.event-history { margin-top: 1rem; padding-top: .25rem; border-top: 1px solid #dde4ed; }
+.event-history h3 { margin-bottom: .4rem; font-size: 1rem; }
+.event-history ol { margin: .5rem 0; padding-left: 1.5rem; }
+.event-history li { margin: .75rem 0; padding-left: .25rem; }
+.event-history li > p { margin: .2rem 0; }
 .artifacts { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .75rem; }
 .artifact-link { display: inline-block; padding: .45rem .7rem; font-size: .85rem; }
+.load-more { display: block; margin: 1.5rem auto 0; }
+.consent-main { max-width: 560px; padding: clamp(2rem, 8vh, 5rem) 1.25rem 3rem; }
+.consent-card { padding: clamp(1.4rem, 5vw, 2.25rem); border: 1px solid #dde4ed; border-radius: 1rem; background: white; box-shadow: 0 12px 36px #17202a12; }
+.consent-card .eyebrow { margin-bottom: .65rem; }
+.consent-card h1 { margin-bottom: 1.1rem; font-size: clamp(1.8rem, 5vw, 2.4rem); line-height: 1.15; letter-spacing: -.035em; }
+.consent-card > p:not(.eyebrow) { color: #405268; }
+.consent-warning { margin: 1.15rem 0; padding: .85rem 1rem; border: 1px solid #f0c79f; border-radius: .65rem; background: #fff5eb; color: #713400 !important; }
+.consent-provider { margin: 1.4rem 0 1rem; padding-top: 1.15rem; border-top: 1px solid #e5eaf0; }
+.consent-form { margin-top: 1.4rem; }
+.consent-scopes { display: grid; gap: .55rem; margin: 0; padding: 1rem; border: 1px solid #dde4ed; border-radius: .7rem; }
+.consent-scopes legend { padding: 0 .4rem; color: #35495e; font-size: .9rem; font-weight: 700; }
+.consent-scope { display: flex; align-items: center; gap: .65rem; width: fit-content; color: #17202a; font-weight: 600; }
+.consent-scope input { width: 1.1rem; height: 1.1rem; margin: 0; accent-color: #1b4e8a; }
+.consent-actions { display: flex; flex-wrap: wrap; gap: .7rem; margin-top: 1.25rem; }
+.consent-actions button { min-width: 6.5rem; }
+.consent-actions .consent-deny { border: 1px solid #9baabd; background: white; color: #17202a; }
+.consent-actions .consent-deny:hover { background: #f0f3f7; }
+button:focus-visible, input:focus-visible { outline: 3px solid #78a9e0; outline-offset: 3px; }
 @media (max-width: 640px) { header { align-items: flex-start; flex-direction: column; } .auth-controls { justify-content: flex-start; flex-wrap: wrap; } }
+@media (max-width: 480px) { .consent-main { padding: 1.25rem .85rem; } .consent-actions { flex-direction: column; } .consent-actions button { width: 100%; } }

@@ -69,6 +69,8 @@ describe("Soyuz OAuth policy", () => {
     expect(html).toContain("client.example.test&amp;evil");
     expect(html).toContain("localhost:9000&lt;&gt;");
     expect(html).toContain('value="handle&lt;&amp;"');
+    expect(html).toContain('<link rel="stylesheet" href="/dashboard/style.css">');
+    expect(html).toContain('class="consent-card"');
     expect(html).not.toContain("<script>");
   });
 

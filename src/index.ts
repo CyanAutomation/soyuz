@@ -6,6 +6,7 @@ import { handleClientArtifacts, purgeExpiredArtifacts } from "./api/artifacts";
 import { handleWorkerArtifacts } from "./api/worker-artifacts";
 import { errorResponse, jsonResponse, requestIdFor } from "./api/http";
 import { handleWorkerCallbacks } from "./api/workers";
+import { purgeExpiredRunRequests } from "./api/retention";
 import type { Env } from "./env";
 import { DEFAULT_RUN_ORIGIN, type RunOrigin } from "./application/runs";
 import { createSoyuzMcpHandler } from "./mcp/server";
@@ -25,7 +26,7 @@ export async function handleRequest(request: Request, env: Env, context?: Execut
     case "dashboard-api":
       return handleDashboardApi(request, env, requestId, executionContext);
     case "dashboard-assets":
-      return env.ASSETS?.fetch(request) ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
+      return handleDashboardAssets(request, env, requestId);
     case "oauth":
       return handleOAuthRequest(request, env, requestId, executionContext);
     case "worker-api":
@@ -84,15 +85,43 @@ async function handleHealth(requestId: string, env: Env): Promise<Response> {
     });
   }
   try {
-    await env.DB.prepare("SELECT 1 AS healthy").first();
+    await env.DB.prepare(`
+      SELECT id, origin_type, origin_id, retry_of, last_heartbeat_at, operational_health, request_redacted_at
+      FROM runs LIMIT 0
+    `).first();
     return jsonResponse(200, { status: "ok", contractVersion: "1", requestId });
   } catch {
     return jsonResponse(503, {
       status: "unavailable",
-      message: "Soyuz cannot reach its run database. Retry shortly, or contact the service administrator if this continues.",
+      message: "Soyuz cannot reach its run database or verify its required schema. Retry shortly, or contact the service administrator if this continues.",
       requestId,
     });
   }
+}
+
+async function handleDashboardAssets(request: Request, env: Env, requestId: string): Promise<Response> {
+  if (!env.ASSETS) return errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
+  const response = await env.ASSETS.fetch(request);
+  const headers = new Headers(response.headers);
+  headers.set("content-security-policy", [
+    "default-src 'none'",
+    "script-src 'self'",
+    "style-src 'self'",
+    "connect-src 'self'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+  ].join("; "));
+  headers.set("x-content-type-options", "nosniff");
+  headers.set("x-frame-options", "DENY");
+  headers.set("referrer-policy", "no-referrer");
+  headers.set("permissions-policy", "camera=(), microphone=(), geolocation=()");
+  headers.set("cross-origin-resource-policy", "same-origin");
+  if ((headers.get("content-type") ?? "").includes("text/html")) headers.set("cache-control", "no-store");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 async function handleMcpRequest(
@@ -101,7 +130,10 @@ async function handleMcpRequest(
   requestId: string,
   context: ExecutionContext,
 ): Promise<Response> {
-  if (isOAuthConfigured(env) && !(await hasBearerToken(request, env.CLIENT_API_TOKEN))) {
+  if (isOAuthConfigured(env) && !(await hasBearerToken(request, env.CLIENT_API_TOKEN, {
+    previousToken: env.CLIENT_API_TOKEN_PREVIOUS,
+    previousTokenExpiresAt: env.CLIENT_API_TOKEN_PREVIOUS_EXPIRES_AT,
+  }))) {
     return getSoyuzOAuthProvider(env)!.fetch(request, env, context);
   }
   const authFailure = await authorizeMcpClient(request, env, requestId);
@@ -135,7 +167,10 @@ async function handleWorkerRequest(request: Request, env: Env, url: URL, request
   if (!isBearerTokenConfigured(env.WORKER_API_TOKEN)) {
     return errorResponse(requestId, 503, "AUTHENTICATION_UNAVAILABLE", "Worker API-key authentication is not configured. Contact the service administrator.");
   }
-  if (!(await hasBearerToken(request, env.WORKER_API_TOKEN))) {
+  if (!(await hasBearerToken(request, env.WORKER_API_TOKEN, {
+    previousToken: env.WORKER_API_TOKEN_PREVIOUS,
+    previousTokenExpiresAt: env.WORKER_API_TOKEN_PREVIOUS_EXPIRES_AT,
+  }))) {
     return errorResponse(requestId, 401, "UNAUTHORIZED", "Worker API key is missing or invalid. Check that you are using the current worker key.");
   }
   const artifactResponse = await handleWorkerArtifacts(request, env, url, requestId);
@@ -154,7 +189,10 @@ async function handleClientRequest(request: Request, env: Env, url: URL, request
   }
   let origin: RunOrigin = DEFAULT_RUN_ORIGIN;
   let authenticated = false;
-  if (kasekiTokenConfigured && await hasBearerToken(request, env.KASEKI_SUBMISSION_API_TOKEN)) {
+  if (kasekiTokenConfigured && await hasBearerToken(request, env.KASEKI_SUBMISSION_API_TOKEN, {
+    previousToken: env.KASEKI_SUBMISSION_API_TOKEN_PREVIOUS,
+    previousTokenExpiresAt: env.KASEKI_SUBMISSION_API_TOKEN_PREVIOUS_EXPIRES_AT,
+  })) {
     const path = new URL(request.url).pathname;
     if (!isKasekiSubmissionRoute(path, request.method)) {
       return errorResponse(requestId, 403, "INSUFFICIENT_SCOPE", "Kaseki submission credentials are limited to run creation, retry, and cancellation.");
@@ -165,7 +203,10 @@ async function handleClientRequest(request: Request, env: Env, url: URL, request
     }
     origin = { type: "kaseki", id: identity };
     authenticated = true;
-  } else if (await hasBearerToken(request, env.CLIENT_API_TOKEN)) {
+  } else if (await hasBearerToken(request, env.CLIENT_API_TOKEN, {
+    previousToken: env.CLIENT_API_TOKEN_PREVIOUS,
+    previousTokenExpiresAt: env.CLIENT_API_TOKEN_PREVIOUS_EXPIRES_AT,
+  })) {
     authenticated = true;
   }
   if (!authenticated) {
@@ -190,6 +231,7 @@ export default {
     const work = [reconcileAdmissions(env), reconcileStalledRuns(env)];
     if (controller.cron === "0 3 * * *") {
       work.push(purgeExpiredArtifacts(env));
+      work.push(purgeExpiredRunRequests(env).then(() => undefined));
       const provider = getSoyuzOAuthProvider(env);
       if (provider && env.OAUTH_KV) work.push(purgeOAuthData(provider, env));
     }

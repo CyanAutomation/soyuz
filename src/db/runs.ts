@@ -14,6 +14,7 @@ export interface RunRow {
   task_mode: "patch" | "inspect";
   publish_mode: "auto" | "none" | "branch" | "pr";
   request_json: string;
+  request_redacted_at?: string | null;
   request_hash: string;
   result_json: string | null;
   created_at: string;
