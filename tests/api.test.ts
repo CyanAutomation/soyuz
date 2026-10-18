@@ -115,6 +115,49 @@ function cookieHeader(response: Response): string {
     .join("; ");
 }
 
+async function beginOAuthConsent(env: Env) {
+  const registration = await call(env, "/oauth/register", {
+    method: "POST",
+    body: {
+      client_name: "Consent <script>alert(1)</script>",
+      redirect_uris: ["https://client.example.test/callback"],
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    },
+  });
+  const verifier = "soyuz-consent-page-test-verifier-long-enough-123456";
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  const authorize = new URL("https://soyuz.test/oauth/authorize");
+  authorize.searchParams.set("client_id", registration.body.client_id);
+  authorize.searchParams.set("redirect_uri", "https://client.example.test/callback");
+  authorize.searchParams.set("response_type", "code");
+  authorize.searchParams.set("scope", "soyuz:read");
+  authorize.searchParams.set("resource", "https://soyuz.test/");
+  authorize.searchParams.set("state", "consent-test-state");
+  authorize.searchParams.set("code_challenge", challenge);
+  authorize.searchParams.set("code_challenge_method", "S256");
+  const consent = await handleRequest(new Request(authorize), env);
+  const html = await consent.text();
+  const handle = html.match(/name="handle" value="([^"]+)"/)?.[1];
+  if (!handle) throw new Error("OAuth consent page did not contain its transaction handle");
+  return { registration, authorize, consent, html, handle };
+}
+
+async function approveOAuthConsent(env: Env, handle: string): Promise<Response> {
+  return handleRequest(new Request("https://soyuz.test/oauth/authorize", {
+    method: "POST",
+    headers: {
+      origin: "null",
+      "sec-fetch-site": "same-origin",
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ handle, decision: "approve", scope: "soyuz:read" }),
+  }), env);
+}
+
 async function call(
   env: Env,
   path: string,
@@ -215,6 +258,75 @@ async function claimRun(env: Env, runId: string, workerId = "docker-host-a", cal
     token: WORKER_TOKEN,
     body: { contractVersion: "1", callbackId, workerId },
   });
+}
+
+async function startRunningRun(
+  env: Env,
+  workerId: string,
+  claimCallbackId: string,
+  startedCallbackId: string,
+): Promise<string> {
+  const created = await submit(env);
+  const runId = created.body.data.id as string;
+  await claimRun(env, runId, workerId, claimCallbackId);
+  await call(env, `/v1/worker/runs/${runId}/started`, {
+    method: "POST",
+    token: WORKER_TOKEN,
+    body: { contractVersion: "1", callbackId: startedCallbackId, workerId },
+  });
+  return runId;
+}
+
+async function uploadArtifact(
+  env: Env,
+  runId: string,
+  input: {
+    artifactId: string;
+    artifactName: string;
+    body: string;
+    workerId: string;
+    claimCallbackId: string;
+  },
+) {
+  return callBinary(env, `/v1/worker/runs/${runId}/artifacts/${input.artifactId}`, {
+    method: "PUT",
+    token: WORKER_TOKEN,
+    headers: {
+      "content-type": "text/plain",
+      "content-length": String(new TextEncoder().encode(input.body).byteLength),
+      "x-artifact-name": input.artifactName,
+      "x-artifact-kind": "report",
+      "x-soyuz-worker-id": input.workerId,
+      "x-soyuz-claim-callback-id": input.claimCallbackId,
+    },
+    body: input.body,
+  });
+}
+
+function withSupersededClaimOnNextBatch(
+  database: Env["DB"],
+  input: { runId: string; workerId: string; replacementClaimId: string },
+): Env["DB"] {
+  let replaceClaim = true;
+  return {
+    prepare: database.prepare.bind(database),
+    batch: async (statements: Parameters<typeof database.batch>[0]) => {
+      if (replaceClaim) {
+        replaceClaim = false;
+        const now = new Date().toISOString();
+        await database.prepare(
+          "UPDATE runs SET status = 'running', started_at = ?, claim_expires_at = NULL WHERE id = ?",
+        ).bind(now, input.runId).run();
+        await database.prepare(`
+          INSERT INTO run_events (
+            run_id, contract_version, event_id, type, worker_id,
+            occurred_at, recorded_at, payload_json
+          ) VALUES (?, '1', ?, 'run.claimed', ?, ?, ?, '{}')
+        `).bind(input.runId, input.replacementClaimId, input.workerId, now, now).run();
+      }
+      return database.batch(statements);
+    },
+  } as unknown as Env["DB"];
 }
 
 describe("Soyuz Worker API", () => {
@@ -379,87 +491,62 @@ describe("Soyuz Worker API", () => {
     expect((mcpWrite.body as any).error).toBe("insufficient_scope");
   });
 
-  it("[OAUTH-03] renders a bound, non-framable consent page before GitHub sign-in", async () => {
+  it("[OAUTH-03] renders an escaped, non-framable consent page and binds approval to the browser request", async () => {
     const { bindings } = testEnv({ oauth: true });
-    const registration = await call(bindings, "/oauth/register", {
-      method: "POST",
-      body: {
-        client_name: "Consent <script>alert(1)</script>",
-        redirect_uris: ["https://client.example.test/callback"],
-        grant_types: ["authorization_code"],
-        response_types: ["code"],
-        token_endpoint_auth_method: "none",
-      },
-    });
-    expect(registration.response.status).toBe(201);
-    const verifier = "soyuz-consent-page-test-verifier-long-enough-123456";
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
-    const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
-      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-    const authorize = new URL("https://soyuz.test/oauth/authorize");
-    authorize.searchParams.set("client_id", registration.body.client_id);
-    authorize.searchParams.set("redirect_uri", "https://client.example.test/callback");
-    authorize.searchParams.set("response_type", "code");
-    authorize.searchParams.set("scope", "soyuz:read");
-    authorize.searchParams.set("resource", "https://soyuz.test/");
-    authorize.searchParams.set("state", "consent-test-state");
-    authorize.searchParams.set("code_challenge", challenge);
-    authorize.searchParams.set("code_challenge_method", "S256");
+    const flow = await beginOAuthConsent(bindings);
+    expect(flow.registration.response.status).toBe(201);
+    expect(flow.consent.status).toBe(200);
+    expect(flow.consent.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(flow.consent.headers.get("content-security-policy")).toContain("form-action 'self' https://github.com");
+    expect(flow.consent.headers.get("cache-control")).toBe("no-store");
+    expect(flow.html).toContain("Consent &lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(flow.html).not.toContain("<script>alert(1)</script>");
+    expect(flow.html).toContain("read:user permission");
+    expect(flow.consent.headers.get("set-cookie")).toContain("__Host-oauth-consent");
 
-    const consent = await handleRequest(new Request(authorize), bindings);
-    const html = await consent.text();
-    expect(consent.status).toBe(200);
-    expect(consent.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
-    expect(consent.headers.get("content-security-policy")).toContain("form-action 'self' https://github.com");
-    expect(consent.headers.get("cache-control")).toBe("no-store");
-    expect(html).toContain("Consent &lt;script&gt;alert(1)&lt;/script&gt;");
-    expect(html).not.toContain("<script>alert(1)</script>");
-    expect(html).toContain("read:user permission");
-    expect(consent.headers.get("set-cookie")).toContain("__Host-oauth-consent");
-
-    const handle = html.match(/name="handle" value="([^"]+)"/)?.[1];
-    expect(handle).toBeTruthy();
     const oauthInfo = vi.spyOn(console, "info").mockImplementation(() => undefined);
-    const approval = await handleRequest(new Request("https://soyuz.test/oauth/authorize", {
-      method: "POST",
-      headers: {
-        origin: "null",
-        "sec-fetch-site": "same-origin",
-        "content-type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({ handle: handle!, decision: "approve", scope: "soyuz:read" }),
-    }), bindings);
-    expect(approval.status).toBe(302);
-    expect(approval.headers.get("x-request-id")).toBeTruthy();
-    expect(oauthInfo).toHaveBeenCalledOnce();
-    const oauthEvent = JSON.parse(String(oauthInfo.mock.calls[0][0]));
-    expect(oauthEvent).toMatchObject({ event: "soyuz.oauth.upstream_redirect", destination: "https://github.com" });
-    expect(JSON.stringify(oauthEvent)).not.toContain(handle);
-    expect(JSON.stringify(oauthEvent)).not.toContain("consent-test-state");
-    oauthInfo.mockRestore();
-    const githubAuthorize = new URL(approval.headers.get("location")!);
-    expect(githubAuthorize.origin).toBe("https://github.com");
-    expect(githubAuthorize.pathname).toBe("/login/oauth/authorize");
-    expect(githubAuthorize.searchParams.get("code_challenge_method")).toBe("S256");
-
-    const githubRequests: Array<{ url: string; init?: RequestInit }> = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      githubRequests.push({ url, init });
-      if (url === "https://github.com/login/oauth/access_token") {
-        return new Response(JSON.stringify({ access_token: "short-lived-github-token" }), {
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (url === "https://api.github.com/user") {
-        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer short-lived-github-token");
-        return new Response(JSON.stringify({ id: 123, login: "allowed-test-user" }), {
-          headers: { "content-type": "application/json" },
-        });
-      }
-      throw new Error(`Unexpected external OAuth request: ${url}`);
-    }));
     try {
+      const approval = await approveOAuthConsent(bindings, flow.handle);
+      expect(approval.status).toBe(302);
+      expect(approval.headers.get("x-request-id")).toBeTruthy();
+      expect(oauthInfo).toHaveBeenCalledOnce();
+      const oauthEvent = JSON.parse(String(oauthInfo.mock.calls[0][0]));
+      expect(oauthEvent).toMatchObject({ event: "soyuz.oauth.upstream_redirect", destination: "https://github.com" });
+      expect(JSON.stringify(oauthEvent)).not.toContain(flow.handle);
+      expect(JSON.stringify(oauthEvent)).not.toContain("consent-test-state");
+      const githubAuthorize = new URL(approval.headers.get("location")!);
+      expect(githubAuthorize.origin).toBe("https://github.com");
+      expect(githubAuthorize.pathname).toBe("/login/oauth/authorize");
+      expect(githubAuthorize.searchParams.get("code_challenge_method")).toBe("S256");
+    } finally {
+      oauthInfo.mockRestore();
+    }
+  });
+
+  it("[OAUTH-CALLBACK-01] exchanges GitHub authorization and redirects only a code to the approved client", async () => {
+    const { bindings } = testEnv({ oauth: true });
+    const oauthInfo = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      const flow = await beginOAuthConsent(bindings);
+      const approval = await approveOAuthConsent(bindings, flow.handle);
+      const githubAuthorize = new URL(approval.headers.get("location")!);
+      const githubRequests: Array<{ url: string; init?: RequestInit }> = [];
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        githubRequests.push({ url, init });
+        if (url === "https://github.com/login/oauth/access_token") {
+          return new Response(JSON.stringify({ access_token: "short-lived-github-token" }), {
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url === "https://api.github.com/user") {
+          expect(new Headers(init?.headers).get("authorization")).toBe("Bearer short-lived-github-token");
+          return new Response(JSON.stringify({ id: 123, login: "allowed-test-user" }), {
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`Unexpected external OAuth request: ${url}`);
+      }));
       const githubState = githubAuthorize.searchParams.get("state");
       const callback = await handleRequest(new Request(
         `https://soyuz.test/oauth/callback?code=github-code&state=${encodeURIComponent(githubState ?? "")}`,
@@ -480,6 +567,7 @@ describe("Soyuz Worker API", () => {
       ]);
     } finally {
       vi.unstubAllGlobals();
+      oauthInfo.mockRestore();
     }
   });
 
@@ -610,7 +698,7 @@ describe("Soyuz Worker API", () => {
     expect(deniedRead.body.error.code).toBe("INSUFFICIENT_SCOPE");
   });
 
-  it("[RUN-RETRY-01] retries only terminal runs and records canonical retry lineage", async () => {
+  it("[RUN-RETRY-01] retries a terminal Kaseki run once and replays the same retry", async () => {
     const { bindings, sent } = testEnv();
     const kaseki = {
       ...bindings,
@@ -665,17 +753,38 @@ describe("Soyuz Worker API", () => {
     expect(replay.body.data.id).toBe(retry.body.data.id);
     expect((await getRun(bindings.DB, retry.body.data.id))?.retry_of).toBe(sourceId);
     expect(sent).toHaveLength(2);
+  });
 
+  it("[RUN-RETRY-ELIGIBILITY-01] rejects retrying a nonterminal run", async () => {
+    const { bindings } = testEnv();
+    const kaseki = {
+      ...bindings,
+      KASEKI_SUBMISSION_API_TOKEN: KASEKI_TOKEN,
+      KASEKI_SUBMISSION_IDENTITY: "kaseki-prod",
+    };
     const nonTerminal = await call(kaseki, "/v1/runs", {
       method: "POST",
       token: KASEKI_TOKEN,
       headers: { "Idempotency-Key": "00000000-0000-4000-8000-000000000065" },
       body: validRequest(),
     });
-    const rejected = await call(kaseki, `/v1/runs/${nonTerminal.body.data.id}/retry`, retryRequest);
+    const rejected = await call(kaseki, `/v1/runs/${nonTerminal.body.data.id}/retry`, {
+      method: "POST",
+      token: KASEKI_TOKEN,
+      headers: { "Idempotency-Key": "00000000-0000-4000-8000-000000000069" },
+      body: { idempotencyKey: "00000000-0000-4000-8000-000000000069" },
+    });
     expect(rejected.response.status).toBe(409);
     expect(rejected.body.error.code).toBe("RUN_NOT_RETRYABLE");
+  });
 
+  it("[RUN-RETRY-ORIGIN-01] rejects retrying a run owned by another origin", async () => {
+    const { bindings } = testEnv();
+    const kaseki = {
+      ...bindings,
+      KASEKI_SUBMISSION_API_TOKEN: KASEKI_TOKEN,
+      KASEKI_SUBMISSION_IDENTITY: "kaseki-prod",
+    };
     const foreignSource = await submit(bindings, {}, "00000000-0000-4000-8000-000000000067");
     const foreignRetryKey = "00000000-0000-4000-8000-000000000068";
     const foreignRetry = await call(kaseki, `/v1/runs/${foreignSource.body.data.id}/retry`, {
@@ -913,27 +1022,13 @@ describe("Soyuz Worker API", () => {
     const claim = await claimRun(bindings, runId, workerId, oldClaimId);
     expect(claim.response.status).toBe(200);
 
-    const database = bindings.DB;
-    let injectRace = true;
-    const racingDatabase = {
-      prepare: database.prepare.bind(database),
-      batch: async (statements: Parameters<typeof database.batch>[0]) => {
-        if (injectRace) {
-          injectRace = false;
-          const now = new Date().toISOString();
-          await database.prepare(
-            "UPDATE runs SET status = 'running', started_at = ?, claim_expires_at = NULL WHERE id = ?",
-          ).bind(now, runId).run();
-          await database.prepare(`
-            INSERT INTO run_events (
-              run_id, contract_version, event_id, type, worker_id,
-              occurred_at, recorded_at, payload_json
-            ) VALUES (?, '1', ?, 'run.claimed', ?, ?, ?, '{}')
-          `).bind(runId, newClaimId, workerId, now, now).run();
-        }
-        return database.batch(statements);
-      },
-    } as unknown as Env["DB"];
+    // Replace the lease immediately before transitionRun commits its batch. This
+    // models another controller winning after callback validation but before write.
+    const racingDatabase = withSupersededClaimOnNextBatch(bindings.DB, {
+      runId,
+      workerId,
+      replacementClaimId: newClaimId,
+    });
 
     await expect(transitionRun(racingDatabase, runId, "running", {
       worker_id: workerId,
@@ -1201,34 +1296,27 @@ describe("Soyuz Worker API", () => {
     expect(confirmed.body.data.status).toBe("cancelled");
   });
 
-  it("[ARTIFACTS-01] uploads artifacts from a running worker and returns them through client-authenticated reads", async () => {
+  it("[ARTIFACTS-01] lets an owned running worker upload an artifact for authenticated client download", async () => {
     const r2 = memoryArtifactBucket();
     const { bindings } = testEnv({ artifacts: r2.bucket });
-    const created = await submit(bindings);
-    const runId = created.body.data.id as string;
     const workerId = "docker-host-artifacts";
-    await claimRun(bindings, runId, workerId, "00000000-0000-4000-8000-000000000041");
-    await call(bindings, `/v1/worker/runs/${runId}/started`, {
-      method: "POST",
-      token: WORKER_TOKEN,
-      body: { contractVersion: "1", callbackId: "00000000-0000-4000-8000-000000000042", workerId },
-    });
-
+    const claimCallbackId = "00000000-0000-4000-8000-000000000041";
+    const runId = await startRunningRun(
+      bindings,
+      workerId,
+      claimCallbackId,
+      "00000000-0000-4000-8000-000000000042",
+    );
     const artifactId = "00000000-0000-4000-8000-000000000043";
     const artifactName = 'summary"; filename="résumé.txt';
-    const upload = await callBinary(bindings, `/v1/worker/runs/${runId}/artifacts/${artifactId}`, {
-      method: "PUT",
-      token: WORKER_TOKEN,
-      headers: {
-        "content-type": "text/plain",
-        "content-length": "12",
-        "x-artifact-name": artifactName,
-        "x-artifact-kind": "report",
-        "x-soyuz-worker-id": workerId,
-        "x-soyuz-claim-callback-id": "00000000-0000-4000-8000-000000000041",
-      },
+    const upload = await uploadArtifact(bindings, runId, {
+      artifactId,
+      artifactName,
       body: "run summary\n",
+      workerId,
+      claimCallbackId,
     });
+
     expect(upload.response.status).toBe(201);
     expect((upload.body as any).data).toMatchObject({ id: artifactId, name: artifactName, kind: "report", size: 12 });
     expect(r2.put).toHaveBeenCalledWith(
@@ -1248,24 +1336,32 @@ describe("Soyuz Worker API", () => {
       "attachment; filename=\"summary___filename__r_sum_.txt\"; filename*=UTF-8''summary%22%3B%20filename%3D%22r%C3%A9sum%C3%A9.txt",
     );
     expect(download.body).toBe("run summary\n");
+  });
 
-    const retry = await callBinary(bindings, `/v1/worker/runs/${runId}/artifacts/${artifactId}`, {
-      method: "PUT", token: WORKER_TOKEN,
-      headers: {
-        "content-type": "text/plain", "content-length": "12", "x-artifact-name": artifactName, "x-artifact-kind": "report",
-        "x-soyuz-worker-id": workerId, "x-soyuz-claim-callback-id": "00000000-0000-4000-8000-000000000041",
-      },
+  it("[ARTIFACTS-IDEMPOTENCY-01] accepts an exact artifact retry and rejects different bytes under the same ID", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const workerId = "docker-host-artifact-replay";
+    const claimCallbackId = "00000000-0000-4000-8000-000000000044";
+    const runId = await startRunningRun(
+      bindings,
+      workerId,
+      claimCallbackId,
+      "00000000-0000-4000-8000-000000000045",
+    );
+    const upload = {
+      artifactId: "00000000-0000-4000-8000-000000000046",
+      artifactName: "summary.txt",
       body: "run summary\n",
-    });
+      workerId,
+      claimCallbackId,
+    };
+
+    expect((await uploadArtifact(bindings, runId, upload)).response.status).toBe(201);
+    const retry = await uploadArtifact(bindings, runId, upload);
+    const conflict = await uploadArtifact(bindings, runId, { ...upload, body: "run summary!" });
+
     expect(retry.response.status).toBe(200);
-    const conflict = await callBinary(bindings, `/v1/worker/runs/${runId}/artifacts/${artifactId}`, {
-      method: "PUT", token: WORKER_TOKEN,
-      headers: {
-        "content-type": "text/plain", "content-length": "12", "x-artifact-name": artifactName, "x-artifact-kind": "report",
-        "x-soyuz-worker-id": workerId, "x-soyuz-claim-callback-id": "00000000-0000-4000-8000-000000000041",
-      },
-      body: "run summary!",
-    });
     expect(conflict.response.status).toBe(409);
     expect((conflict.body as any).error.code).toBe("ARTIFACT_ID_CONFLICT");
     expect(r2.objects.size).toBe(1);
