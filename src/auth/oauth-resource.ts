@@ -159,6 +159,7 @@ async function readDashboardEvents(env: Env, url: URL, runId: string, requestId:
     return successResponse(requestId, {
       events: page.events.map(dashboardEvent),
       nextAfter: page.nextAfter,
+      hasMore: page.hasMore,
     });
   } catch (error) {
     return dashboardErrorResponse(error, requestId);
@@ -210,6 +211,8 @@ function dashboardRunSummary(row: RunRow): Record<string, unknown> {
     taskMode: row.task_mode,
     publishMode: row.publish_mode,
     stage: row.stage,
+    operationalHealth: row.operational_health,
+    lastHeartbeatAt: row.last_heartbeat_at,
     createdAt: row.created_at,
     queuedAt: row.queued_at,
     startedAt: row.started_at,

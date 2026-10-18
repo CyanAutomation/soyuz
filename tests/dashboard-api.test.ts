@@ -2,17 +2,24 @@ import { describe, expect, it, vi } from "vitest";
 import { fetchJson } from "../dashboard/api.ts";
 import { renderAuthUi } from "../dashboard/auth-ui.ts";
 import { revokeAccessToken } from "../dashboard/auth-api.ts";
+import { buildRunListPath, isActiveRunStatus } from "../dashboard/run-list.ts";
 
 interface FakeNode {
+  tagName: string;
   textContent: string;
   hidden: boolean;
   disabled: boolean;
+  value: string;
+  className: string;
+  type: string;
+  open: boolean;
   dataset: DOMStringMap;
   children: unknown[];
   listeners: Record<string, (event?: Event) => void>;
   addEventListener(event: string, callback: (event?: Event) => void): void;
   append(...children: unknown[]): void;
   replaceChildren(...children: unknown[]): void;
+  click(): void;
 }
 
 interface FakeResponse {
@@ -27,6 +34,19 @@ interface RecordedRequest {
 }
 
 describe("dashboard API responses", () => {
+  it("[DASHBOARD-RUN-LIST-01] encodes status and pagination cursors in run-list requests", () => {
+    expect(buildRunListPath()).toBe("/dashboard/api/runs?limit=50");
+    expect(buildRunListPath({ status: "running" })).toBe("/dashboard/api/runs?limit=50&status=running");
+    expect(buildRunListPath({ status: "failed", cursor: "a+/=" })).toBe("/dashboard/api/runs?limit=50&status=failed&cursor=a%2B%2F%3D");
+  });
+
+  it("[DASHBOARD-RUN-LIST-02] classifies active run states", () => {
+    expect(isActiveRunStatus("queued")).toBe(true);
+    expect(isActiveRunStatus("running")).toBe(true);
+    expect(isActiveRunStatus("completed")).toBe(false);
+    expect(isActiveRunStatus("failed")).toBe(false);
+  });
+
   it("[DASHBOARD-API-ERROR-01] preserves HTTP failures without decoding a non-JSON error body", async () => {
     const response = {
       ok: false,
@@ -106,6 +126,10 @@ describe("dashboard authentication flow", () => {
       ["#runs", createNode()],
       ["#connect", createNode()],
       ["#account", createNode()],
+      ["#refresh", createNode()],
+      ["#status-filter", createNode()],
+      ["#load-more", createNode()],
+      ["#updated", createNode()],
     ]);
     const sessionValues = new Map([
       ["soyuz.dashboard.state", "state-value"],
@@ -119,7 +143,26 @@ describe("dashboard authentication flow", () => {
       setItem: (key: string, value: string) => { sessionValues.set(key, value); },
     };
     const requests: RecordedRequest[] = [];
-    let resolveRuns!: (response: FakeResponse) => void;
+    const intervalCallbacks: Array<() => void> = [];
+    const runId = "00000000-0000-4000-8000-000000000101";
+    const initialEvents = Array.from({ length: 100 }, (_, index) => ({
+      sequence: index + 1,
+      type: index === 0 ? "run.started" : `run.progress.${index + 1}`,
+      stage: "validation",
+      step: "checks",
+      timestamp: "2026-10-18T12:01:00.000Z",
+      payload: { completed: index + 1 },
+    }));
+    const run = {
+      runId,
+      status: "running",
+      repoUrl: "https://github.com/example/project",
+      ref: "main",
+      createdAt: "2026-10-18T12:00:00.000Z",
+      stage: "validation",
+      operationalHealth: "healthy",
+      lastHeartbeatAt: "2026-10-18T12:01:00.000Z",
+    };
     const fetcher = vi.fn(async (path: string, init: RequestInit = {}): Promise<FakeResponse> => {
       requests.push({ path, init });
       const requestBody = init.body instanceof URLSearchParams
@@ -129,14 +172,26 @@ describe("dashboard authentication flow", () => {
         return jsonResponse({ access_token: "dashboard-access-token" });
       }
       if (path === "/dashboard/api/me") return jsonResponse({ githubLogin: "current-user" });
-      if (path === "/dashboard/api/runs?limit=50") {
-        return new Promise<FakeResponse>((resolve) => { resolveRuns = resolve; });
+      if (path === "/dashboard/api/runs?limit=50") return jsonResponse({ runs: [run], nextCursor: "cursor+/1" });
+      if (path === `/dashboard/api/runs/${runId}`) return jsonResponse({ outcomeSummary: "Validation passed", taskMode: "inspect", publishMode: "none" });
+      if (path === `/dashboard/api/runs/${runId}/artifacts`) return jsonResponse({ artifacts: [] });
+      if (path === `/dashboard/api/runs/${runId}/events?limit=100`) return jsonResponse({ events: initialEvents, nextAfter: 100, hasMore: true });
+      if (path === `/dashboard/api/runs/${runId}/events?after=100&limit=100`) return jsonResponse({ events: [{ sequence: 101, type: "run.completed", stage: "validation", step: "checks", timestamp: "2026-10-18T12:02:00.000Z", payload: { status: "completed" } }], nextAfter: 101, hasMore: false });
+      if (path === "/dashboard/api/runs?limit=50&cursor=cursor%2B%2F1") {
+        return jsonResponse({ runs: [{ ...run, runId: "00000000-0000-4000-8000-000000000102", status: "completed" }], nextCursor: null });
       }
+      if (path === "/dashboard/api/runs?limit=50&status=running") return jsonResponse({ runs: [run], nextCursor: null });
       if (path === "/oauth/token") return { ok: false, status: 503, json: async () => ({}) };
       throw new Error(`Unexpected request: ${path}`);
     });
 
-    vi.stubGlobal("document", { querySelector: (selector: string) => nodes.get(selector) });
+    const documentStub = {
+      visibilityState: "visible",
+      querySelector: (selector: string) => nodes.get(selector),
+      createElement: (tagName: string) => createNode(tagName),
+      addEventListener: vi.fn(),
+    };
+    vi.stubGlobal("document", documentStub);
     vi.stubGlobal("location", {
       href: "https://soyuz.test/dashboard/?code=auth-code&state=state-value",
       origin: "https://soyuz.test",
@@ -145,6 +200,8 @@ describe("dashboard authentication flow", () => {
     vi.stubGlobal("sessionStorage", storage);
     vi.stubGlobal("history", { replaceState: vi.fn() });
     vi.stubGlobal("fetch", fetcher);
+    vi.stubGlobal("setInterval", (callback: () => void) => { intervalCallbacks.push(callback); return 1; });
+    vi.stubGlobal("clearInterval", vi.fn());
     vi.resetModules();
 
     try {
@@ -152,12 +209,37 @@ describe("dashboard authentication flow", () => {
       await vi.waitFor(() => expect(nodeAt(nodes, "#connect").textContent).toBe("Sign out"));
       await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=50")).toBe(true));
       expect(nodeAt(nodes, "#account")).toMatchObject({ hidden: false, textContent: "Signed in as @current-user" });
-      expect(nodeAt(nodes, "#notice").textContent).toBe("Loading recent runs…");
+      await vi.waitFor(() => expect(nodeAt(nodes, "#notice").textContent).toContain("1 run"));
+      expect(nodeAt(nodes, "#runs").children).toHaveLength(1);
+      expect(intervalCallbacks).toHaveLength(1);
+      documentStub.visibilityState = "hidden";
+      intervalCallbacks[0]!();
+      await Promise.resolve();
+      expect(requests.filter(({ path }) => path === "/dashboard/api/runs?limit=50")).toHaveLength(1);
+      documentStub.visibilityState = "visible";
+      intervalCallbacks[0]!();
+      await vi.waitFor(() => expect(requests.filter(({ path }) => path === "/dashboard/api/runs?limit=50")).toHaveLength(2));
+
+      const details = findNode(nodeAt(nodes, "#runs"), "DETAILS");
+      details.open = true;
+      details.listeners.toggle?.();
+      await vi.waitFor(() => expect(requests.some(({ path }) => path === `/dashboard/api/runs/${runId}/events?limit=100`)).toBe(true));
+      await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("run.started"));
+      findNode(nodeAt(nodes, "#runs"), "BUTTON").click();
+      await vi.waitFor(() => expect(requests.some(({ path }) => path === `/dashboard/api/runs/${runId}/events?after=100&limit=100`)).toBe(true));
+      await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("run.completed"));
+
+      nodeAt(nodes, "#load-more").listeners.click?.();
+      await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=50&cursor=cursor%2B%2F1")).toBe(true));
+      await vi.waitFor(() => expect(nodeAt(nodes, "#runs").children).toHaveLength(2));
+
+      nodeAt(nodes, "#status-filter").value = "running";
+      nodeAt(nodes, "#status-filter").listeners.change?.();
+      await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=50&status=running")).toBe(true));
+      await vi.waitFor(() => expect(nodeAt(nodes, "#runs").children).toHaveLength(1));
 
       nodeAt(nodes, "#connect").listeners.click?.();
       await vi.waitFor(() => expect(nodeAt(nodes, "#notice").textContent).toContain("could not confirm token revocation"));
-      resolveRuns(jsonResponse({ runs: [] }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(nodeAt(nodes, "#notice").textContent).toContain("could not confirm token revocation");
       expect(nodeAt(nodes, "#connect")).toMatchObject({ textContent: "Sign in with GitHub", disabled: false });
       expect(nodeAt(nodes, "#account")).toMatchObject({ hidden: true, textContent: "" });
@@ -174,18 +256,25 @@ describe("dashboard authentication flow", () => {
   });
 });
 
-function createNode(): FakeNode {
-  return {
+function createNode(tagName = "DIV"): FakeNode {
+  const node: FakeNode = {
+    tagName: tagName.toUpperCase(),
     textContent: "",
     hidden: false,
     disabled: false,
+    value: "",
+    className: "",
+    type: "",
+    open: false,
     dataset: {} as DOMStringMap,
-    children: [],
-    listeners: {},
+    children: [] as unknown[],
+    listeners: {} as Record<string, (event?: Event) => void>,
     addEventListener(event: string, callback: (event?: Event) => void) { this.listeners[event] = callback; },
     append(...children: unknown[]) { this.children.push(...children); },
     replaceChildren(...children: unknown[]) { this.children = [...children]; },
+    click() { this.listeners.click?.(); },
   };
+  return node;
 }
 
 function nodeAt(nodes: Map<string, FakeNode>, selector: string): FakeNode {
@@ -196,4 +285,22 @@ function nodeAt(nodes: Map<string, FakeNode>, selector: string): FakeNode {
 
 function jsonResponse(data: unknown): FakeResponse {
   return { ok: true, status: 200, json: async () => ({ data }) };
+}
+
+function findNode(root: FakeNode, tagName: string): FakeNode {
+  for (const child of root.children) {
+    if (!child || typeof child !== "object") continue;
+    const candidate = child as FakeNode & { tagName?: string };
+    if (candidate.tagName === tagName) return candidate;
+    try {
+      return findNode(candidate, tagName);
+    } catch {
+      // Continue through sibling nodes.
+    }
+  }
+  throw new Error(`Missing ${tagName} node`);
+}
+
+function flattenText(root: FakeNode): string {
+  return [root.textContent, ...root.children.filter((child): child is FakeNode => Boolean(child && typeof child === "object")).map(flattenText)].join(" ");
 }
