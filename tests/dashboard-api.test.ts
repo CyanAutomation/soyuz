@@ -27,7 +27,7 @@ interface RecordedRequest {
 }
 
 describe("dashboard API responses", () => {
-  it("reports an HTTP error without trying to parse a non-JSON body", async () => {
+  it("[DASHBOARD-API-ERROR-01] preserves HTTP failures without decoding a non-JSON error body", async () => {
     const response = {
       ok: false,
       status: 500,
@@ -35,7 +35,11 @@ describe("dashboard API responses", () => {
     };
     const fetcher = vi.fn().mockResolvedValue(response);
 
-    await expect(fetchJson("/api", {}, fetcher)).rejects.toThrow("request failed");
+    await expect(fetchJson("/api", {}, fetcher)).rejects.toMatchObject({
+      name: "HttpError",
+      message: "request failed",
+      status: 500,
+    });
     expect(response.json).not.toHaveBeenCalled();
   });
 
@@ -45,7 +49,7 @@ describe("dashboard API responses", () => {
     await expect(fetchJson("/api", {}, fetcher)).rejects.toMatchObject({ status: 401 });
   });
 
-  it("unwraps successful API data", async () => {
+  it("[DASHBOARD-API-ENVELOPE-01] unwraps the data field from successful API responses", async () => {
     const fetcher = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ data: { ready: true } }),
