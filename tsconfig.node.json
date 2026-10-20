@@ -9,6 +9,7 @@
   "include": [
     "scripts/**/*.ts",
     "tests/soyuz-production-smoke.test.ts",
+    "tests/migration-impact.test.ts",
     "tests/migration-history.test.ts",
     "tests/verify-production-database.test.ts"
   ],
