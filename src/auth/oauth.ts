@@ -126,20 +126,33 @@ export function renderConsentPage(details: ConsentDescription, handle: string): 
   const clientName = escapeHtml(details.clientName);
   const domain = details.clientDomain
     ? `Published by <strong>${escapeHtml(details.clientDomain)}</strong>.`
-    : "This app registered itself; its name is not verified.";
+    : "This app provided its own name. Check that you trust it before continuing.";
   const scopes = details.scope.map((scope) =>
-    `<label class="consent-scope"><input type="checkbox" name="scope" value="${escapeHtml(scope)}" checked><span>${escapeHtml(scope)}</span></label>`,
+    `<label class="consent-scope"><input type="checkbox" name="scope" value="${escapeHtml(scope)}" checked><span>${escapeHtml(consentScopeLabel(scope))}</span></label>`,
   ).join("");
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize ${clientName}</title><link rel="stylesheet" href="/dashboard/style.css"></head>
 <body><main class="consent-main"><section class="consent-card" aria-labelledby="consent-title">
 <p class="eyebrow">Soyuz · Run Dashboard</p><h1 id="consent-title">Allow ${clientName} to access Soyuz?</h1>
 <p>${domain} Access will be sent to <strong>${escapeHtml(details.redirectHost)}</strong>.</p>
-${details.redirectIsLoopback ? "<p class=\"consent-warning\"><strong>This sends access to an app on your computer.</strong> Continue only if you just started signing in from it.</p>" : ""}
-<p class="consent-provider">GitHub will only be asked to confirm your account identity with the read:user permission.</p>
+${details.redirectIsLoopback ? "<p class=\"notice notice--warning consent-warning\"><strong>This sends access to an app on your computer.</strong> Continue only if you just started signing in from it.</p>" : ""}
+<p class="consent-provider">GitHub will confirm your account using its read:user permission.</p>
 <form method="post" class="consent-form"><input type="hidden" name="handle" value="${escapeHtml(handle)}"><fieldset class="consent-scopes"><legend>Soyuz permissions</legend>${scopes}</fieldset>
-<div class="consent-actions"><button class="consent-allow" name="decision" value="approve">Allow</button><button class="consent-deny" name="decision" value="deny">Deny</button></div></form>
+<div class="consent-actions"><button class="button button--primary consent-allow" name="decision" value="approve">Allow</button><button class="button button--secondary consent-deny" name="decision" value="deny">Deny</button></div></form>
 </section></main></body></html>`;
+}
+
+function consentScopeLabel(scope: string): string {
+  switch (scope) {
+    case SOYUZ_READ_SCOPE:
+      return "View run status, history, and files";
+    case SOYUZ_WRITE_SCOPE:
+      return "Create and manage runs";
+    case "offline_access":
+      return "Stay signed in";
+    default:
+      return scope;
+  }
 }
 
 async function handleOAuthPageRequest(request: Request, env: Env, _context: ExecutionContext): Promise<Response> {

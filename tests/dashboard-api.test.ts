@@ -3,6 +3,14 @@ import { fetchJson } from "../dashboard/api.ts";
 import { renderAuthUi } from "../dashboard/auth-ui.ts";
 import { revokeAccessToken } from "../dashboard/auth-api.ts";
 import { buildRunListPath, isActiveRunStatus } from "../dashboard/run-list.ts";
+import {
+  formatEventLabel,
+  formatEventPayloadValue,
+  formatMachineLabel,
+  formatRepositoryName,
+  getRunStatusPresentation,
+  RUN_STATUS_OPTIONS,
+} from "../dashboard/presentation.ts";
 
 interface FakeNode {
   tagName: string;
@@ -45,6 +53,37 @@ describe("dashboard API responses", () => {
     expect(isActiveRunStatus("running")).toBe(true);
     expect(isActiveRunStatus("completed")).toBe(false);
     expect(isActiveRunStatus("failed")).toBe(false);
+  });
+
+  it("[DASHBOARD-PRESENTATION-01] uses one readable status catalog for filters and run cards", () => {
+    expect(RUN_STATUS_OPTIONS.map(({ value, label }) => [value, label])).toEqual([
+      ["admitting", "Admitting"],
+      ["queued", "Queued"],
+      ["claimed", "Claimed"],
+      ["running", "Running"],
+      ["cancel_requested", "Cancellation requested"],
+      ["cancelled", "Cancelled"],
+      ["completed", "Completed"],
+      ["failed", "Failed"],
+      ["admission_failed", "Admission failed"],
+    ]);
+    expect(getRunStatusPresentation("cancel_requested")).toMatchObject({ label: "Cancellation requested", tone: "warning", active: true });
+    expect(getRunStatusPresentation("completed")).toMatchObject({ label: "Completed", tone: "success", active: false });
+    expect(getRunStatusPresentation("admission_failed")).toMatchObject({ label: "Admission failed", tone: "danger", active: false });
+    expect(getRunStatusPresentation("new_internal_state")).toMatchObject({ label: "New internal state", tone: "neutral", active: false });
+  });
+
+  it("[DASHBOARD-PRESENTATION-02] turns machine values into sentence-case labels", () => {
+    expect(formatMachineLabel("review_and_publish")).toBe("Review and publish");
+    expect(formatEventLabel("run.started")).toBe("Run started");
+    expect(formatEventLabel("run.progress.validation")).toBe("Progress update");
+    expect(formatEventLabel("constructor")).toBe("Constructor");
+    expect(formatEventLabel("toString")).toBe("To String");
+    expect(formatEventPayloadValue("status", "cancel_requested")).toBe("Cancellation requested");
+    expect(formatEventPayloadValue("publishMode", "none")).toBe("None");
+    expect(formatEventPayloadValue("enabled", false)).toBe("No");
+    expect(formatRepositoryName("https://github.com/example/project.git")).toBe("example/project");
+    expect(formatRepositoryName("not a url")).toBe("not a url");
   });
 
   it("[DASHBOARD-API-ERROR-01] preserves HTTP failures without decoding a non-JSON error body", async () => {
@@ -124,6 +163,7 @@ describe("dashboard authentication flow", () => {
     const nodes = new Map([
       ["#notice", createNode()],
       ["#runs", createNode()],
+      ["#run-controls", createNode()],
       ["#connect", createNode()],
       ["#account", createNode()],
       ["#refresh", createNode()],
@@ -208,9 +248,14 @@ describe("dashboard authentication flow", () => {
       await import("../dashboard/app.ts");
       await vi.waitFor(() => expect(nodeAt(nodes, "#connect").textContent).toBe("Sign out"));
       await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=50")).toBe(true));
+      expect(nodeAt(nodes, "#run-controls").hidden).toBe(false);
+      expect(nodeAt(nodes, "#runs").hidden).toBe(false);
       expect(nodeAt(nodes, "#account")).toMatchObject({ hidden: false, textContent: "Signed in as @current-user" });
       await vi.waitFor(() => expect(nodeAt(nodes, "#notice").textContent).toContain("1 run"));
       expect(nodeAt(nodes, "#runs").children).toHaveLength(1);
+      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("example/project");
+      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Status: Running");
+      expect(flattenText(nodeAt(nodes, "#status-filter"))).toContain("Cancellation requested");
       expect(intervalCallbacks).toHaveLength(1);
       documentStub.visibilityState = "hidden";
       intervalCallbacks[0]!();
@@ -224,10 +269,10 @@ describe("dashboard authentication flow", () => {
       details.open = true;
       details.listeners.toggle?.();
       await vi.waitFor(() => expect(requests.some(({ path }) => path === `/dashboard/api/runs/${runId}/events?limit=100`)).toBe(true));
-      await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("run.started"));
+      await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Run started"));
       findNode(nodeAt(nodes, "#runs"), "BUTTON").click();
       await vi.waitFor(() => expect(requests.some(({ path }) => path === `/dashboard/api/runs/${runId}/events?after=100&limit=100`)).toBe(true));
-      await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("run.completed"));
+      await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Run completed"));
 
       nodeAt(nodes, "#load-more").listeners.click?.();
       await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=50&cursor=cursor%2B%2F1")).toBe(true));
@@ -239,10 +284,11 @@ describe("dashboard authentication flow", () => {
       await vi.waitFor(() => expect(nodeAt(nodes, "#runs").children).toHaveLength(1));
 
       nodeAt(nodes, "#connect").listeners.click?.();
-      await vi.waitFor(() => expect(nodeAt(nodes, "#notice").textContent).toContain("could not confirm token revocation"));
-      expect(nodeAt(nodes, "#notice").textContent).toContain("could not confirm token revocation");
+      await vi.waitFor(() => expect(nodeAt(nodes, "#notice").textContent).toContain("couldn't confirm that your token was revoked"));
+      expect(nodeAt(nodes, "#notice").textContent).toContain("couldn't confirm that your token was revoked");
       expect(nodeAt(nodes, "#connect")).toMatchObject({ textContent: "Sign in with GitHub", disabled: false });
       expect(nodeAt(nodes, "#account")).toMatchObject({ hidden: true, textContent: "" });
+      expect(nodeAt(nodes, "#run-controls").hidden).toBe(true);
       expect(nodeAt(nodes, "#runs").children).toEqual([]);
       const lastRequest = requests.at(-1);
       if (!lastRequest) throw new Error("Expected an OAuth revocation request");

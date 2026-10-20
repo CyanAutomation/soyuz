@@ -13,35 +13,26 @@
     <header>
       <div>
         <p class="eyebrow">Soyuz</p>
-        <h1>Run dashboard</h1>
-        <p class="muted">Read-only view of run status, progress, and retained artifacts.</p>
+        <h1>Recent runs</h1>
+        <p class="muted">See run progress, activity, and files in one place. This dashboard is read-only.</p>
       </div>
       <div class="auth-controls">
         <p id="account" class="meta" hidden></p>
-        <button id="connect" type="button">Sign in with GitHub</button>
+        <button id="connect" class="button button--primary" type="button">Sign in with GitHub</button>
       </div>
     </header>
-    <p id="notice" role="status" aria-live="polite">Sign in to view runs.</p>
-    <div class="run-controls" aria-label="Run list controls">
-      <label for="status-filter">Status
+    <p id="notice" class="notice notice--info" role="status" aria-live="polite">Sign in with GitHub to see your recent runs.</p>
+    <div id="run-controls" class="run-controls" aria-label="Run list controls" hidden>
+      <label for="status-filter">Filter by status
         <select id="status-filter">
           <option value="">All statuses</option>
-          <option value="admitting">Admitting</option>
-          <option value="queued">Queued</option>
-          <option value="claimed">Claimed</option>
-          <option value="running">Running</option>
-          <option value="cancel_requested">Cancellation requested</option>
-          <option value="cancelled">Cancelled</option>
-          <option value="completed">Completed</option>
-          <option value="failed">Failed</option>
-          <option value="admission_failed">Admission failed</option>
         </select>
       </label>
-      <button id="refresh" type="button">Refresh runs</button>
+      <button id="refresh" class="button button--secondary" type="button">Refresh runs</button>
       <p id="updated" class="meta" aria-live="polite"></p>
     </div>
-    <section id="runs" aria-label="Recent runs"></section>
-    <button id="load-more" class="load-more" type="button" hidden>Load more runs</button>
+    <section id="runs" aria-label="Recent runs" hidden></section>
+    <button id="load-more" class="button button--secondary load-more" type="button" hidden>Load more runs</button>
   </main>
 </body>
 </html>
