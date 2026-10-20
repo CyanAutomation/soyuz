@@ -77,6 +77,8 @@ describe("dashboard API responses", () => {
     expect(formatMachineLabel("review_and_publish")).toBe("Review and publish");
     expect(formatEventLabel("run.started")).toBe("Run started");
     expect(formatEventLabel("run.progress.validation")).toBe("Progress update");
+    expect(formatEventLabel("constructor")).toBe("Constructor");
+    expect(formatEventLabel("toString")).toBe("To String");
     expect(formatEventPayloadValue("status", "cancel_requested")).toBe("Cancellation requested");
     expect(formatEventPayloadValue("publishMode", "none")).toBe("None");
     expect(formatEventPayloadValue("enabled", false)).toBe("No");
