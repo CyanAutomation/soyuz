@@ -62,7 +62,9 @@ jobs:
 
   deploy:
     name: Deploy production Worker
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # dependency-review is skipped on pushes, so bypass the implicit success() check
+    # while still requiring validation to succeed before deploying.
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.validate.result == 'success' }}
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 20
