@@ -71,7 +71,24 @@ describe("Soyuz OAuth policy", () => {
     expect(html).toContain('value="handle&lt;&amp;"');
     expect(html).toContain('<link rel="stylesheet" href="/dashboard/style.css">');
     expect(html).toContain('class="consent-card"');
+    expect(html).toContain('class="button button--primary consent-allow"');
     expect(html).not.toContain("<script>");
+  });
+
+  it("explains dashboard access in plain language", () => {
+    const html = renderConsentPage({
+      clientId: "dashboard-client",
+      clientName: "Soyuz Run Dashboard",
+      clientDomain: undefined,
+      redirectUri: "https://soyuz.example.test/dashboard/",
+      redirectHost: "soyuz.example.test",
+      redirectIsLoopback: false,
+      scope: ["soyuz:read"],
+    }, "consent-handle");
+
+    expect(html).toContain("This app provided its own name. Check that you trust it before continuing.");
+    expect(html).toContain("View run status, history, and files");
+    expect(html).not.toContain(">soyuz:read</span>");
   });
 
   it("reports OAuth failures with a support reference while keeping the public error generic", async () => {
