@@ -55,7 +55,7 @@ export function formatMachineLabel(value: string | null | undefined): string {
 }
 
 export function formatEventLabel(type: string): string {
-  if (eventLabels[type]) return eventLabels[type];
+  if (Object.hasOwn(eventLabels, type)) return eventLabels[type]!;
   if (type.startsWith("run.progress.")) return "Progress update";
   return formatMachineLabel(type);
 }
