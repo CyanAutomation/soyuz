@@ -1,3 +1,5 @@
+import { getRunStatusPresentation } from "./presentation.js";
+
 export const RUN_LIST_LIMIT = 50;
 
 export interface RunListQuery {
@@ -13,5 +15,5 @@ export function buildRunListPath(query: RunListQuery = {}): string {
 }
 
 export function isActiveRunStatus(status: string): boolean {
-  return ["admitting", "queued", "claimed", "running", "cancel_requested"].includes(status);
+  return getRunStatusPresentation(status).active;
 }

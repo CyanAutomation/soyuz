@@ -1,7 +1,15 @@
 import { fetchJson, HttpError } from "./api.js";
 import { revokeAccessToken } from "./auth-api.js";
 import { renderAuthUi } from "./auth-ui.js";
-import { buildRunListPath, isActiveRunStatus } from "./run-list.js";
+import {
+  formatEventLabel,
+  formatEventPayloadValue,
+  formatMachineLabel,
+  formatRepositoryName,
+  getRunStatusPresentation,
+  RUN_STATUS_OPTIONS,
+} from "./presentation.js";
+import { buildRunListPath } from "./run-list.js";
 
 interface OAuthRegistration {
   client_id: string;
@@ -58,8 +66,11 @@ interface DashboardRunEvent {
   payload: Record<string, string | number | boolean>;
 }
 
+type NoticeTone = "info" | "empty" | "success" | "warning" | "danger";
+
 const notice = requiredElement<HTMLElement>("#notice");
 const runsSection = requiredElement<HTMLElement>("#runs");
+const runControls = requiredElement<HTMLElement>("#run-controls");
 const connectButton = requiredElement<HTMLButtonElement>("#connect");
 const accountLabel = requiredElement<HTMLElement>("#account");
 const refreshButton = requiredElement<HTMLButtonElement>("#refresh");
@@ -76,6 +87,9 @@ let isLoadingRuns = false;
 let pendingRunReset = false;
 let runsById = new Map<string, DashboardRunSummary>();
 const expandedRunIds = new Set<string>();
+
+populateStatusFilter();
+setDashboardVisible(false);
 
 connectButton.addEventListener("click", () => {
   if (accessToken) void signOut();
@@ -97,7 +111,7 @@ document.addEventListener("visibilitychange", () => {
 
 async function connect() {
   renderAuthUi(connectButton, accountLabel, "signing-in");
-  notice.textContent = "Starting GitHub sign-in…";
+  setNotice("Opening GitHub sign-in…", "info");
   try {
     const redirectUri = `${location.origin}/dashboard/`;
     const registration = await fetchJson<OAuthRegistration>("/oauth/register", {
@@ -131,7 +145,7 @@ async function connect() {
     authorize.searchParams.set("resource", `${location.origin}/`);
     location.assign(authorize);
   } catch {
-    notice.textContent = "Sign-in could not start. Check the service configuration and try again.";
+    setNotice("We couldn't start sign-in. Please try again. If the problem continues, contact your Soyuz administrator.", "danger");
     renderAuthUi(connectButton, accountLabel, "signed-out");
   }
 }
@@ -141,13 +155,13 @@ async function finishSignIn() {
   const code = params.get("code");
   if (!code) return;
   if (!oauthStateMatches(params)) {
-    notice.textContent = "Sign-in could not be verified. Start again.";
+    setNotice("We couldn't verify this sign-in. Please start again.", "danger");
     renderAuthUi(connectButton, accountLabel, "signed-out");
     return;
   }
 
   renderAuthUi(connectButton, accountLabel, "signing-in");
-  notice.textContent = "Finishing sign-in…";
+  setNotice("Completing sign-in…", "info");
   try {
     const token = await exchangeAuthorizationCode(code);
     accessToken = token.access_token;
@@ -160,6 +174,7 @@ async function finishSignIn() {
     clearOAuthState();
     history.replaceState(null, "", "/dashboard/");
     renderAuthUi(connectButton, accountLabel, "signed-in", identity.githubLogin);
+    setDashboardVisible(true);
     await loadRuns({ reset: true });
     startRunRefresh();
   } catch {
@@ -171,7 +186,7 @@ async function finishSignIn() {
         // Clear local sign-in state even when the provider cannot confirm revocation.
       }
     }
-    clearLocalSession("GitHub sign-in failed. Start again.");
+    clearLocalSession("We couldn't complete sign-in. Please try again.", "danger");
   }
 }
 
@@ -183,17 +198,18 @@ async function signOut() {
   renderAuthUi(connectButton, accountLabel, "signing-out");
   stopRunRefresh();
   runsSection.replaceChildren();
-  notice.textContent = "Signing out…";
+  setDashboardVisible(false);
+  setNotice("Signing out…", "info");
 
   try {
     if (token && clientId) await revokeAccessToken(token, clientId);
-    clearLocalSession("Signed out.");
+    clearLocalSession("You're signed out.", "success");
   } catch {
-    clearLocalSession("Signed out on this page. Soyuz could not confirm token revocation; the token expires within one hour.");
+    clearLocalSession("You're signed out on this page. We couldn't confirm that your token was revoked; it will expire within one hour.", "warning");
   }
 }
 
-function clearLocalSession(message: string): void {
+function clearLocalSession(message: string, tone: NoticeTone = "info"): void {
   accessToken = null;
   oauthClientId = null;
   isLoadingRuns = false;
@@ -205,8 +221,9 @@ function clearLocalSession(message: string): void {
   loadMoreButton.hidden = true;
   updatedLabel.textContent = "";
   runsSection.replaceChildren();
+  setDashboardVisible(false);
   renderAuthUi(connectButton, accountLabel, "signed-out");
-  notice.textContent = message;
+  setNotice(message, tone);
 }
 
 function oauthStateMatches(params: URLSearchParams): boolean {
@@ -245,7 +262,7 @@ async function loadRuns(options: { reset: boolean; quiet?: boolean; refreshFirst
 
   isLoadingRuns = true;
   loadMoreButton.disabled = true;
-  if (!options.quiet && options.reset) notice.textContent = "Loading recent runs…";
+  if (!options.quiet && options.reset) setNotice("Loading recent runs…", "info");
   try {
     const result = await apiJson<DashboardRunListResponse>(buildRunListPath({
       status: statusFilter.value || null,
@@ -257,15 +274,20 @@ async function loadRuns(options: { reset: boolean; quiet?: boolean; refreshFirst
     if (options.reset || cursor || options.refreshFirstPage) nextCursor = result.nextCursor;
     if (!(options.refreshFirstPage && expandedRunIds.size > 0)) renderRuns();
     loadMoreButton.hidden = !nextCursor;
-    updatedLabel.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    updatedLabel.textContent = `Last refreshed ${new Date().toLocaleTimeString()}`;
     if (!runsById.size) {
-      notice.textContent = statusFilter.value ? "No runs match this status." : "No runs have been recorded yet.";
+      setNotice(
+        statusFilter.value
+          ? "No runs match this filter yet."
+          : "No runs yet. Runs submitted to Soyuz will appear here.",
+        "empty",
+      );
     } else {
-      notice.textContent = `${runsById.size} ${runsById.size === 1 ? "run" : "runs"} shown`;
+      setNotice(`${runsById.size} ${runsById.size === 1 ? "run" : "runs"} shown.`, "info");
     }
   } catch {
     if (token === accessToken) {
-      if (!options.quiet) notice.textContent = "Recent runs could not be loaded. Try again shortly.";
+      if (!options.quiet) setNotice("We couldn't load runs. Please try again shortly.", "danger");
     }
   } finally {
     if (token === accessToken) {
@@ -286,30 +308,53 @@ function renderRuns(): void {
 
 function renderRun(run: DashboardRunSummary): HTMLElement {
   const card = document.createElement("article");
-  card.className = "run";
+  card.className = "card run-card";
+
+  const cardHeader = document.createElement("div");
+  cardHeader.className = "run-card__header";
+  const identity = document.createElement("div");
+  identity.className = "run-card__identity";
   const heading = document.createElement("h2");
-  heading.textContent = `${run.status} · ${run.runId}`;
-  const meta = document.createElement("p");
-  meta.className = "meta";
-  meta.textContent = `${run.repoUrl} · ${run.ref} · ${new Date(run.createdAt).toLocaleString()}`;
+  heading.textContent = formatRepositoryName(run.repoUrl);
+  const ref = document.createElement("p");
+  ref.className = "run-card__ref";
+  ref.textContent = `Ref · ${run.ref || "Not reported"}`;
+  identity.append(heading, ref);
+
+  const statusPresentation = getRunStatusPresentation(run.status);
   const status = document.createElement("p");
-  status.className = isActiveRunStatus(run.status) ? "badge status-active" : "badge";
-  status.textContent = `Status: ${run.status}`;
-  const stage = document.createElement("p");
-  stage.className = "meta";
-  stage.textContent = `Stage: ${run.stage || "not reported"}`;
+  status.className = `badge badge--${statusPresentation.tone}`;
+  status.textContent = `Status: ${statusPresentation.label}`;
+  cardHeader.append(identity, status);
+
+  const runId = document.createElement("p");
+  runId.className = "run-card__id";
+  runId.textContent = "Run ID · ";
+  const runIdCode = document.createElement("code");
+  runIdCode.textContent = run.runId;
+  runId.append(runIdCode);
+
+  const facts = createDefinitionList([
+    ["Stage", formatMachineLabel(run.stage)],
+    ["Started", new Date(run.createdAt).toLocaleString()],
+  ], "data-list run-facts");
+
   const health = document.createElement("p");
-  health.className = run.operationalHealth === "suspect_stalled" ? "badge health-warning" : "badge";
+  health.className = run.operationalHealth === "suspect_stalled"
+    ? "notice notice--warning run-card__health"
+    : "meta run-card__health";
   health.textContent = run.operationalHealth === "suspect_stalled"
-    ? `Heartbeat overdue · last seen ${formatTimestamp(run.lastHeartbeatAt)}`
+    ? run.lastHeartbeatAt
+      ? `The worker hasn't checked in recently. Last check-in: ${formatTimestamp(run.lastHeartbeatAt)}.`
+      : "The worker hasn't checked in recently. This run may be stalled."
     : run.lastHeartbeatAt
-      ? `Last heartbeat ${formatTimestamp(run.lastHeartbeatAt)}`
-      : "Heartbeat not reported";
-  card.append(heading, meta, status, stage, health);
+      ? `Last worker check-in · ${formatTimestamp(run.lastHeartbeatAt)}`
+      : "No worker check-in has been reported yet.";
+  card.append(cardHeader, runId, facts, health);
 
   const details = document.createElement("details");
   const summary = document.createElement("summary");
-  summary.textContent = "Run history, details and artifacts";
+  summary.textContent = "View summary, activity, and files";
   const content = document.createElement("div");
   content.className = "details-content";
   details.append(summary, content);
@@ -335,7 +380,7 @@ async function loadRunDetails(runId: string, details: HTMLDetailsElement, conten
   content.replaceChildren();
   const loading = document.createElement("p");
   loading.className = "meta";
-  loading.textContent = "Loading run history…";
+  loading.textContent = "Loading run details…";
   content.append(loading);
   try {
     const [detail, artifacts, eventPage] = await Promise.all([
@@ -353,10 +398,12 @@ async function loadRunDetails(runId: string, details: HTMLDetailsElement, conten
     if (token !== accessToken) return;
     content.replaceChildren();
     const error = document.createElement("p");
-    error.textContent = "Run details could not be loaded.";
+    error.className = "notice notice--danger";
+    error.textContent = "We couldn't load this run's details. Please try again.";
     const retry = document.createElement("button");
+    retry.className = "button button--secondary";
     retry.type = "button";
-    retry.textContent = "Try loading again";
+    retry.textContent = "Try again";
     retry.addEventListener("click", () => void loadRunDetails(runId, details, content));
     content.append(error, retry);
   } finally {
@@ -365,21 +412,27 @@ async function loadRunDetails(runId: string, details: HTMLDetailsElement, conten
 }
 
 function appendRunSummary(container: HTMLElement, detail: DashboardRunDetail): void {
+  const section = document.createElement("section");
+  section.className = "run-details__section";
+  const heading = document.createElement("h3");
+  heading.textContent = "Summary";
   const summary = document.createElement("p");
-  summary.textContent = detail.outcomeSummary || `Task mode: ${detail.taskMode}; publish mode: ${detail.publishMode}.`;
-  container.append(summary);
+  summary.className = "run-summary";
+  summary.textContent = detail.outcomeSummary || `Task: ${formatMachineLabel(detail.taskMode)}. Publishing: ${formatMachineLabel(detail.publishMode)}.`;
+  section.append(heading, summary);
+  container.append(section);
 }
 
 function appendRunEvents(container: HTMLElement, runId: string, page: DashboardRunEventsResponse): void {
   const section = document.createElement("section");
-  section.className = "event-history";
+  section.className = "run-details__section event-history";
   const heading = document.createElement("h3");
-  heading.textContent = "Run history";
+  heading.textContent = "Activity";
   section.append(heading);
   if (!page.events.length) {
     const empty = document.createElement("p");
-    empty.className = "meta";
-    empty.textContent = "No recorded events.";
+    empty.className = "notice notice--empty";
+    empty.textContent = "No activity has been recorded for this run yet.";
     section.append(empty);
   } else {
     const list = document.createElement("ol");
@@ -388,9 +441,9 @@ function appendRunEvents(container: HTMLElement, runId: string, page: DashboardR
     if (page.hasMore) {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "load-older-events";
+      button.className = "button button--secondary load-older-events";
       button.dataset.after = String(page.nextAfter);
-      button.textContent = "Load older events";
+      button.textContent = "Load older activity";
       button.addEventListener("click", () => void loadOlderRunEvents(runId, list, button));
       section.append(button);
     }
@@ -402,16 +455,18 @@ function appendRunEventItems(list: HTMLOListElement, events: DashboardRunEvent[]
   for (const event of events) {
     const item = document.createElement("li");
     const title = document.createElement("strong");
-    title.textContent = event.type;
+    title.className = "event-title";
+    title.textContent = formatEventLabel(event.type);
     const meta = document.createElement("p");
     meta.className = "meta";
-    meta.textContent = [event.stage, event.step, formatTimestamp(event.timestamp)].filter(Boolean).join(" · ");
+    meta.textContent = [event.stage && formatMachineLabel(event.stage), event.step && formatMachineLabel(event.step), formatTimestamp(event.timestamp)].filter(Boolean).join(" · ");
     item.append(title, meta);
     const fields = Object.entries(event.payload);
     if (fields.length) {
-      const payload = document.createElement("p");
-      payload.textContent = fields.map(([key, value]) => `${key}: ${value}`).join(" · ");
-      item.append(payload);
+      item.append(createDefinitionList(
+        fields.map(([key, value]): [string, string] => [formatMachineLabel(key), formatEventPayloadValue(key, value)]),
+        "data-list event-payload",
+      ));
     }
     list.append(item);
   }
@@ -421,7 +476,7 @@ async function loadOlderRunEvents(runId: string, list: HTMLOListElement, button:
   const token = accessToken;
   if (!token || button.disabled) return;
   button.disabled = true;
-  button.textContent = "Loading older events…";
+  button.textContent = "Loading older activity…";
   try {
     const after = Number(button.dataset.after);
     const page = await apiJson<DashboardRunEventsResponse>(
@@ -431,11 +486,11 @@ async function loadOlderRunEvents(runId: string, list: HTMLOListElement, button:
     appendRunEventItems(list, page.events);
     button.dataset.after = String(page.nextAfter);
     button.hidden = !page.hasMore;
-    button.textContent = "Load older events";
+    button.textContent = "Load older activity";
   } catch {
     if (token === accessToken) {
       button.disabled = false;
-      button.textContent = "Retry loading older events";
+      button.textContent = "Try again";
     }
   } finally {
     if (token === accessToken) button.disabled = false;
@@ -443,22 +498,28 @@ async function loadOlderRunEvents(runId: string, list: HTMLOListElement, button:
 }
 
 function appendRunArtifacts(container: HTMLElement, runId: string, artifacts: DashboardArtifact[]): void {
+  const section = document.createElement("section");
+  section.className = "run-details__section";
+  const heading = document.createElement("h3");
+  heading.textContent = "Files";
+  section.append(heading);
   if (!artifacts.length) {
     const empty = document.createElement("p");
-    empty.className = "meta";
-    empty.textContent = "No retained artifacts.";
-    container.append(empty);
-    return;
+    empty.className = "notice notice--empty";
+    empty.textContent = "No files are available for this run.";
+    section.append(empty);
+  } else {
+    const list = document.createElement("div");
+    list.className = "artifacts";
+    for (const artifact of artifacts) list.append(createArtifactButton(runId, artifact));
+    section.append(list);
   }
-  const list = document.createElement("div");
-  list.className = "artifacts";
-  for (const artifact of artifacts) list.append(createArtifactButton(runId, artifact));
-  container.append(list);
+  container.append(section);
 }
 
 function createArtifactButton(runId: string, artifact: DashboardArtifact): HTMLButtonElement {
   const button = document.createElement("button");
-  button.className = "artifact-link";
+  button.className = "button button--secondary artifact-link";
   button.type = "button";
   button.textContent = `Download ${artifact.name} (${formatBytes(artifact.size)})`;
   button.addEventListener("click", () => void downloadArtifact(runId, artifact));
@@ -487,8 +548,43 @@ async function downloadArtifact(runId: string, artifact: DashboardArtifact): Pro
     link.click();
     URL.revokeObjectURL(objectUrl);
   } catch {
-    if (token === accessToken) notice.textContent = "Artifact download failed. It may have expired.";
+    if (token === accessToken) setNotice("We couldn't download that file. It may have expired; please refresh and try again.", "danger");
   }
+}
+
+function populateStatusFilter(): void {
+  for (const status of RUN_STATUS_OPTIONS) {
+    const option = document.createElement("option");
+    option.value = status.value;
+    option.textContent = status.label;
+    statusFilter.append(option);
+  }
+}
+
+function setDashboardVisible(visible: boolean): void {
+  runControls.hidden = !visible;
+  runsSection.hidden = !visible;
+}
+
+function setNotice(message: string, tone: NoticeTone): void {
+  notice.textContent = message;
+  notice.className = `notice notice--${tone}`;
+}
+
+function createDefinitionList(entries: Array<[string, string]>, className = "data-list"): HTMLDListElement {
+  const list = document.createElement("dl");
+  list.className = className;
+  for (const [label, value] of entries) {
+    const item = document.createElement("div");
+    item.className = "data-list__item";
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const description = document.createElement("dd");
+    description.textContent = value;
+    item.append(term, description);
+    list.append(item);
+  }
+  return list;
 }
 
 async function apiJson<T = unknown>(path: string): Promise<T> {
@@ -502,7 +598,7 @@ async function apiJson<T = unknown>(path: string): Promise<T> {
 
 function clearSessionWhenUnauthorized(error: unknown): void {
   if (accessToken && error instanceof HttpError && (error.status === 401 || error.status === 403)) {
-    clearLocalSession("Your Soyuz sign-in expired or access was removed. Sign in again.");
+    clearLocalSession("Your sign-in has expired or access has changed. Sign in again to continue.", "danger");
   }
 }
 
@@ -527,9 +623,9 @@ function formatBytes(bytes: number): string {
 }
 
 function formatTimestamp(value: string | null): string {
-  if (!value) return "unknown";
+  if (!value) return "Time unavailable";
   const timestamp = new Date(value);
-  return Number.isNaN(timestamp.getTime()) ? "unknown" : timestamp.toLocaleString();
+  return Number.isNaN(timestamp.getTime()) ? "Time unavailable" : timestamp.toLocaleString();
 }
 
 function startRunRefresh(): void {
