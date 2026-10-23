@@ -56,11 +56,17 @@ jobs:
 
   validate:
     name: Typecheck, tests, and deployment validation
-    needs: dependency-review
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.dependency-review.result == 'success') }}
+    needs: [dependency-review, d1-migration-impact]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: Require PR review gates
+        if: ${{ github.event_name == 'pull_request' && (needs.dependency-review.result != 'success' || needs.d1-migration-impact.result != 'success') }}
+        run: |
+          echo "Dependency review and D1 migration impact checks must pass before validation."
+          exit 1
+
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,11 +74,13 @@ jobs:
 
       - name: Lint GitHub Actions workflows
         # actionlint v1.7.12, pinned to the published image digest.
-        run: >-
-          docker run --rm --user "$(id -u):$(id -g)"
-          -v "$GITHUB_WORKSPACE:/repo:ro" -w /repo
-          rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
-          .github/workflows/*.yml
+        run: |
+          shopt -s nullglob
+          workflow_files=(.github/workflows/*.yml .github/workflows/*.yaml)
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/repo:ro" -w /repo \
+            rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
+            "${workflow_files[@]}"
 
       - name: Scan GitHub Actions workflows
         uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
@@ -100,7 +108,20 @@ jobs:
         run: npm run build
 
       - name: Validate Wrangler deployment bundle
-        run: npx wrangler deploy --dry-run
+        run: npx wrangler deploy --dry-run --outdir .wrangler/deploy
+
+      - name: Upload validated Worker bundle
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: soyuz-worker-${{ github.sha }}
+          path: |
+            .wrangler/deploy/
+            public/
+          if-no-files-found: error
+          include-hidden-files: true
+          overwrite: true
+          retention-days: 7
 
   production-d1-preflight:
     name: Production D1 migration preflight
@@ -173,8 +194,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build TypeScript dashboard assets
-        run: npm run build
+      - name: Download validated Worker bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: soyuz-worker-${{ github.sha }}
+          path: .
 
       - name: Require production deploy credentials
         env:
@@ -190,7 +214,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
+          command: deploy .wrangler/deploy/index.js --no-bundle
 
       - name: Check deployed health endpoint
         env:
