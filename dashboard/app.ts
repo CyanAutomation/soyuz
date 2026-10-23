@@ -24,7 +24,12 @@ interface DashboardRunSummary {
   runId: string;
   repoUrl: string;
   ref: string;
+  origin: { type: string; id: string };
+  retryOf: string | null;
   createdAt: string;
+  queuedAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
   stage: string | null;
   operationalHealth: "unknown" | "healthy" | "suspect_stalled";
   lastHeartbeatAt: string | null;
@@ -35,10 +40,14 @@ interface DashboardRunListResponse {
   nextCursor: string | null;
 }
 
-interface DashboardRunDetail {
+interface DashboardRunDetail extends DashboardRunSummary {
   outcomeSummary: string | null;
   taskMode: string;
   publishMode: string;
+  publishedUrl: string | null;
+  changedFileCount: number | null;
+  failureClass: string | null;
+  exitCode: number | null;
 }
 
 interface DashboardArtifact {
@@ -336,7 +345,10 @@ function renderRun(run: DashboardRunSummary): HTMLElement {
 
   const facts = createDefinitionList([
     ["Stage", formatMachineLabel(run.stage)],
-    ["Started", new Date(run.createdAt).toLocaleString()],
+    ["Created", formatRunTimestamp(run.createdAt)],
+    ["Queued", formatRunTimestamp(run.queuedAt)],
+    ["Started", formatRunTimestamp(run.startedAt)],
+    ["Completed", formatRunTimestamp(run.completedAt)],
   ], "data-list run-facts");
 
   const health = document.createElement("p");
@@ -418,9 +430,36 @@ function appendRunSummary(container: HTMLElement, detail: DashboardRunDetail): v
   heading.textContent = "Summary";
   const summary = document.createElement("p");
   summary.className = "run-summary";
-  summary.textContent = detail.outcomeSummary || `Task: ${formatMachineLabel(detail.taskMode)}. Publishing: ${formatMachineLabel(detail.publishMode)}.`;
-  section.append(heading, summary);
+  summary.textContent = detail.outcomeSummary || "No outcome summary was reported by the execution host.";
+  const facts = createDefinitionList([
+    ["Origin", formatRunOrigin(detail.origin)],
+    ["Retry of", detail.retryOf || "Not reported"],
+    ["Task", formatMachineLabel(detail.taskMode)],
+    ["Publishing", formatMachineLabel(detail.publishMode)],
+    ["Changed files", detail.changedFileCount === null ? "Not reported" : String(detail.changedFileCount)],
+    ["Exit code", detail.exitCode === null ? "Not reported" : String(detail.exitCode)],
+    ["Failure class", formatMachineLabel(detail.failureClass)],
+    ["Published URL", detail.publishedUrl || "Not reported"],
+  ], "data-list run-summary-facts");
+  section.append(heading, summary, facts);
+  if (detail.publishedUrl) {
+    const link = document.createElement("a");
+    link.href = detail.publishedUrl;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = "Open published URL";
+    section.append(link);
+  }
   container.append(section);
+}
+
+function formatRunOrigin(origin: DashboardRunSummary["origin"] | null | undefined): string {
+  if (!origin?.type || !origin.id) return "Not reported";
+  return `${formatMachineLabel(origin.type)} (${origin.id})`;
+}
+
+function formatRunTimestamp(value: string | null): string {
+  return value ? formatTimestamp(value) : "Not reported";
 }
 
 function appendRunEvents(container: HTMLElement, runId: string, page: DashboardRunEventsResponse): void {
@@ -506,7 +545,7 @@ function appendRunArtifacts(container: HTMLElement, runId: string, artifacts: Da
   if (!artifacts.length) {
     const empty = document.createElement("p");
     empty.className = "notice notice--empty";
-    empty.textContent = "No files are available for this run.";
+    empty.textContent = "No artifacts are available in Soyuz for this run.";
     section.append(empty);
   } else {
     const list = document.createElement("div");

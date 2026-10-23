@@ -87,6 +87,8 @@ Every worker request uses `Authorization: Bearer <WORKER_API_TOKEN>`, distinct f
 
 The claim request's `callbackId` is also the per-attempt fencing token. New Kaseki hosts echo it on every later callback; Soyuz rejects an older token with 409 `STALE_CLAIM`, including when two controller instances accidentally reuse a `workerId`. The echoed field is optional for contract-v1 compatibility with older hosts; those hosts do not receive stale-callback protection. Lifecycle callback IDs and event IDs must remain stable across retries. Replaying the same ID and payload is safe; reusing an ID for different data returns 409. Worker events are event metadata, not stdout/stderr. Exact artifact retries with the same ID and metadata are idempotent; reusing an ID for different bytes or metadata returns 409.
 
+`artifacts.uploaded` is a bounded terminal event containing only `status` (`complete` or `partial`), `uploadedCount`, `failedCount`, and `skippedCount`. The Kaseki adapter persists the report and its event ID before delivery, so retrying the terminal callback replays the same report safely. It does not include artifact contents or local filesystem paths.
+
 `worker.heartbeat` updates `lastHeartbeatAt` and restores `operationalHealth: "healthy"`. Soyuz's five-minute stale-run reconciler changes only the health classification to `suspect_stalled` and appends `run.suspected_stalled`; it never changes lifecycle status or republishes work. A later heartbeat can restore health. See the [Kaseki integration policy](KASEKI-INTEGRATION.md#heartbeat-and-suspected-stalled-runs).
 
 ## Public endpoints
