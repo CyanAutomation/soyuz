@@ -230,6 +230,7 @@ function dashboardRunDetail(row: RunRow): Record<string, unknown> {
     publishedUrl,
     changedFileCount: typeof result?.changedFileCount === "number" ? result.changedFileCount : null,
     failureClass: row.failure_class,
+    exitCode: row.exit_code,
     cancellation: {
       state: row.status === "cancel_requested" ? "requested" : row.status === "cancelled" ? "cancelled" : "none",
       requestedAt: row.cancel_requested_at,
@@ -238,7 +239,7 @@ function dashboardRunDetail(row: RunRow): Record<string, unknown> {
 }
 
 const DASHBOARD_EVENT_KEYS = new Set([
-  "source", "status", "percent", "progressPercent", "current", "total", "completed", "passed", "failed", "exitCode", "durationMs", "changedFileCount", "failureClass",
+  "source", "status", "percent", "progressPercent", "current", "total", "completed", "passed", "failed", "exitCode", "durationMs", "changedFileCount", "failureClass", "uploadedCount", "failedCount", "skippedCount",
 ]);
 
 function dashboardEvent(row: RunEventRow): Record<string, unknown> {
