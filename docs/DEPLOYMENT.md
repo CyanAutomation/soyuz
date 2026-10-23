@@ -2,7 +2,7 @@
 
 ## Local setup
 
-Use Node.js 22.18 or later. Install dependencies, copy the local variable template, and replace both token values with distinct random strings. Soyuz enforces a minimum of 16 characters; the 32-character example values are a stronger recommendation. Then apply the local D1 migration:
+Use Node.js 24.11.0 or later. Install dependencies, copy the local variable template, and replace both token values with distinct random strings. Soyuz enforces a minimum of 16 characters; the 32-character example values are a stronger recommendation. Then apply the local D1 migration:
 
 ```sh
 npm install

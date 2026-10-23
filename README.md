@@ -6,7 +6,7 @@ Soyuz is the Cloudflare control plane for Kaseki. It accepts authenticated run r
 
 ## Local development
 
-Requirements: Node.js 22.18 or later and npm. The local token check enforces a 16-character minimum; the example values are longer to encourage stronger secrets. Keep the client and worker tokens distinct.
+Requirements: Node.js 24.11.0 or later and npm. The local token check enforces a 16-character minimum; the example values are longer to encourage stronger secrets. Keep the client and worker tokens distinct.
 
 ```sh
 npm install
