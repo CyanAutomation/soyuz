@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   changedMigrationFiles,
+  findImmutableMigrationChanges,
   formatMigrationImpactSummary,
 } from "../scripts/migration-impact.ts";
 
@@ -36,5 +37,42 @@ describe("D1 migration impact reporting", () => {
     expect(formatMigrationImpactSummary(["src/db.ts", "migrations/notes.md"])).toContain(
       "No numbered SQL migrations changed in this pull request.",
     );
+  });
+
+  it("identifies edits and deletions of existing migrations while allowing new files", () => {
+    expect(findImmutableMigrationChanges(
+      [
+        "migrations/0002_run_liveness.sql",
+        "migrations/0005_request_payload_retention.sql",
+        "migrations/0006_new_feature.sql",
+      ],
+      ["migrations/0006_new_feature.sql"],
+    )).toEqual([
+      "migrations/0002_run_liveness.sql",
+      "migrations/0005_request_payload_retention.sql",
+    ]);
+  });
+
+  it("explains that edits and deletions of existing migrations block the PR", () => {
+    const summary = formatMigrationImpactSummary(
+      ["migrations/0002_run_liveness.sql", "migrations/0006_new_feature.sql"],
+      ["migrations/0002_run_liveness.sql"],
+    );
+
+    expect(summary).toContain("Existing numbered migrations are immutable");
+    expect(summary).toContain("migrations/0002_run_liveness.sql");
+    expect(summary).toContain("add a new numbered migration");
+    expect(summary).toContain("until production D1 history includes the new migrations");
+  });
+
+  it("does not claim the preflight will wait for a migration when only an existing file changed", () => {
+    const summary = formatMigrationImpactSummary(
+      ["migrations/0002_run_liveness.sql"],
+      ["migrations/0002_run_liveness.sql"],
+    );
+
+    expect(summary).toContain("No new migrations were added");
+    expect(summary).toContain("must be corrected before merge");
+    expect(summary).not.toContain("will stop at the Production D1 migration preflight");
   });
 });
