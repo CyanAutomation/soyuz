@@ -77,6 +77,7 @@ describe("dashboard API responses", () => {
     expect(formatMachineLabel("review_and_publish")).toBe("Review and publish");
     expect(formatEventLabel("run.started")).toBe("Run started");
     expect(formatEventLabel("run.progress.validation")).toBe("Progress update");
+    expect(formatEventLabel("artifacts.uploaded")).toBe("Artifact upload report");
     expect(formatEventLabel("constructor")).toBe("Constructor");
     expect(formatEventLabel("toString")).toBe("To String");
     expect(formatEventPayloadValue("status", "cancel_requested")).toBe("Cancellation requested");
@@ -187,11 +188,13 @@ describe("dashboard authentication flow", () => {
     const runId = "00000000-0000-4000-8000-000000000101";
     const initialEvents = Array.from({ length: 100 }, (_, index) => ({
       sequence: index + 1,
-      type: index === 0 ? "run.started" : `run.progress.${index + 1}`,
+      type: index === 0 ? "run.started" : index === 1 ? "artifacts.uploaded" : `run.progress.${index + 1}`,
       stage: "validation",
       step: "checks",
       timestamp: "2026-10-18T12:01:00.000Z",
-      payload: { completed: index + 1 },
+      payload: index === 1
+        ? { status: "partial", uploadedCount: 2, failedCount: 1, skippedCount: 0 }
+        : { completed: index + 1 },
     }));
     const run = {
       runId,
@@ -199,7 +202,12 @@ describe("dashboard authentication flow", () => {
       repoUrl: "https://github.com/example/project",
       ref: "main",
       createdAt: "2026-10-18T12:00:00.000Z",
+      queuedAt: "2026-10-18T12:00:30.000Z",
+      startedAt: "2026-10-18T12:01:00.000Z",
+      completedAt: null,
       stage: "validation",
+      origin: { type: "kaseki", id: "kaseki-prod" },
+      retryOf: null,
       operationalHealth: "healthy",
       lastHeartbeatAt: "2026-10-18T12:01:00.000Z",
     };
@@ -213,7 +221,16 @@ describe("dashboard authentication flow", () => {
       }
       if (path === "/dashboard/api/me") return jsonResponse({ githubLogin: "current-user" });
       if (path === "/dashboard/api/runs?limit=50") return jsonResponse({ runs: [run], nextCursor: "cursor+/1" });
-      if (path === `/dashboard/api/runs/${runId}`) return jsonResponse({ outcomeSummary: "Validation passed", taskMode: "inspect", publishMode: "none" });
+      if (path === `/dashboard/api/runs/${runId}`) return jsonResponse({
+        ...run,
+        outcomeSummary: "Validation passed",
+        taskMode: "inspect",
+        publishMode: "pr",
+        publishedUrl: "https://github.com/example/project/pull/7",
+        changedFileCount: 2,
+        failureClass: null,
+        exitCode: 0,
+      });
       if (path === `/dashboard/api/runs/${runId}/artifacts`) return jsonResponse({ artifacts: [] });
       if (path === `/dashboard/api/runs/${runId}/events?limit=100`) return jsonResponse({ events: initialEvents, nextAfter: 100, hasMore: true });
       if (path === `/dashboard/api/runs/${runId}/events?after=100&limit=100`) return jsonResponse({ events: [{ sequence: 101, type: "run.completed", stage: "validation", step: "checks", timestamp: "2026-10-18T12:02:00.000Z", payload: { status: "completed" } }], nextAfter: 101, hasMore: false });
@@ -255,6 +272,8 @@ describe("dashboard authentication flow", () => {
       expect(nodeAt(nodes, "#runs").children).toHaveLength(1);
       expect(flattenText(nodeAt(nodes, "#runs"))).toContain("example/project");
       expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Status: Running");
+      expect(flattenText(nodeAt(nodes, "#runs"))).toContain(`Created ${new Date(run.createdAt).toLocaleString()}`);
+      expect(flattenText(nodeAt(nodes, "#runs"))).toContain(`Started ${new Date(run.startedAt).toLocaleString()}`);
       expect(flattenText(nodeAt(nodes, "#status-filter"))).toContain("Cancellation requested");
       expect(intervalCallbacks).toHaveLength(1);
       documentStub.visibilityState = "hidden";
@@ -269,7 +288,15 @@ describe("dashboard authentication flow", () => {
       details.open = true;
       details.listeners.toggle?.();
       await vi.waitFor(() => expect(requests.some(({ path }) => path === `/dashboard/api/runs/${runId}/events?limit=100`)).toBe(true));
+      await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("https://github.com/example/project/pull/7"));
+      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Changed files 2");
+      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Exit code 0");
+      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Origin Kaseki (kaseki-prod)");
       await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Run started"));
+      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Artifact upload report");
+      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Uploaded Count 2");
+      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Failed Count 1");
+      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("No artifacts are available in Soyuz for this run.");
       findNode(nodeAt(nodes, "#runs"), "BUTTON").click();
       await vi.waitFor(() => expect(requests.some(({ path }) => path === `/dashboard/api/runs/${runId}/events?after=100&limit=100`)).toBe(true));
       await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Run completed"));
