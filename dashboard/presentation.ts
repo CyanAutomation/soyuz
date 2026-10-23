@@ -34,6 +34,7 @@ const eventLabels: Record<string, string> = {
   "run.claim_expired": "Worker did not pick up run",
   "worker.heartbeat": "Worker checked in",
   "stage.changed": "Stage changed",
+  "artifacts.uploaded": "Artifact upload report",
 };
 
 export function getRunStatusPresentation(status: string): RunStatusPresentation {

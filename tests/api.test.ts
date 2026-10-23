@@ -472,10 +472,13 @@ describe("Soyuz Worker API", () => {
     const { bindings } = testEnv({ oauth: true });
     const created = await submit(bindings);
     const runId = created.body.data.id as string;
-    await bindings.DB.prepare("UPDATE runs SET repo_url = ?, result_json = ? WHERE id = ?")
+    await bindings.DB.prepare("UPDATE runs SET repo_url = ?, result_json = ?, started_at = ?, completed_at = ?, exit_code = ? WHERE id = ?")
       .bind(
         "https://user:embedded-secret@github.com/example/private-project?access_token=embedded-token",
         JSON.stringify({ summary: "Completed safely", publishedUrl: "https://user:embedded-secret@github.com/example/private-project?token=embedded-token", changedFileCount: 3 }),
+        "2026-10-18T12:01:00.000Z",
+        "2026-10-18T12:02:00.000Z",
+        0,
         runId,
       ).run();
     const accessToken = await createOAuthAccessToken(bindings);
@@ -488,6 +491,9 @@ describe("Soyuz Worker API", () => {
       outcomeSummary: "Completed safely",
       publishedUrl: "https://github.com/example/private-project",
       changedFileCount: 3,
+      startedAt: "2026-10-18T12:01:00.000Z",
+      completedAt: "2026-10-18T12:02:00.000Z",
+      exitCode: 0,
     });
     expect(JSON.stringify(detail.body.data)).not.toContain("embedded-secret");
     expect(JSON.stringify(detail.body.data)).not.toContain("embedded-token");
@@ -1351,6 +1357,39 @@ describe("Soyuz Worker API", () => {
     const eventList = await call(bindings, `/v1/runs/${runId}/events?limit=20`, { token: CLIENT_TOKEN });
     expect(eventList.response.status).toBe(200);
     expect(eventList.body.data.events.filter((entry: { eventId: string }) => entry.eventId === EVENT_ID)).toHaveLength(1);
+  });
+
+  it("[WORKER-ARTIFACT-REPORT-01] stores bounded artifact delivery counts in the run timeline", async () => {
+    const { bindings } = testEnv();
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-artifacts";
+    await claimRun(bindings, runId, workerId);
+    await call(bindings, `/v1/worker/runs/${runId}/started`, {
+      method: "POST", token: WORKER_TOKEN,
+      body: { contractVersion: "1", callbackId: CALLBACK_ID, workerId },
+    });
+
+    const report = await call(bindings, `/v1/worker/runs/${runId}/events`, {
+      method: "POST", token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        eventId: EVENT_ID,
+        workerId,
+        type: "artifacts.uploaded",
+        timestamp: new Date().toISOString(),
+        payload: { status: "partial", uploadedCount: 2, failedCount: 1, skippedCount: 0 },
+      },
+    });
+    expect(report.response.status).toBe(202);
+
+    const events = await call(bindings, `/v1/runs/${runId}/events?limit=20`, { token: CLIENT_TOKEN });
+    expect(events.body.data.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "artifacts.uploaded",
+        payload: { status: "partial", uploadedCount: 2, failedCount: 1, skippedCount: 0 },
+      }),
+    ]));
   });
 
   it("[WORKER-COMPLETE-01] records completion and rejects a late started callback", async () => {

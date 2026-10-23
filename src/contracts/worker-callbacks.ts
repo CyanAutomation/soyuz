@@ -35,6 +35,7 @@ export const WorkerEventSchema = z.object({
     "worker.heartbeat",
     "validation.completed",
     "publish.completed",
+    "artifacts.uploaded",
   ]),
   stage: z.string().min(1).max(120).optional(),
   step: z.string().min(1).max(160).optional(),
