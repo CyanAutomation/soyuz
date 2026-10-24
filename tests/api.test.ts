@@ -193,8 +193,12 @@ function validRequest(overrides: Record<string, unknown> = {}) {
 }
 
 async function clearDatabase(): Promise<void> {
-  await runtimeEnv.DB.prepare("DELETE FROM run_events").run();
-  await runtimeEnv.DB.prepare("DELETE FROM runs").run();
+  await runtimeEnv.DB.batch([
+    runtimeEnv.DB.prepare("DELETE FROM run_events"),
+    runtimeEnv.DB.prepare("DELETE FROM artifact_deletion_queue"),
+    runtimeEnv.DB.prepare("DELETE FROM run_idempotency_keys"),
+    runtimeEnv.DB.prepare("DELETE FROM runs"),
+  ]);
 }
 
 async function countRunEvents(env: Env, runId: string, type: string): Promise<number> {
