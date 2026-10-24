@@ -100,7 +100,7 @@ Requirement IDs: `HEALTH-DB-01`, `RUN-READ-REST-01`, `CANCEL-QUEUED-01`, `CANCEL
 | `GET /health` | None | Minimal Worker/D1 health |
 | `POST /v1/runs` | Client | Validate, persist, and enqueue |
 | `POST /v1/runs/:id/retry` | Client or scoped Kaseki | Retry a terminal run from the same origin with a new idempotency key |
-| `GET /v1/runs` | Client | Filtered, cursor-paginated history |
+| `GET /v1/runs` | Client | Filtered, cursor-paginated history across the newest 30 runs; `limit` is 1–30 |
 | `GET /v1/runs/:id` | Client | Canonical run and normalized request |
 | `GET /v1/runs/:id/events` | Client | Append-only event history |
 | `GET /v1/runs/:id/artifacts` | Client | List retained artifact metadata |
@@ -108,6 +108,8 @@ Requirement IDs: `HEALTH-DB-01`, `RUN-READ-REST-01`, `CANCEL-QUEUED-01`, `CANCEL
 | `POST /v1/runs/:id/cancel` | Client | Cancel queued work or record running cancellation intent |
 | `POST /mcp` | Client key or OAuth | Stateless Streamable HTTP MCP tools |
 | `GET /dashboard/` | Browser | Private read-only dashboard; requires OAuth for its API |
+
+Run history is limited to the newest 30 runs across all statuses. Status filters and cursors apply within that window, and details, events, and artifacts for older runs are unavailable. Soyuz culls older run rows and their associated data during its minutely retention sweep.
 | `GET /dashboard/api/me` | OAuth `soyuz:read` | Current allowlisted GitHub account login |
 | `GET /dashboard/api/**` | OAuth `soyuz:read` | Dashboard run/event/artifact reads |
 

@@ -43,9 +43,9 @@ interface RecordedRequest {
 
 describe("dashboard API responses", () => {
   it("[DASHBOARD-RUN-LIST-01] encodes status and pagination cursors in run-list requests", () => {
-    expect(buildRunListPath()).toBe("/dashboard/api/runs?limit=50");
-    expect(buildRunListPath({ status: "running" })).toBe("/dashboard/api/runs?limit=50&status=running");
-    expect(buildRunListPath({ status: "failed", cursor: "a+/=" })).toBe("/dashboard/api/runs?limit=50&status=failed&cursor=a%2B%2F%3D");
+    expect(buildRunListPath()).toBe("/dashboard/api/runs?limit=30");
+    expect(buildRunListPath({ status: "running" })).toBe("/dashboard/api/runs?limit=30&status=running");
+    expect(buildRunListPath({ status: "failed", cursor: "a+/=" })).toBe("/dashboard/api/runs?limit=30&status=failed&cursor=a%2B%2F%3D");
   });
 
   it("[DASHBOARD-RUN-LIST-02] classifies active run states", () => {
@@ -220,7 +220,7 @@ describe("dashboard authentication flow", () => {
         return jsonResponse({ access_token: "dashboard-access-token" });
       }
       if (path === "/dashboard/api/me") return jsonResponse({ githubLogin: "current-user" });
-      if (path === "/dashboard/api/runs?limit=50") return jsonResponse({ runs: [run], nextCursor: "cursor+/1" });
+      if (path === "/dashboard/api/runs?limit=30") return jsonResponse({ runs: [run], nextCursor: "cursor+/1" });
       if (path === `/dashboard/api/runs/${runId}`) return jsonResponse({
         ...run,
         outcomeSummary: "Validation passed",
@@ -234,10 +234,10 @@ describe("dashboard authentication flow", () => {
       if (path === `/dashboard/api/runs/${runId}/artifacts`) return jsonResponse({ artifacts: [] });
       if (path === `/dashboard/api/runs/${runId}/events?limit=100`) return jsonResponse({ events: initialEvents, nextAfter: 100, hasMore: true });
       if (path === `/dashboard/api/runs/${runId}/events?after=100&limit=100`) return jsonResponse({ events: [{ sequence: 101, type: "run.completed", stage: "validation", step: "checks", timestamp: "2026-10-18T12:02:00.000Z", payload: { status: "completed" } }], nextAfter: 101, hasMore: false });
-      if (path === "/dashboard/api/runs?limit=50&cursor=cursor%2B%2F1") {
+      if (path === "/dashboard/api/runs?limit=30&cursor=cursor%2B%2F1") {
         return jsonResponse({ runs: [{ ...run, runId: "00000000-0000-4000-8000-000000000102", status: "completed" }], nextCursor: null });
       }
-      if (path === "/dashboard/api/runs?limit=50&status=running") return jsonResponse({ runs: [run], nextCursor: null });
+      if (path === "/dashboard/api/runs?limit=30&status=running") return jsonResponse({ runs: [run], nextCursor: null });
       if (path === "/oauth/token") return { ok: false, status: 503, json: async () => ({}) };
       throw new Error(`Unexpected request: ${path}`);
     });
@@ -264,7 +264,7 @@ describe("dashboard authentication flow", () => {
     try {
       await import("../dashboard/app.ts");
       await vi.waitFor(() => expect(nodeAt(nodes, "#connect").textContent).toBe("Sign out"));
-      await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=50")).toBe(true));
+      await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=30")).toBe(true));
       expect(nodeAt(nodes, "#run-controls").hidden).toBe(false);
       expect(nodeAt(nodes, "#runs").hidden).toBe(false);
       expect(nodeAt(nodes, "#account")).toMatchObject({ hidden: false, textContent: "Signed in as @current-user" });
@@ -279,10 +279,10 @@ describe("dashboard authentication flow", () => {
       documentStub.visibilityState = "hidden";
       intervalCallbacks[0]!();
       await Promise.resolve();
-      expect(requests.filter(({ path }) => path === "/dashboard/api/runs?limit=50")).toHaveLength(1);
+      expect(requests.filter(({ path }) => path === "/dashboard/api/runs?limit=30")).toHaveLength(1);
       documentStub.visibilityState = "visible";
       intervalCallbacks[0]!();
-      await vi.waitFor(() => expect(requests.filter(({ path }) => path === "/dashboard/api/runs?limit=50")).toHaveLength(2));
+      await vi.waitFor(() => expect(requests.filter(({ path }) => path === "/dashboard/api/runs?limit=30")).toHaveLength(2));
 
       const details = findNode(nodeAt(nodes, "#runs"), "DETAILS");
       details.open = true;
@@ -302,12 +302,12 @@ describe("dashboard authentication flow", () => {
       await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Run completed"));
 
       nodeAt(nodes, "#load-more").listeners.click?.();
-      await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=50&cursor=cursor%2B%2F1")).toBe(true));
+      await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=30&cursor=cursor%2B%2F1")).toBe(true));
       await vi.waitFor(() => expect(nodeAt(nodes, "#runs").children).toHaveLength(2));
 
       nodeAt(nodes, "#status-filter").value = "running";
       nodeAt(nodes, "#status-filter").listeners.change?.();
-      await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=50&status=running")).toBe(true));
+      await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=30&status=running")).toBe(true));
       await vi.waitFor(() => expect(nodeAt(nodes, "#runs").children).toHaveLength(1));
 
       nodeAt(nodes, "#connect").listeners.click?.();

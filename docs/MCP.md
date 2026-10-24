@@ -35,12 +35,14 @@ Requirement IDs: `MCP-TOOLS-01`, `MCP-CREATE-01`, `MCP-PUBLISH-01`, `MCP-LIST-PA
 | Tool | Inputs | Behavior |
 | --- | --- | --- |
 | `create_run` | `repoUrl`, `taskPrompt`; optional `ref`, `taskMode`, `publishMode`, `validationCommands`, `timeoutSeconds`, `idempotencyKey` | Creates canonical state and publishes through the normal Soyuz admission path. Omitted `publishMode` defaults to `none`; an explicit value is preserved. |
-| `list_runs` | Optional `status`, `limit` (1–100), `cursor` | Returns bounded recent run summaries and the next cursor. Read-only. |
+| `list_runs` | Optional `status`, `limit` (1–30), `cursor` | Returns summaries from the latest 30 retained runs and the next cursor. Read-only. |
 | `get_run` | `runId` | Returns canonical state, lifecycle timestamps, compact outcome/publication summary, and cancellation state. Read-only. |
 | `get_run_events` | `runId`; optional `after`, `limit` (1–200) | Returns a bounded page of stored operational events in sequence order. Read-only. |
 | `cancel_run` | `runId` | Records cancellation intent through Soyuz and returns canonical state. State-changing. |
 
 `list_runs.status` accepts the current Soyuz states: `admitting`, `queued`, `claimed`, `running`, `cancel_requested`, `cancelled`, `completed`, `failed`, and `admission_failed`.
+
+Soyuz retains and exposes at most the latest 30 runs across all statuses. Status filters and cursors apply within that 30-run history window; older run details, events, and artifacts are not available.
 
 The three read tools return structured data. Run details omit worker identity and claim lease fields, raw internal database fields, and arbitrary error objects. Repository URLs in MCP results omit user/password, query, and fragment components; if a persisted URL is malformed, MCP returns `about:invalid` so the read remains available without exposing the stored value. Event results contain Soyuz's bounded operational metadata and only allowlisted scalar payload fields; arbitrary event payload keys are omitted. MCP has no tool for stdout, stderr, raw Pi output, repository contents, files, or Kaseki artifacts; retained Kaseki artifacts are available only through authenticated REST/dashboard download routes.
 

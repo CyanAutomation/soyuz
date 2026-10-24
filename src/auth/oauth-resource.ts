@@ -132,7 +132,7 @@ async function readDashboardArtifacts(
 async function listDashboardRuns(env: Env, url: URL, requestId: string): Promise<Response> {
   try {
     const page = await listRunsPage(env, {
-      limit: url.searchParams.get("limit") ?? 50,
+      limit: url.searchParams.get("limit") ?? 30,
       status: url.searchParams.get("status"),
       cursor: url.searchParams.get("cursor"),
     });

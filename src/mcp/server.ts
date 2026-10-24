@@ -11,7 +11,7 @@ import { requestIdFor } from "../api/http";
 
 const ListRunsInputSchema = z.object({
   status: z.enum(RUN_STATUSES).optional(),
-  limit: z.number().int().min(1).max(100).optional(),
+  limit: z.number().int().min(1).max(30).optional(),
   cursor: z.string().max(512).optional(),
 }).strict();
 
@@ -125,10 +125,10 @@ function createSoyuzMcpServer(env: Env, requestInfo?: Request): McpServer {
 
   server.registerTool("list_runs", {
     title: "List recent runs",
-    description: "List bounded summaries of recent Kaseki runs recorded by Soyuz, optionally filtered by status and paginated with cursor. Use this to find or monitor run IDs. This reads Soyuz control-plane state only; it does not inspect repositories, execution hosts, logs, or artifacts.",
+    description: "List summaries from the latest 30 Kaseki runs recorded by Soyuz, optionally filtered by status and paginated within that 30-run window. Use this to find or monitor run IDs. This reads Soyuz control-plane state only; it does not inspect repositories, execution hosts, logs, or artifacts.",
     inputSchema: ListRunsInputSchema,
     outputSchema: z.union([z.object({
-      runs: z.array(RunListItemOutputSchema).max(100),
+      runs: z.array(RunListItemOutputSchema).max(30),
       nextCursor: z.string().nullable(),
     }).strict(), ToolErrorOutputSchema]),
     annotations: {

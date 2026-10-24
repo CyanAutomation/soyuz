@@ -414,7 +414,7 @@ describe("Soyuz Worker API", () => {
       .bind(heartbeat, runId).run();
     const accessToken = await createOAuthAccessToken(bindings);
 
-    const response = await call(bindings, "/dashboard/api/runs?limit=50", { token: accessToken });
+    const response = await call(bindings, "/dashboard/api/runs?limit=30", { token: accessToken });
     expect(response.response.status).toBe(200);
     expect(response.body.data.runs).toEqual(expect.arrayContaining([
       expect.objectContaining({ runId, stage: null, operationalHealth: "suspect_stalled", lastHeartbeatAt: heartbeat }),
