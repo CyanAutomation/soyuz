@@ -6,7 +6,7 @@ import {
 } from "../scripts/migration-impact.ts";
 
 describe("D1 migration impact reporting", () => {
-  it("lists only unique numbered SQL files in the migrations directory", () => {
+  it("[DEPLOY-MIGRATION-IMPACT-01] lists only unique numbered SQL files in the migrations directory", () => {
     expect(changedMigrationFiles([
       "migrations/0005_request_payload_retention.sql",
       "src/db.ts",
@@ -20,7 +20,7 @@ describe("D1 migration impact reporting", () => {
     ]);
   });
 
-  it("explains the production impact when migrations change", () => {
+  it("[DEPLOY-MIGRATION-IMPACT-01] explains the production impact when migrations change", () => {
     const summary = formatMigrationImpactSummary([
       "migrations/0004_run_origin_retry.sql",
       "migrations/0005_request_payload_retention.sql",
@@ -33,13 +33,13 @@ describe("D1 migration impact reporting", () => {
     expect(summary).toContain("docs/DEPLOYMENT.md");
   });
 
-  it("reports clearly when no numbered SQL migrations changed", () => {
+  it("[DEPLOY-MIGRATION-IMPACT-01] reports clearly when no numbered SQL migrations changed", () => {
     expect(formatMigrationImpactSummary(["src/db.ts", "migrations/notes.md"])).toContain(
       "No numbered SQL migrations changed in this pull request.",
     );
   });
 
-  it("identifies edits and deletions of existing migrations while allowing new files", () => {
+  it("[DEPLOY-MIGRATION-IMPACT-01] identifies edits and deletions while allowing new migration files", () => {
     expect(findImmutableMigrationChanges(
       [
         "migrations/0002_run_liveness.sql",
@@ -53,7 +53,7 @@ describe("D1 migration impact reporting", () => {
     ]);
   });
 
-  it("explains that edits and deletions of existing migrations block the PR", () => {
+  it("[DEPLOY-MIGRATION-IMPACT-01] explains that edits and deletions of existing migrations block the PR", () => {
     const summary = formatMigrationImpactSummary(
       ["migrations/0002_run_liveness.sql", "migrations/0006_new_feature.sql"],
       ["migrations/0002_run_liveness.sql"],
@@ -65,7 +65,7 @@ describe("D1 migration impact reporting", () => {
     expect(summary).toContain("until production D1 history includes the new migrations");
   });
 
-  it("does not claim the preflight will wait for a migration when only an existing file changed", () => {
+  it("[DEPLOY-MIGRATION-IMPACT-01] does not promise a migration preflight for existing-file-only changes", () => {
     const summary = formatMigrationImpactSummary(
       ["migrations/0002_run_liveness.sql"],
       ["migrations/0002_run_liveness.sql"],
