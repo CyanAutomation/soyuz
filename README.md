@@ -39,7 +39,7 @@ The [transport contract](docs/CONTRACT.md) documents request fields, responses, 
 ```text
 GET  /health
 POST /v1/runs
-GET  /v1/runs?limit=25&status=queued
+GET  /v1/runs?limit=30&status=queued
 GET  /v1/runs/:id
 GET  /v1/runs/:id/events?after=0&limit=100
 GET  /v1/runs/:id/artifacts
