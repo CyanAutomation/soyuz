@@ -52,3 +52,9 @@ As of 2026-10-17, the production check found migrations `0001`–`0003` applied,
 | Submission routing enabled | Worker without migration `0004` or scoped token | Incompatible; keep submission routing disabled. |
 
 Roll out the compatible Soyuz Worker only after its D1 migrations are applied and verified. Deploy Kaseki with claim fencing and submission routing disabled, configure the dedicated token, prove the contract in a non-production environment, then enable production routing separately. Verify a `publishMode: none` completion and failure, a cancellation, duplicate delivery, callback retry and restart reconciliation before enabling routine intake. A production smoke submission creates executable work; use an explicitly authorized disposable repository and Queue. See [deployment and local smoke-test guidance](DEPLOYMENT.md).
+
+## Local protocol simulation
+
+Run `npm run test:kaseki` to exercise a test-only Kaseki host against Soyuz's Worker routes and local D1. It consumes the exact Queue envelope captured from run admission, persists a simulated job intent before claim, and covers an uncertain claim response, redelivery after a simulated restart, callback replay, heartbeat, terminal completion, and cancellation polling. The scenario IDs are listed in the [test requirement index](TEST-REQUIREMENTS.md).
+
+The simulator uses an in-memory map to stand in for Kaseki's persistent jobs index. It does not import or execute Kaseki's real adapter, scheduler, safety admission, Docker, repository access, artifact outbox, or publisher. It verifies Soyuz's contract behavior and is useful for fast local regression checks; the Kaseki repo still needs tests against its actual adapter, and a controlled non-production smoke run is still needed to verify deployment wiring.

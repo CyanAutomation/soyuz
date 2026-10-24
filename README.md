@@ -30,7 +30,7 @@ curl --fail-with-body --silent --show-error \
 
 An accepted request returns HTTP `202` with a JSON body containing `data.id`, `data.status` (`queued`), and `requestId`. This local request writes to local D1 and the local Queue; it does not execute the request unless a Queue consumer is separately configured. Each invocation without an idempotency key creates a new run.
 
-The [transport contract](docs/CONTRACT.md) documents request fields, responses, pagination, and errors. For Cloudflare's Worker runtime test harness, run `npm test`; `npm run typecheck` refreshes Wrangler's binding/runtime types and checks TypeScript. `npm run dev` and `npm run deploy` compile the TypeScript dashboard assets first.
+The [transport contract](docs/CONTRACT.md) documents request fields, responses, pagination, and errors. For Cloudflare's Worker runtime test harness, run `npm test`; `npm run test:kaseki` runs the local Kaseki protocol simulation against Soyuz's actual Worker routes and D1. It covers queue handoff, duplicate delivery, claim recovery, callbacks, and cancellation without running a container or repository task. `npm run typecheck` refreshes Wrangler's binding/runtime types and checks TypeScript. `npm run dev` and `npm run deploy` compile the TypeScript dashboard assets first.
 
 ## API overview
 
