@@ -22,6 +22,7 @@ interface FakeNode {
   type: string;
   open: boolean;
   dataset: DOMStringMap;
+  setAttribute(name: string, value: string): void;
   children: unknown[];
   listeners: Record<string, (event?: Event) => void>;
   addEventListener(event: string, callback: (event?: Event) => void): void;
@@ -160,7 +161,7 @@ describe("dashboard API responses", () => {
 });
 
 describe("dashboard authentication flow", () => {
-  it("[DASHBOARD-AUTH-FLOW-01] shows the signed-in identity and clears local state if revocation cannot be confirmed", async () => {
+  it("[DASHBOARD-AUTH-FLOW-01/DASHBOARD-RUN-DISPLAY-01] shows readable run IDs and lets users copy the canonical ID", async () => {
     const nodes = new Map([
       ["#notice", createNode()],
       ["#runs", createNode()],
@@ -185,6 +186,7 @@ describe("dashboard authentication flow", () => {
     };
     const requests: RecordedRequest[] = [];
     const intervalCallbacks: Array<() => void> = [];
+    const writeClipboard = vi.fn(async (_value: string) => {});
     const runId = "00000000-0000-4000-8000-000000000101";
     const initialEvents = Array.from({ length: 100 }, (_, index) => ({
       sequence: index + 1,
@@ -198,6 +200,7 @@ describe("dashboard authentication flow", () => {
     }));
     const run = {
       runId,
+      displayId: "soyuz-213",
       status: "running",
       repoUrl: "https://github.com/example/project",
       ref: "main",
@@ -257,6 +260,7 @@ describe("dashboard authentication flow", () => {
     vi.stubGlobal("sessionStorage", storage);
     vi.stubGlobal("history", { replaceState: vi.fn() });
     vi.stubGlobal("fetch", fetcher);
+    vi.stubGlobal("navigator", { clipboard: { writeText: writeClipboard } });
     vi.stubGlobal("setInterval", (callback: () => void) => { intervalCallbacks.push(callback); return 1; });
     vi.stubGlobal("clearInterval", vi.fn());
     vi.resetModules();
@@ -271,6 +275,14 @@ describe("dashboard authentication flow", () => {
       await vi.waitFor(() => expect(nodeAt(nodes, "#notice").textContent).toContain("1 run"));
       expect(nodeAt(nodes, "#runs").children).toHaveLength(1);
       expect(flattenText(nodeAt(nodes, "#runs"))).toContain("example/project");
+      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Soyuz run · soyuz-213");
+      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Technical ID");
+      expect(flattenText(nodeAt(nodes, "#runs"))).toContain(runId);
+      const copyIdButton = findNodeByClass(nodeAt(nodes, "#runs"), "run-card__copy-id");
+      expect(copyIdButton.textContent).toBe("Copy ID");
+      copyIdButton.click();
+      await vi.waitFor(() => expect(writeClipboard).toHaveBeenCalledWith(runId));
+      expect(copyIdButton.textContent).toBe("Copied");
       expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Status: Running");
       expect(flattenText(nodeAt(nodes, "#runs"))).toContain(`Created ${new Date(run.createdAt).toLocaleString()}`);
       expect(flattenText(nodeAt(nodes, "#runs"))).toContain(`Started ${new Date(run.startedAt).toLocaleString()}`);
@@ -297,7 +309,7 @@ describe("dashboard authentication flow", () => {
       expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Uploaded Count 2");
       expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Failed Count 1");
       expect(flattenText(nodeAt(nodes, "#runs"))).toContain("No artifacts are available in Soyuz for this run.");
-      findNode(nodeAt(nodes, "#runs"), "BUTTON").click();
+      findNodeByClass(nodeAt(nodes, "#runs"), "load-older-events").click();
       await vi.waitFor(() => expect(requests.some(({ path }) => path === `/dashboard/api/runs/${runId}/events?after=100&limit=100`)).toBe(true));
       await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Run completed"));
 
@@ -340,6 +352,7 @@ function createNode(tagName = "DIV"): FakeNode {
     type: "",
     open: false,
     dataset: {} as DOMStringMap,
+    setAttribute() {},
     children: [] as unknown[],
     listeners: {} as Record<string, (event?: Event) => void>,
     addEventListener(event: string, callback: (event?: Event) => void) { this.listeners[event] = callback; },
@@ -372,6 +385,19 @@ function findNode(root: FakeNode, tagName: string): FakeNode {
     }
   }
   throw new Error(`Missing ${tagName} node`);
+}
+
+function findNodeByClass(root: FakeNode, className: string): FakeNode {
+  if (root.className.split(/\s+/).includes(className)) return root;
+  for (const child of root.children) {
+    if (!child || typeof child !== "object") continue;
+    try {
+      return findNodeByClass(child as FakeNode, className);
+    } catch {
+      // Continue through sibling nodes.
+    }
+  }
+  throw new Error(`Missing node with class ${className}`);
 }
 
 function flattenText(root: FakeNode): string {

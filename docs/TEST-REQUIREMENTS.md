@@ -82,6 +82,7 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `LIFECYCLE-TRANSITIONS-01` | The state machine permits the documented lifecycle transitions. | [Architecture: run lifecycle](ARCHITECTURE.md#run-lifecycle) |
 | `LIFECYCLE-TERMINAL-01` | Terminal states cannot return to active states. | [Architecture: run lifecycle](ARCHITECTURE.md#run-lifecycle) |
 | `RUN-ID-UUIDV7-01` | Run IDs encode the millisecond timestamp and sort across millisecond boundaries. | [Architecture: IDs, authentication, and compatibility](ARCHITECTURE.md#ids-authentication-and-compatibility) |
+| `RUN-DISPLAY-ID-01` | Every run gets a stable, increasing Soyuz display ID while the UUID remains canonical. | [Transport contract: run request](CONTRACT.md#run-request); [Architecture: IDs](ARCHITECTURE.md#ids-authentication-and-compatibility) |
 | `HTTP-BODY-01` | JSON body size is measured in bytes and capped at 96 KiB. | [Transport contract: errors](CONTRACT.md#errors) |
 | `ERRORS-01` | Invalid run requests return a stable 422 error response. | [Transport contract: errors](CONTRACT.md#errors) |
 
@@ -95,6 +96,7 @@ These tests protect implementation helpers and direct callers, but they do not r
 | `DASHBOARD-AUTH-STATUS-01` | Dashboard API errors preserve their HTTP status for auth-state handling. |
 | `DASHBOARD-AUTH-UI-01` | Dashboard auth controls render signed-out, busy, and signed-in states. |
 | `DASHBOARD-AUTH-FLOW-01` | Dashboard sign-in displays the verified GitHub login; sign-out clears run data and requests token revocation. |
+| `DASHBOARD-RUN-DISPLAY-01` | Run cards show the Soyuz display ID and provide a copy action for the canonical UUID. | [Run identifiers](CONTRACT.md#run-request) |
 | `OAUTH-REVOKE-FORM-01` | Dashboard revocation submits the access token and public client ID to the provider endpoint. |
 | `DASHBOARD-API-ENVELOPE-01` | The dashboard fetch helper unwraps a successful API `data` envelope. |
 | `DASHBOARD-API-ERROR-01` | Non-success dashboard responses preserve their HTTP error and do not decode an error body as JSON. |

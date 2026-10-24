@@ -203,6 +203,7 @@ function hasOAuthContext(context: ExecutionContext): context is OAuthResourceCon
 function dashboardRunSummary(row: RunRow): Record<string, unknown> {
   return {
     runId: row.id,
+    displayId: row.display_id,
     origin: { type: row.origin_type, id: row.origin_id },
     retryOf: row.retry_of,
     status: row.status,

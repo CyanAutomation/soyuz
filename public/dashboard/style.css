@@ -109,8 +109,11 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -.04em; }
 .run-card__identity { min-width: 0; }
 .run-card h2 { margin: 0; font-size: 1.15rem; overflow-wrap: anywhere; }
 .run-card__ref { margin: var(--space-1) 0 0; color: var(--color-muted); overflow-wrap: anywhere; }
-.run-card__id { margin: var(--space-3) 0 0; color: var(--color-muted); font-size: .85rem; overflow-wrap: anywhere; }
-.run-card__id code { color: inherit; font: inherit; }
+.run-card__identifiers { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin-top: var(--space-3); }
+.run-card__id { margin: 0; color: var(--color-primary-ink); font-weight: 700; overflow-wrap: anywhere; }
+.run-card__technical-id { margin: 0; color: var(--color-muted); font-size: .82rem; overflow-wrap: anywhere; }
+.run-card__technical-id code { color: inherit; font: inherit; }
+.run-card__copy-id { min-height: 2rem; padding: .2rem .65rem; font-size: .8rem; }
 .data-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: var(--space-4) var(--space-5); margin: var(--space-5) 0 0; }
 .data-list__item { min-width: 0; }
 .data-list dt { color: var(--color-muted); font-size: .82rem; font-weight: 650; }
