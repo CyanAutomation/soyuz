@@ -8,8 +8,12 @@ export interface KasekiJobIntent {
   runId: string;
   workerId: string;
   claimCallbackId: string;
+  claimAccepted: boolean;
+  localJobPersisted: boolean;
   startedCallbackId: string;
   startedAt: string;
+  startedCallbackSent: boolean;
+  startAuthorized: boolean;
   heartbeatEventId: string;
   heartbeatAt: string;
   completedCallbackId: string;
@@ -24,15 +28,61 @@ export interface KasekiSimulatorRequest {
   body?: unknown;
 }
 
+export interface KasekiPulledMessage {
+  id: string;
+  lease_id: string;
+  timestamp_ms: number;
+  attempts: number;
+  body: unknown;
+}
+
+export type KasekiQueueAction =
+  | { type: "ack"; id: string; leaseId: string; responseLost: boolean }
+  | { type: "retry"; id: string; leaseId: string; delaySeconds: number };
+
+export interface KasekiDeliveryResult {
+  runId?: string;
+  status?: string;
+  intent?: KasekiJobIntent;
+  startAuthorized?: boolean;
+  disposition: "acknowledged" | "ack-uncertain" | "retried";
+  retryDelaySeconds?: number;
+  error?: string;
+}
+
+/** Records the same lease operations the host sends to Cloudflare's pull API. */
+export class KasekiQueueLeaseHarness {
+  readonly actions: KasekiQueueAction[] = [];
+
+  acknowledge(message: KasekiPulledMessage, responseLost = false): void {
+    this.actions.push({
+      type: "ack",
+      id: message.id,
+      leaseId: message.lease_id,
+      responseLost,
+    });
+  }
+
+  retry(message: KasekiPulledMessage, delaySeconds: number): void {
+    this.actions.push({
+      type: "retry",
+      id: message.id,
+      leaseId: message.lease_id,
+      delaySeconds,
+    });
+  }
+}
+
 interface ApiResult {
   status: number;
   body: { data?: unknown; error?: { code?: string; message?: string } };
 }
 
 /**
- * A protocol-only Kaseki host used by Soyuz tests. It accepts the published
- * queue envelope and exercises worker routes, but does not run Kaseki's
- * scheduler, admission checks, containers, repository code, or publisher.
+ * A protocol-only Kaseki host used by Soyuz tests. It accepts a Cloudflare
+ * pull-lease body, persists a simulated local mapping/start authorization,
+ * and exercises worker routes. It does not run Kaseki's scheduler, admission
+ * checks, containers, repository code, artifacts, or publisher.
  */
 export class KasekiProtocolSimulator {
   readonly requests: KasekiSimulatorRequest[] = [];
@@ -51,49 +101,129 @@ export class KasekiProtocolSimulator {
    * Accept one queue delivery. `durableIntents` stands in for the host's
    * persistent job index so a new simulator instance can model restart.
    */
-  async deliver(
+  async consume(
+    message: KasekiPulledMessage,
+    queue: KasekiQueueLeaseHarness,
+    options: {
+      loseFirstClaimResponse?: boolean;
+      stopAfterClaim?: boolean;
+      stopAfterStartedBeforeAuthorization?: boolean;
+      loseAckResponse?: boolean;
+    } = {},
+  ): Promise<KasekiDeliveryResult> {
+    const retryDelaySeconds = queueRetryDelaySeconds(message.attempts);
+    let result: Omit<KasekiDeliveryResult, "disposition" | "retryDelaySeconds" | "error">;
+    try {
+      result = await this.deliver(message.body, options);
+    } catch (error) {
+      queue.retry(message, retryDelaySeconds);
+      return {
+        disposition: "retried",
+        retryDelaySeconds,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    const isAlreadyActive = (result.status === "running" || result.status === "cancel_requested")
+      && (!result.intent || result.intent.startAuthorized);
+    if (!isTerminal(result.status) && !isAlreadyActive && !result.startAuthorized) {
+      queue.retry(message, retryDelaySeconds);
+      return { ...result, disposition: "retried", retryDelaySeconds };
+    }
+
+    queue.acknowledge(message, options.loseAckResponse === true);
+    return {
+      ...result,
+      disposition: options.loseAckResponse ? "ack-uncertain" : "acknowledged",
+    };
+  }
+
+  /** Process the queue body and perform the Soyuz side of the handoff. */
+  private async deliver(
     messageValue: unknown,
-    options: { loseFirstClaimResponse?: boolean; stopAfterClaim?: boolean } = {},
-  ): Promise<KasekiJobIntent & { status: string }> {
+    options: {
+      loseFirstClaimResponse?: boolean;
+      stopAfterClaim?: boolean;
+      stopAfterStartedBeforeAuthorization?: boolean;
+    } = {},
+  ): Promise<Omit<KasekiDeliveryResult, "disposition" | "retryDelaySeconds" | "error">> {
     const message = parseQueueMessage(messageValue);
+    const canonicalRun = await this.readWorkerRun(message.runId);
     let intent = this.durableIntents.get(message.runId);
+
+    // Terminal deliveries are safe to acknowledge without creating a local job.
+    if (isTerminal(canonicalRun.status)) {
+      return { runId: message.runId, status: canonicalRun.status, intent, startAuthorized: intent?.startAuthorized ?? false };
+    }
+
+    // Soyuz may still be finalizing admission. Keep the lease for a later retry.
+    if (canonicalRun.status === "admitting") {
+      return { runId: message.runId, status: canonicalRun.status, intent, startAuthorized: false };
+    }
+
+    // A duplicate delivery for already active work must never create speculative work.
+    if ((canonicalRun.status === "running" || canonicalRun.status === "cancel_requested") && !intent) {
+      return { runId: message.runId, status: canonicalRun.status, startAuthorized: false };
+    }
+
+    if (canonicalRun.status === "claimed" && !intent) {
+      throw new Error("Soyuz has a claimed run without a durable Kaseki claim intent; refusing to start work.");
+    }
+
     if (!intent) {
       intent = createIntent(message.runId, this.workerId);
-      // Persist intent before calling Soyuz, matching the handoff contract.
+      // Save the per-attempt identity before making the claim request.
       this.durableIntents.set(message.runId, intent);
     }
     if (intent.workerId !== this.workerId) {
       throw new Error("A saved job intent cannot move to a different worker ID.");
     }
 
-    const canonicalRun = await this.readWorkerRun(intent.runId);
-    if (isTerminal(canonicalRun.status) || canonicalRun.status === "cancel_requested") {
-      return { ...intent, status: canonicalRun.status };
+    if (canonicalRun.status === "running" || canonicalRun.status === "cancel_requested") {
+      assertIntentOwnsRun(intent, canonicalRun);
+      if (intent.startAuthorized) {
+        if (!intent.localJobPersisted) {
+          throw new Error("Kaseki start authorization exists without a durable local job mapping.");
+        }
+        return { runId: message.runId, status: canonicalRun.status, intent, startAuthorized: true };
+      }
+      if (canonicalRun.status === "cancel_requested") {
+        throw new Error("Soyuz cancellation arrived before Kaseki durably authorized execution.");
+      }
+      if (!intent.localJobPersisted) {
+        throw new Error("Soyuz run is active without a durable Kaseki job mapping; refusing to start work.");
+      }
     }
 
-    const claim = {
-      contractVersion: CONTRACT_VERSION,
-      callbackId: intent.claimCallbackId,
-      workerId: intent.workerId,
-    };
-    let claimResult = await this.api("POST", `/v1/worker/runs/${intent.runId}/claim`, claim);
-    if (options.loseFirstClaimResponse) {
-      // The first request has committed in Soyuz; the host discards its
-      // response and retries the identical intent and callback ID.
-      claimResult = await this.api("POST", `/v1/worker/runs/${intent.runId}/claim`, claim);
+    let workerRun = canonicalRun;
+    if (canonicalRun.status === "queued" || canonicalRun.status === "claimed") {
+      const claim = {
+        contractVersion: CONTRACT_VERSION,
+        callbackId: intent.claimCallbackId,
+        workerId: intent.workerId,
+      };
+      let claimResult = await this.api("POST", `/v1/worker/runs/${intent.runId}/claim`, claim);
+      if (options.loseFirstClaimResponse) {
+        // The first request committed in Soyuz; retry the saved ID exactly.
+        claimResult = await this.api("POST", `/v1/worker/runs/${intent.runId}/claim`, claim);
+      }
+      requireSuccess(claimResult, "claim");
+      intent.claimAccepted = true;
+      workerRun = await this.readWorkerRun(intent.runId);
+      assertIntentOwnsRun(intent, workerRun);
     }
-    requireSuccess(claimResult, "claim");
 
-    let workerRun = await this.readWorkerRun(intent.runId);
-    if (workerRun.claimCallbackId !== intent.claimCallbackId || workerRun.workerId !== intent.workerId) {
-      throw new Error("Soyuz returned a different worker claim than the saved Kaseki intent.");
+    if (options.stopAfterClaim && workerRun.status === "claimed") {
+      return { runId: message.runId, status: workerRun.status, intent, startAuthorized: false };
     }
-    if (options.stopAfterClaim) return { ...intent, status: workerRun.status };
 
     if (workerRun.status !== "claimed" && workerRun.status !== "running") {
       throw new Error(`Soyuz run is ${workerRun.status}; the simulator cannot start it.`);
     }
 
+    // This models the scheduler's durable runId-to-local-job mapping, written
+    // after claim succeeds and before sending /started.
+    intent.localJobPersisted = true;
     const started = await this.api("POST", `/v1/worker/runs/${intent.runId}/started`, {
       contractVersion: CONTRACT_VERSION,
       callbackId: intent.startedCallbackId,
@@ -103,8 +233,15 @@ export class KasekiProtocolSimulator {
       stage: "prepare",
     });
     requireSuccess(started, "started");
+    intent.startedCallbackSent = true;
     workerRun = await this.readWorkerRun(intent.runId);
-    return { ...intent, status: workerRun.status };
+    if (options.stopAfterStartedBeforeAuthorization) {
+      // Simulate an API restart after Soyuz accepted /started but before the
+      // local scheduler durably opens the execution gate.
+      return { runId: message.runId, status: workerRun.status, intent, startAuthorized: false };
+    }
+    intent.startAuthorized = true;
+    return { runId: message.runId, status: workerRun.status, intent, startAuthorized: true };
   }
 
   async readWorkerRun(runId: string): Promise<Record<string, any>> {
@@ -183,8 +320,12 @@ function createIntent(runId: string, workerId: string): KasekiJobIntent {
     runId,
     workerId,
     claimCallbackId: crypto.randomUUID(),
+    claimAccepted: false,
+    localJobPersisted: false,
     startedCallbackId: crypto.randomUUID(),
     startedAt: new Date().toISOString(),
+    startedCallbackSent: false,
+    startAuthorized: false,
     heartbeatEventId: crypto.randomUUID(),
     heartbeatAt: new Date().toISOString(),
     completedCallbackId: crypto.randomUUID(),
@@ -238,4 +379,14 @@ function isTerminal(status: unknown): boolean {
     || status === "failed"
     || status === "cancelled"
     || status === "admission_failed";
+}
+
+function assertIntentOwnsRun(intent: KasekiJobIntent, workerRun: Record<string, any>): void {
+  if (workerRun.workerId !== intent.workerId || workerRun.claimCallbackId !== intent.claimCallbackId) {
+    throw new Error("Soyuz returned a different worker claim than the saved Kaseki intent.");
+  }
+}
+
+function queueRetryDelaySeconds(attempts: number): number {
+  return Math.min(900, Math.max(5, 5 * 2 ** Math.min(Math.max(0, attempts), 7)));
 }
