@@ -55,7 +55,7 @@ describe("Soyuz OAuth policy", () => {
     expect(await requestNeedsWriteScope(new Request("https://soyuz.example.test/mcp"))).toBe(false);
   });
 
-  it("escapes all dynamic consent page content", () => {
+  it("[OAUTH-CONSENT-ESCAPE-01] escapes dynamic consent text and form values", () => {
     const html = renderConsentPage({
       clientId: "client-id",
       clientName: '<img src=x onerror="alert(1)">',
@@ -69,13 +69,12 @@ describe("Soyuz OAuth policy", () => {
     expect(html).toContain("client.example.test&amp;evil");
     expect(html).toContain("localhost:9000&lt;&gt;");
     expect(html).toContain('value="handle&lt;&amp;"');
-    expect(html).toContain('<link rel="stylesheet" href="/dashboard/style.css">');
-    expect(html).toContain('class="consent-card"');
-    expect(html).toContain('class="button button--primary consent-allow"');
+    expect(html).toContain('value="&lt;script&gt;"');
+    expect(html).toContain("<span>&lt;script&gt;</span>");
     expect(html).not.toContain("<script>");
   });
 
-  it("explains dashboard access in plain language", () => {
+  it("[OAUTH-CONSENT-COPY-01] explains dashboard access without exposing the internal read scope", () => {
     const html = renderConsentPage({
       clientId: "dashboard-client",
       clientName: "Soyuz Run Dashboard",
