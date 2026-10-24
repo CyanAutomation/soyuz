@@ -1,4 +1,6 @@
-ALTER TABLE runs ADD COLUMN display_id TEXT;
+-- This placeholder satisfies NOT NULL while existing rows are backfilled and
+-- new rows are assigned their sequence value by the insert trigger below.
+ALTER TABLE runs ADD COLUMN display_id TEXT NOT NULL DEFAULT 'soyuz-0';
 
 CREATE TABLE run_display_numbers (
   number INTEGER PRIMARY KEY AUTOINCREMENT,
