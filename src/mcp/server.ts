@@ -34,6 +34,7 @@ const ToolErrorOutputSchema = z.object({
 
 const RunSummaryOutputSchema = z.object({
   runId: z.string().uuid(),
+  displayId: z.string().regex(/^soyuz-\d+$/),
   status: z.enum(RUN_STATUSES),
   createdAt: z.string().datetime({ offset: true }),
   repoUrl: z.string().url(),
@@ -43,6 +44,7 @@ const RunSummaryOutputSchema = z.object({
 
 const RunListItemOutputSchema = z.object({
   runId: z.string().uuid(),
+  displayId: z.string().regex(/^soyuz-\d+$/),
   repoUrl: z.string().url(),
   ref: z.string(),
   status: z.enum(RUN_STATUSES),
@@ -106,7 +108,7 @@ function createSoyuzMcpServer(env: Env, requestInfo?: Request): McpServer {
 
   server.registerTool("create_run", {
     title: "Create a Kaseki run",
-    description: "Create a Kaseki coding-agent run through Soyuz. Use this when the user wants Kaseki to work against a repository. Soyuz validates and queues the request; execution may happen later on an available Kaseki host. Omitted publishMode defaults to none; an explicit publishMode is honored and may publish a branch or pull request. Use the same idempotencyKey when retrying so a transport retry cannot create a duplicate run. This does not execute Kaseki immediately or return repository files or logs.",
+    description: "Create a Kaseki coding-agent run through Soyuz. Use this when the user wants Kaseki to work against a repository. Soyuz validates and queues the request; execution may happen later on an available Kaseki host. Omitted publishMode defaults to none; an explicit publishMode is honored and may publish a branch or pull request. The result includes a human-friendly displayId and canonical UUID runId; show displayId to the user and retain runId for Soyuz API/tool calls. Use the same idempotencyKey when retrying so a transport retry cannot create a duplicate run. This does not execute Kaseki immediately or return repository files or logs.",
     inputSchema: McpCreateRunInputSchema,
     outputSchema: z.union([RunSummaryOutputSchema, ToolErrorOutputSchema]),
     annotations: {
@@ -125,7 +127,7 @@ function createSoyuzMcpServer(env: Env, requestInfo?: Request): McpServer {
 
   server.registerTool("list_runs", {
     title: "List recent runs",
-    description: "List summaries from the latest 30 Kaseki runs recorded by Soyuz, optionally filtered by status and paginated within that 30-run window. Use this to find or monitor run IDs. This reads Soyuz control-plane state only; it does not inspect repositories, execution hosts, logs, or artifacts.",
+    description: "List summaries from the latest 30 Kaseki runs recorded by Soyuz, optionally filtered by status and paginated within that 30-run window. Use displayId when referring to a run to the user; pass runId to Soyuz tools and APIs. This reads Soyuz control-plane state only; it does not inspect repositories, execution hosts, logs, or artifacts.",
     inputSchema: ListRunsInputSchema,
     outputSchema: z.union([z.object({
       runs: z.array(RunListItemOutputSchema).max(30),
@@ -147,7 +149,7 @@ function createSoyuzMcpServer(env: Env, requestInfo?: Request): McpServer {
 
   server.registerTool("get_run", {
     title: "Get run status",
-    description: "Read Soyuz's canonical state for one run, including its repository, lifecycle timestamps, compact outcome, publication summary, and cancellation state. Use this to inspect a known run ID. It does not reveal worker credentials or lease data and does not fetch execution logs or artifacts.",
+    description: "Read Soyuz's canonical state for one run, including its human-friendly displayId, canonical UUID runId, repository, lifecycle timestamps, compact outcome, publication summary, and cancellation state. Pass the UUID runId to this tool and use displayId when referring to the run to the user. It does not reveal worker credentials or lease data and does not fetch execution logs or artifacts.",
     inputSchema: RunIdInputSchema,
     outputSchema: z.union([RunDetailOutputSchema, ToolErrorOutputSchema]),
     annotations: {
@@ -164,6 +166,7 @@ function createSoyuzMcpServer(env: Env, requestInfo?: Request): McpServer {
     inputSchema: RunEventsInputSchema,
     outputSchema: z.union([z.object({
       runId: z.string().uuid(),
+      displayId: z.string().regex(/^soyuz-\d+$/),
       events: z.array(RunEventOutputSchema).max(200),
       nextAfter: z.number().int().min(0),
     }).strict(), ToolErrorOutputSchema]),
@@ -177,6 +180,7 @@ function createSoyuzMcpServer(env: Env, requestInfo?: Request): McpServer {
     const page = await readRunEventsPage(env, runId, { after, limit });
     return {
       runId,
+      displayId: page.run.display_id,
       events: page.events.map(mcpRunEvent),
       nextAfter: page.nextAfter,
     };
@@ -204,6 +208,7 @@ function createSoyuzMcpServer(env: Env, requestInfo?: Request): McpServer {
 function mcpRunSummary(row: RunRow): Record<string, unknown> {
   return {
     runId: row.id,
+    displayId: row.display_id,
     status: row.status,
     createdAt: row.created_at,
     repoUrl: safeUrlForDisplay(row.repo_url),
@@ -219,6 +224,7 @@ function mcpRunListItem(row: RunRow): Record<string, unknown> {
 function mcpRunFields(row: RunRow): Record<string, unknown> {
   return {
     runId: row.id,
+    displayId: row.display_id,
     repoUrl: safeUrlForDisplay(row.repo_url),
     ref: row.git_ref,
     status: row.status,

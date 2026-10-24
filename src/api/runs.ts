@@ -127,6 +127,7 @@ function applicationErrorResponse(error: unknown, requestId: string): Response {
 export function publicRun(row: RunRow): Record<string, unknown> {
   return {
     id: row.id,
+    displayId: row.display_id,
     contractVersion: row.contract_version,
     repoUrl: row.repo_url,
     ref: row.git_ref,
@@ -160,6 +161,7 @@ export function publicRun(row: RunRow): Record<string, unknown> {
 function publicRunSummary(row: RunRow): Record<string, unknown> {
   return {
     id: row.id,
+    displayId: row.display_id,
     contractVersion: row.contract_version,
     repoUrl: row.repo_url,
     ref: row.git_ref,

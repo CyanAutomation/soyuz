@@ -162,6 +162,7 @@ describe("Soyuz remote MCP interface", () => {
     const summary = first.body.result.structuredContent;
     expect(first.body.result.isError).toBeUndefined();
     expect(summary).toMatchObject({
+      displayId: expect.stringMatching(/^soyuz-\d+$/),
       status: "queued",
       repoUrl: "https://github.com/example/project",
       ref: "main",
@@ -206,6 +207,7 @@ describe("Soyuz remote MCP interface", () => {
     const replay = await createRun(bindings, { idempotencyKey: key });
     expect(replay.body.result.isError).toBeUndefined();
     expect(replay.body.result.structuredContent.runId).toBe(firstRunId);
+    expect(replay.body.result.structuredContent.displayId).toBe(first.body.result.structuredContent.displayId);
     expect(sent).toHaveLength(1);
     const conflict = await createRun(bindings, {
       idempotencyKey: key,
@@ -264,6 +266,7 @@ describe("Soyuz remote MCP interface", () => {
     expect(page.runs).toHaveLength(1);
     expect(page.nextCursor).toBeTruthy();
     expect(page.runs[0]).toMatchObject({ runId: second.runId, createdAt: newerCreatedAt });
+    expect(page.runs[0].displayId).toMatch(/^soyuz-\d+$/);
     expect(page.runs[0].status).toBe("queued");
     expect(page.runs[0]).not.toHaveProperty("workerId");
     expect(page.runs[0]).not.toHaveProperty("request");
@@ -285,6 +288,7 @@ describe("Soyuz remote MCP interface", () => {
     const detail = await rpc(bindings, "tools/call", { name: "get_run", arguments: { runId: first.runId } }, 32);
     expect(detail.body.result.structuredContent).toMatchObject({
       runId: first.runId,
+      displayId: first.displayId,
       status: "queued",
       repoUrl: "https://github.com/example/project",
       ref: "main",
@@ -360,6 +364,10 @@ describe("Soyuz remote MCP interface", () => {
     const firstPage = await rpc(bindings, "tools/call", {
       name: "get_run_events", arguments: { runId, limit: 2 },
     }, 40);
+    expect(firstPage.body.result.structuredContent).toMatchObject({
+      runId,
+      displayId: created.displayId,
+    });
     const events = firstPage.body.result.structuredContent.events;
     expect(events).toHaveLength(2);
     expect(events[0].sequence).toBeLessThan(events[1].sequence);

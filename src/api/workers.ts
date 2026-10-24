@@ -44,6 +44,7 @@ export async function handleWorkerCallbacks(request: Request, env: Env, url: URL
       if (!row) return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
       return successResponse(requestId, {
         runId: row.id,
+        displayId: row.display_id,
         contractVersion: row.contract_version,
         status: row.status,
         stage: row.stage,
