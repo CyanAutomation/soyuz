@@ -48,11 +48,13 @@ Set `SOYUZ_PUBLIC_URL` to the canonical HTTPS origin, such as `https://soyuz.exa
 
 ### OAuth consent security
 
-The consent page escapes registered client metadata, sends `Cache-Control: no-store`, and forbids framing with Content Security Policy. Approval accepts same-origin form submissions and is bound to the browser with a hashed transaction cookie. The flow requests only GitHub `read:user`; Soyuz stores the GitHub numeric ID/login and does not retain the GitHub access token.
+**[OAUTH-CONSENT-ESCAPE-01]** The consent page escapes registered client metadata and form values, sends `Cache-Control: no-store`, and forbids framing with Content Security Policy. Approval accepts same-origin form submissions and is bound to the browser with a hashed transaction cookie. The flow requests only GitHub `read:user`; Soyuz stores the GitHub numeric ID/login and does not retain the GitHub access token.
+
+**[OAUTH-CONSENT-COPY-01]** Consent explains dashboard access in plain language and shows human-readable permission descriptions rather than internal scope identifiers.
 
 The `ARTIFACTS` R2 binding stores private run files. Worker uploads are limited to 25,000,000 bytes per file and 100 artifacts per run, require the current worker ID and claim fencing token, and are retained for 30 days. Authenticated client/OAuth reads are streamed as attachments. The minutely cron culls runs beyond the newest 30, including their events and artifact indexes. It records old R2 object keys in a durable deletion queue and retries failed or unavailable-storage deletions independently of run retention. The daily cron removes expired R2 objects and D1 metadata. It also redacts submitted request details from terminal runs after 365 days, replacing the prompt and custom inputs while preserving run events, status, repository/ref metadata, and idempotency history. A redacted run cannot be retried because its original request is no longer available. At most 100 requests are redacted per daily sweep.
 
-Dashboard assets receive a restrictive Content Security Policy, `no-referrer`, MIME sniffing protection, and frame protections. The dashboard HTML is served with `Cache-Control: no-store`. `/health` verifies the D1 schema used by run liveness, retry lineage, request retention, idempotency, and artifact cleanup as well as database connectivity; apply the matching migrations before deploying code that depends on them.
+Dashboard assets receive a restrictive Content Security Policy, `no-referrer`, MIME sniffing protection, and frame protections. The dashboard HTML is served with `Cache-Control: no-store`. **[HEALTH-SCHEMA-01]** `/health` verifies the D1 schema used by run liveness, retry lineage, request retention, idempotency, and artifact cleanup as well as database connectivity; it reports unavailable until required schema migrations are applied.
 
 ## API token configuration
 

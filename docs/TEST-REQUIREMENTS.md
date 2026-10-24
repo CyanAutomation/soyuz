@@ -6,6 +6,7 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | --- | --- | --- |
 | `AUTH-MINIMUM-01` | Configured API tokens have a 16-character minimum. | [Deployment token configuration](DEPLOYMENT.md#api-token-configuration) |
 | `AUTH-REST-01` | Client and worker routes use separate credentials. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `AUTH-ROTATE-GRACE-01` | Previous client and worker credentials are accepted only until their configured expiry. | [Deployment: API token configuration](DEPLOYMENT.md#api-token-configuration) |
 | `CONTRACT-VERSION-01` | Soyuz/Kaseki messages use contract version 1. | [Transport contract: overview](CONTRACT.md) |
 | `KASEKI-HANDOFF-01` | A Kaseki host can consume the published contract-v1 envelope, persist claim intent, claim the canonical run, and start with the current claim fencing ID. | [Transport contract: Queue message and worker callbacks](CONTRACT.md#queue-message); [Kaseki handoff](KASEKI-INTEGRATION.md#handoff-and-authorization) |
 | `KASEKI-RECOVERY-01` | Uncertain claim responses and duplicate delivery after host restart reuse the same run and callback IDs without duplicate lifecycle events. | [Transport contract: Queue message and worker callbacks](CONTRACT.md#queue-message); [Kaseki handoff](KASEKI-INTEGRATION.md#handoff-and-authorization) |
@@ -28,11 +29,17 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `DEPLOY-MIGRATION-HISTORY-01` | Deployment is blocked when migrations are missing, unexpected, or out of order. | [Deployment: GitHub Actions deployment](DEPLOYMENT.md#github-actions-deployment) |
 | `OAUTH-05` | The protected dashboard identity endpoint returns the allowlisted user's GitHub login and enforces the existing OAuth access policy. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |
 | `OAUTH-06` | RFC 7009 revocation invalidates the dashboard's OAuth access token. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |
+| `OAUTH-07` | Dashboard run-list summaries include operational health and last-heartbeat fields. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
 | `OAUTH-01` | Dashboard data is available only to an allowlisted GitHub user. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints); [deployment: OAuth configuration](DEPLOYMENT.md#one-time-cloudflare-bootstrap) |
 | `OAUTH-02` | The dashboard is read-only and OAuth write scope is required for MCP mutations. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints); [MCP authentication](MCP.md#authentication-and-security-boundary) |
 | `OAUTH-03` | Consent content is escaped, non-cacheable, non-framable, and approval is bound to the same-origin browser request. | [Deployment: OAuth consent security](DEPLOYMENT.md#oauth-consent-security) |
+| `OAUTH-04` | Dashboard run details and event pages expose sanitized data to the allowlisted user. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |
 | `OAUTH-CALLBACK-01` | GitHub authorization completes only after consent and redirects an authorization code to the registered client without exposing the GitHub token. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints); [deployment: OAuth configuration](DEPLOYMENT.md#one-time-cloudflare-bootstrap) |
 | `HEALTH-DB-01` | Health and run history report D1 unavailability safely. | [Transport contract: public endpoints and errors](CONTRACT.md#public-endpoints) |
+| `HEALTH-SCHEMA-01` | Health reports unavailable when the current Worker requires D1 columns that are missing from the deployed schema. | [Deployment: Worker configuration and health check](DEPLOYMENT.md#worker-configuration) |
+| `DASHBOARD-SECURITY-01` | Dashboard assets receive the configured browser security headers. | [Deployment: Worker configuration](DEPLOYMENT.md#worker-configuration) |
+| `RUN-EVENT-PAGE-01` | Dashboard event pages indicate whether more events remain and provide a forward cursor. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |
+| `RETENTION-REQUEST-01` | Old terminal run prompts are redacted while run identity and idempotency history remain available. | [Deployment: Worker configuration](DEPLOYMENT.md#worker-configuration) |
 | `RUN-VALIDATE-01` | REST run requests are structurally validated before admission. | [Transport contract: run request](CONTRACT.md#run-request) |
 | `RUN-ADMISSION-SIZE-01` | An oversized Queue message is not published and the run records admission failure. | [Transport contract: Queue message](CONTRACT.md#queue-message) |
 | `RUN-ORIGIN-01` | Run provenance and idempotency scope derive from the authenticated credential; scoped Kaseki access cannot mutate another origin's run. | [Transport contract: run request](CONTRACT.md#run-request) |
@@ -88,6 +95,8 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `LIFECYCLE-TERMINAL-01` | Terminal states cannot return to active states. | [Architecture: run lifecycle](ARCHITECTURE.md#run-lifecycle) |
 | `RUN-ID-UUIDV7-01` | Run IDs encode the millisecond timestamp and sort across millisecond boundaries. | [Architecture: IDs, authentication, and compatibility](ARCHITECTURE.md#ids-authentication-and-compatibility) |
 | `RUN-DISPLAY-ID-01` | Every run gets a stable, increasing Soyuz display ID while the UUID remains canonical. | [Transport contract: run request](CONTRACT.md#run-request); [Architecture: IDs](ARCHITECTURE.md#ids-authentication-and-compatibility) |
+| `OAUTH-CONSENT-ESCAPE-01` | Dynamic consent metadata and form values are HTML-escaped before rendering. | [Deployment: OAuth consent security](DEPLOYMENT.md#oauth-consent-security) |
+| `OAUTH-CONSENT-COPY-01` | Consent explains dashboard access in user-facing language without exposing internal scope identifiers. | [Deployment: OAuth consent security](DEPLOYMENT.md#oauth-consent-security) |
 | `HTTP-BODY-01` | JSON body size is measured in bytes and capped at 96 KiB. | [Transport contract: errors](CONTRACT.md#errors) |
 | `ERRORS-01` | Invalid run requests return a stable 422 error response. | [Transport contract: errors](CONTRACT.md#errors) |
 
@@ -101,8 +110,16 @@ These tests protect implementation helpers and direct callers, but they do not r
 | `DASHBOARD-AUTH-STATUS-01` | Dashboard API errors preserve their HTTP status for auth-state handling. |
 | `DASHBOARD-AUTH-UI-01` | Dashboard auth controls render signed-out, busy, and signed-in states. |
 | `DASHBOARD-AUTH-FLOW-01` | Dashboard sign-in displays the verified GitHub login; sign-out clears run data and requests token revocation. |
+| `DASHBOARD-RUN-LIST-01` | Dashboard run-list requests encode status and cursor values safely. | [Dashboard endpoints](CONTRACT.md#public-endpoints) |
 | `DASHBOARD-RUN-DISPLAY-01` | Run cards show the Soyuz display ID and provide a copy action for the canonical UUID. | [Run identifiers](CONTRACT.md#run-request) |
+| `DASHBOARD-RUN-LIST-02` | Dashboard run-list state classification covers every lifecycle state and treats unknown states as inactive. | [Run lifecycle](ARCHITECTURE.md#run-lifecycle) |
+| `DASHBOARD-PRESENTATION-01` | Dashboard filters and run cards use the same readable label and state-tone catalog. | [Run lifecycle](ARCHITECTURE.md#run-lifecycle) |
+| `DASHBOARD-PRESENTATION-02` | Dashboard event, status, and run values are presented as readable labels. | [Run lifecycle](ARCHITECTURE.md#run-lifecycle) |
+| `DASHBOARD-RUN-LIST-FLOW-01` | The dashboard pauses background refresh while hidden and supports cursor pagination and status filtering. | [Dashboard endpoints](CONTRACT.md#public-endpoints) |
+| `DASHBOARD-RUN-EVENTS-01` | Expanding a run loads its details and supports cursor-based event history. | [Dashboard endpoints](CONTRACT.md#public-endpoints) |
 | `OAUTH-REVOKE-FORM-01` | Dashboard revocation submits the access token and public client ID to the provider endpoint. |
+| `UUID-VALIDATION-01` | The shared UUID validator accepts RFC UUID versions 1 through 8 with the RFC variant and rejects malformed values. | [Transport contract: run request](CONTRACT.md#run-request) |
+| `DEPLOY-MIGRATION-IMPACT-01` | The pull request migration report identifies numbered changes and distinguishes new migrations, immutable-file edits, and no-change cases. | [Deployment: GitHub Actions deployment](DEPLOYMENT.md#github-actions-deployment) |
 | `DASHBOARD-API-ENVELOPE-01` | The dashboard fetch helper unwraps a successful API `data` envelope. |
 | `DASHBOARD-API-ERROR-01` | Non-success dashboard responses preserve their HTTP error and do not decode an error body as JSON. |
 | `OAUTH-CONSENT-COOKIE-01` | A malformed cookie entry naming the consent binding is not duplicated. |
