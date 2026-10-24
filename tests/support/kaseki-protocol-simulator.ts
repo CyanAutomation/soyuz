@@ -26,7 +26,7 @@ export interface KasekiSimulatorRequest {
 
 interface ApiResult {
   status: number;
-  body: { data?: Record<string, any>; error?: { code?: string; message?: string } };
+  body: { data?: unknown; error?: { code?: string; message?: string } };
 }
 
 /**
@@ -110,7 +110,7 @@ export class KasekiProtocolSimulator {
   async readWorkerRun(runId: string): Promise<Record<string, any>> {
     const result = await this.api("GET", `/v1/worker/runs/${runId}`);
     requireSuccess(result, "worker read");
-    return result.body.data!;
+    return requireWorkerRunData(result.body.data);
   }
 
   async sendHeartbeat(runId: string): Promise<void> {
@@ -218,6 +218,19 @@ function requireSuccess(result: ApiResult, operation: string): void {
   if (result.status < 200 || result.status >= 300) {
     throw new Error(`Soyuz ${operation} failed (${result.status}): ${result.body.error?.code ?? "UNKNOWN_ERROR"}`);
   }
+}
+
+export function requireWorkerRunData(value: unknown): Record<string, any> {
+  if (
+    !value
+    || typeof value !== "object"
+    || Array.isArray(value)
+    || typeof (value as Record<string, unknown>).runId !== "string"
+    || typeof (value as Record<string, unknown>).status !== "string"
+  ) {
+    throw new Error("Soyuz worker read returned a 2xx response without valid run data.");
+  }
+  return value as Record<string, any>;
 }
 
 function isTerminal(status: unknown): boolean {
