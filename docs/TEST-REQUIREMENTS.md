@@ -38,7 +38,7 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `RUN-ADMISSION-01` | Accepted REST runs persist and publish a versioned Queue message. | [Transport contract: run request and Queue message](CONTRACT.md#queue-message) |
 | `QUEUE-MESSAGE-01` | Queue messages contain the validated request and stable run identity. | [Transport contract: Queue message](CONTRACT.md#queue-message) |
 | `WORKER-READ-01` | A worker can read the canonical state before execution. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
-| `RUN-IDEMPOTENCY-01` | Equivalent normalized requests replay; key reuse for different work conflicts. | [Transport contract: run request](CONTRACT.md#run-request) |
+| `RUN-IDEMPOTENCY-01` | Equivalent normalized requests replay while retained; matching reuse after culling returns 410 without duplicate work, and key reuse for different work conflicts. | [Transport contract: run request](CONTRACT.md#run-request) |
 | `QUEUE-RETRY-01` | Uncertain publication retries the same run ID and eventually fails admission. | [Transport contract: run request](CONTRACT.md#run-request) |
 | `QUEUE-RETENTION-01` | A queued run older than the recovery interval is republished with the same run ID; recovery attempts are reserved once per interval and preserve `queuedAt`. | [Architecture: Queue retention and recovery](ARCHITECTURE.md#queue-retention-and-recovery) |
 | `WORKER-CLAIM-01` | A claim is replay-safe and selects one worker. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |

@@ -3,7 +3,8 @@ import { CONTRACT_VERSION, type QueuedRun } from "../contracts/queue-message";
 import { RUN_STATUSES, canTransition, isTerminalStatus, type RunStatus } from "../domain/run-state-machine";
 import {
   getRun as getRunRow,
-  getRunByIdempotencyKey,
+  getRetainedRun,
+  getRunIdempotencyRecord,
   insertRun,
   listRunEvents,
   listRuns as listRunRows,
@@ -16,6 +17,7 @@ import {
   type RunEventRow,
   type RunRow,
   parseRequest,
+  MAX_RETAINED_RUNS,
 } from "../db/runs";
 import type { Env } from "../env";
 import { stableStringify } from "../lib/canonical-json";
@@ -74,8 +76,8 @@ export async function createRun(
     const idempotencyKey = runRequest.idempotencyKey ?? null;
     const requestHash = await runRequestFingerprint(runRequest, retryOf);
     if (idempotencyKey) {
-      const existing = await getRunByIdempotencyKey(env.DB, idempotencyKey, origin.type, origin.id);
-      if (existing) return replayOrConflict(existing, requestHash);
+      const existing = await getRunIdempotencyRecord(env.DB, idempotencyKey, origin.type, origin.id);
+      if (existing) return replayExistingRun(env, existing, requestHash);
     }
 
     const now = new Date().toISOString();
@@ -211,8 +213,8 @@ async function insertRunOrReplay(env: Env, input: RunPersistenceInput): Promise<
     });
   } catch {
     if (input.idempotencyKey) {
-      const raced = await getRunByIdempotencyKey(env.DB, input.idempotencyKey, input.origin.type, input.origin.id);
-      if (raced) return replayOrConflict(raced, input.requestHash);
+      const raced = await getRunIdempotencyRecord(env.DB, input.idempotencyKey, input.origin.type, input.origin.id);
+      if (raced) return replayExistingRun(env, raced, input.requestHash);
     }
     throw new RunApplicationError(
       503,
@@ -277,10 +279,10 @@ export async function listRunsPage(
   env: Env,
   query: { limit?: string | number | null; status?: string | null; cursor?: string | null },
 ): Promise<RunListPage> {
-  const limitValue = query.limit ?? "25";
+  const limitValue = query.limit ?? String(MAX_RETAINED_RUNS);
   const limit = Number(limitValue);
-  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
-    throw new RunApplicationError(400, "INVALID_LIMIT", "limit must be an integer from 1 to 100");
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RETAINED_RUNS) {
+    throw new RunApplicationError(400, "INVALID_LIMIT", `limit must be an integer from 1 to ${MAX_RETAINED_RUNS}`);
   }
 
   let status: RunStatus | undefined;
@@ -312,7 +314,7 @@ export async function listRunsPage(
 
 export async function readRun(env: Env, runId: string): Promise<RunRow> {
   try {
-    const row = await getRunRow(env.DB, runId);
+    const row = await getRetainedRun(env.DB, runId);
     if (!row) throw new RunApplicationError(404, "RUN_NOT_FOUND", "Run was not found");
     return row;
   } catch (error) {
@@ -338,7 +340,7 @@ export async function readRunEventsPage(
   }
 
   try {
-    const run = await getRunRow(env.DB, runId);
+    const run = await getRetainedRun(env.DB, runId);
     if (!run) throw new RunApplicationError(404, "RUN_NOT_FOUND", "Run was not found");
     const rows = await listRunEvents(env.DB, runId, after, limit + 1);
     const hasMore = rows.length > limit;
@@ -388,7 +390,7 @@ async function cancelOnce(
   runId: string,
   origin: RunOrigin,
 ): Promise<{ row: RunRow; statusCode: 200 | 202 }> {
-  const row = await getRunRow(env.DB, runId);
+  const row = await getRetainedRun(env.DB, runId);
   if (!row) throw new RunApplicationError(404, "RUN_NOT_FOUND", "Run was not found");
   assertRunOrigin(row, origin);
   if (row.status === "cancel_requested" || row.status === "cancelled") return { row, statusCode: 200 };
@@ -466,6 +468,30 @@ function replayOrConflict(row: RunRow, requestHash: string): RunAdmission {
     );
   }
   return { row, statusCode: 200 };
+}
+
+async function replayExistingRun(
+  env: Env,
+  record: { run_id: string; request_hash: string },
+  requestHash: string,
+): Promise<RunAdmission> {
+  if (record.request_hash !== requestHash) {
+    throw new RunApplicationError(
+      409,
+      "IDEMPOTENCY_KEY_REUSED",
+      "Idempotency key was already used with a different run request",
+    );
+  }
+
+  const row = await getRetainedRun(env.DB, record.run_id);
+  if (!row) {
+    throw new RunApplicationError(
+      410,
+      "IDEMPOTENCY_KEY_EXPIRED",
+      "This idempotency key belongs to a run outside Soyuz's 30-run history window. Use a new key to submit new work.",
+    );
+  }
+  return replayOrConflict(row, requestHash);
 }
 
 async function failAdmission(env: Env, runId: string, now: string, failureClass: string, failureMessage: string): Promise<void> {

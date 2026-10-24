@@ -6,7 +6,7 @@ import { handleClientArtifacts, purgeExpiredArtifacts } from "./api/artifacts";
 import { handleWorkerArtifacts } from "./api/worker-artifacts";
 import { errorResponse, jsonResponse, requestIdFor } from "./api/http";
 import { handleWorkerCallbacks } from "./api/workers";
-import { purgeExpiredRunRequests } from "./api/retention";
+import { purgeExpiredRunRequests, purgeOldRuns } from "./api/retention";
 import type { Env } from "./env";
 import { DEFAULT_RUN_ORIGIN, type RunOrigin } from "./application/runs";
 import { createSoyuzMcpHandler } from "./mcp/server";
@@ -88,6 +88,14 @@ async function handleHealth(requestId: string, env: Env): Promise<Response> {
     await env.DB.prepare(`
       SELECT id, origin_type, origin_id, retry_of, last_heartbeat_at, operational_health, request_redacted_at
       FROM runs LIMIT 0
+    `).first();
+    await env.DB.prepare(`
+      SELECT origin_type, origin_id, idempotency_key, request_hash, run_id
+      FROM run_idempotency_keys LIMIT 0
+    `).first();
+    await env.DB.prepare(`
+      SELECT object_key, queued_at, last_attempt_at
+      FROM artifact_deletion_queue LIMIT 0
     `).first();
     return jsonResponse(200, { status: "ok", contractVersion: "1", requestId });
   } catch {
@@ -228,7 +236,7 @@ export default {
     return handleRequest(request, env, context);
   },
   scheduled(controller: ScheduledController, env: Env, context: ExecutionContext): void {
-    const work = [reconcileAdmissions(env), reconcileStalledRuns(env)];
+    const work = [reconcileAdmissions(env), reconcileStalledRuns(env), purgeOldRuns(env).then(() => undefined)];
     if (controller.cron === "0 3 * * *") {
       work.push(purgeExpiredArtifacts(env));
       work.push(purgeExpiredRunRequests(env).then(() => undefined));
