@@ -22,6 +22,7 @@ interface OAuthTokenResponse {
 interface DashboardRunSummary {
   status: string;
   runId: string;
+  displayId: string;
   repoUrl: string;
   ref: string;
   origin: { type: string; id: string };
@@ -336,12 +337,34 @@ function renderRun(run: DashboardRunSummary): HTMLElement {
   status.textContent = `Status: ${statusPresentation.label}`;
   cardHeader.append(identity, status);
 
-  const runId = document.createElement("p");
-  runId.className = "run-card__id";
-  runId.textContent = "Run ID · ";
-  const runIdCode = document.createElement("code");
-  runIdCode.textContent = run.runId;
-  runId.append(runIdCode);
+  const identifiers = document.createElement("div");
+  identifiers.className = "run-card__identifiers";
+  const displayId = document.createElement("p");
+  displayId.className = "run-card__id";
+  displayId.textContent = `Soyuz run · ${run.displayId}`;
+  const technicalId = document.createElement("p");
+  technicalId.className = "run-card__technical-id";
+  technicalId.textContent = "Technical ID · ";
+  const technicalIdCode = document.createElement("code");
+  technicalIdCode.textContent = run.runId;
+  technicalId.append(technicalIdCode);
+  const copyIdButton = document.createElement("button");
+  copyIdButton.className = "button button--secondary run-card__copy-id";
+  copyIdButton.type = "button";
+  copyIdButton.textContent = "Copy ID";
+  copyIdButton.setAttribute("aria-label", "Copy technical run ID");
+  copyIdButton.addEventListener("click", () => {
+    const clipboard = navigator.clipboard;
+    if (!clipboard) {
+      copyIdButton.textContent = "Copy unavailable";
+      return;
+    }
+    void clipboard.writeText(run.runId).then(
+      () => { copyIdButton.textContent = "Copied"; },
+      () => { copyIdButton.textContent = "Copy failed"; },
+    );
+  });
+  identifiers.append(displayId, technicalId, copyIdButton);
 
   const facts = createDefinitionList([
     ["Stage", formatMachineLabel(run.stage)],
@@ -362,7 +385,7 @@ function renderRun(run: DashboardRunSummary): HTMLElement {
     : run.lastHeartbeatAt
       ? `Last worker check-in · ${formatTimestamp(run.lastHeartbeatAt)}`
       : "No worker check-in has been reported yet.";
-  card.append(cardHeader, runId, facts, health);
+  card.append(cardHeader, identifiers, facts, health);
 
   const details = document.createElement("details");
   const summary = document.createElement("summary");
