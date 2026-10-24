@@ -112,6 +112,7 @@ These tests protect implementation helpers and direct callers, but they do not r
 | `DASHBOARD-AUTH-FLOW-01` | Dashboard sign-in displays the verified GitHub login; sign-out clears run data and requests token revocation. |
 | `DASHBOARD-RUN-LIST-01` | Dashboard run-list requests encode status and cursor values safely. | [Dashboard endpoints](CONTRACT.md#public-endpoints) |
 | `DASHBOARD-RUN-DISPLAY-01` | Run cards show the Soyuz display ID and provide a copy action for the canonical UUID. | [Run identifiers](CONTRACT.md#run-request) |
+| `RUN-DISPLAY-ID-SCHEMA-01` | D1 rejects null display IDs so persisted runs retain their human-facing identifier. | [Display IDs migration](../migrations/0007_run_display_ids.sql) |
 | `DASHBOARD-RUN-LIST-02` | Dashboard run-list state classification covers every lifecycle state and treats unknown states as inactive. | [Run lifecycle](ARCHITECTURE.md#run-lifecycle) |
 | `DASHBOARD-PRESENTATION-01` | Dashboard filters and run cards use the same readable label and state-tone catalog. | [Run lifecycle](ARCHITECTURE.md#run-lifecycle) |
 | `DASHBOARD-PRESENTATION-02` | Dashboard event, status, and run values are presented as readable labels. | [Run lifecycle](ARCHITECTURE.md#run-lifecycle) |
