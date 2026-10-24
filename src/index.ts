@@ -6,7 +6,7 @@ import { handleClientArtifacts, purgeExpiredArtifacts } from "./api/artifacts";
 import { handleWorkerArtifacts } from "./api/worker-artifacts";
 import { errorResponse, jsonResponse, requestIdFor } from "./api/http";
 import { handleWorkerCallbacks } from "./api/workers";
-import { purgeExpiredRunRequests } from "./api/retention";
+import { purgeExpiredRunRequests, purgeOldRuns } from "./api/retention";
 import type { Env } from "./env";
 import { DEFAULT_RUN_ORIGIN, type RunOrigin } from "./application/runs";
 import { createSoyuzMcpHandler } from "./mcp/server";
@@ -228,7 +228,7 @@ export default {
     return handleRequest(request, env, context);
   },
   scheduled(controller: ScheduledController, env: Env, context: ExecutionContext): void {
-    const work = [reconcileAdmissions(env), reconcileStalledRuns(env)];
+    const work = [reconcileAdmissions(env), reconcileStalledRuns(env), purgeOldRuns(env).then(() => undefined)];
     if (controller.cron === "0 3 * * *") {
       work.push(purgeExpiredArtifacts(env));
       work.push(purgeExpiredRunRequests(env).then(() => undefined));

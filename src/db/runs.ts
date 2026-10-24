@@ -3,6 +3,8 @@ import { CONTRACT_VERSION } from "../contracts/queue-message";
 import { canTransition, type RunStatus } from "../domain/run-state-machine";
 import { stableStringify } from "../lib/canonical-json";
 
+export const MAX_RETAINED_RUNS = 30;
+
 export interface RunRow {
   id: string;
   contract_version: string;
@@ -128,14 +130,41 @@ export async function getRun(db: D1Database, id: string): Promise<RunRow | null>
   `).bind(id).first<RunRow>();
 }
 
+/** Read a run only while it is among the newest retained history entries. */
+export async function getRetainedRun(db: D1Database, id: string): Promise<RunRow | null> {
+  return db.prepare(`
+    SELECT runs.*,
+      (SELECT event_id FROM run_events
+       WHERE run_id = runs.id AND type = 'run.claimed'
+       ORDER BY sequence DESC LIMIT 1) AS claim_callback_id
+    FROM runs
+    WHERE id = ? AND id IN (
+      SELECT id FROM runs ORDER BY created_at DESC, id DESC LIMIT ?
+    )
+  `).bind(id, MAX_RETAINED_RUNS).first<RunRow>();
+}
+
+export async function isRunRetained(db: D1Database, id: string): Promise<boolean> {
+  const row = await db.prepare(`
+    SELECT 1 AS retained FROM runs
+    WHERE id = ? AND id IN (
+      SELECT id FROM runs ORDER BY created_at DESC, id DESC LIMIT ?
+    )
+  `).bind(id, MAX_RETAINED_RUNS).first<{ retained: number }>();
+  return row !== null;
+}
+
 export async function getRunByIdempotencyKey(
   db: D1Database,
   key: string,
   originType = "api_client",
   originId = "client-api",
 ): Promise<RunRow | null> {
-  return db.prepare("SELECT * FROM runs WHERE origin_type = ? AND origin_id = ? AND idempotency_key = ?")
-    .bind(originType, originId, key).first<RunRow>();
+  return db.prepare(`
+    SELECT * FROM runs
+    WHERE origin_type = ? AND origin_id = ? AND idempotency_key = ?
+      AND id IN (SELECT id FROM runs ORDER BY created_at DESC, id DESC LIMIT ?)
+  `).bind(originType, originId, key, MAX_RETAINED_RUNS).first<RunRow>();
 }
 
 export async function insertRun(
@@ -612,12 +641,14 @@ export async function listRuns(
     filters.push("(created_at, id) < (?, ?)");
     values.push(cursor.createdAt, cursor.id);
   }
-  const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
   const rows = await db.prepare(`
-    SELECT * FROM runs ${where}
+    SELECT * FROM runs
+    WHERE id IN (
+      SELECT id FROM runs ORDER BY created_at DESC, id DESC LIMIT ?
+    )${filters.length ? ` AND ${filters.join(" AND ")}` : ""}
     ORDER BY created_at DESC, id DESC
     LIMIT ?
-  `).bind(...values, limit).all<RunRow>();
+  `).bind(MAX_RETAINED_RUNS, ...values, limit).all<RunRow>();
   return rows.results;
 }
 

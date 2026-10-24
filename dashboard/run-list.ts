@@ -1,6 +1,6 @@
 import { getRunStatusPresentation } from "./presentation.js";
 
-export const RUN_LIST_LIMIT = 50;
+export const RUN_LIST_LIMIT = 30;
 
 export interface RunListQuery {
   status?: string | null;

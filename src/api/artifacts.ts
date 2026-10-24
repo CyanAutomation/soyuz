@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { isRunRetained } from "../db/runs";
 import { isUuid } from "../lib/uuid";
 import { errorResponse, successResponse } from "./http";
 import { MAX_ARTIFACTS_PER_RUN, publicArtifact, type ArtifactRow } from "./artifact-model";
@@ -59,6 +60,9 @@ function isArtifactReadRequest(parts: string[], request: Request): boolean {
 
 async function listClientArtifacts(env: Env, runId: string, requestId: string): Promise<Response> {
   try {
+    if (!(await isRunRetained(env.DB, runId))) {
+      return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
+    }
     const rows = await env.DB.prepare(`
       SELECT id, run_id, kind, name, content_type, size_bytes, object_key, created_at, expires_at, state
       FROM run_artifacts WHERE run_id = ? AND state = 'ready' AND expires_at > ?
@@ -73,6 +77,9 @@ async function listClientArtifacts(env: Env, runId: string, requestId: string): 
 async function readClientArtifact(env: Env, runId: string, artifactId: string, requestId: string): Promise<Response> {
   let row: ArtifactRow | null;
   try {
+    if (!(await isRunRetained(env.DB, runId))) {
+      return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
+    }
     row = await findReadyArtifact(env, runId, artifactId);
   } catch {
     return errorResponse(requestId, 503, "ARTIFACT_READ_UNAVAILABLE", "Soyuz could not read artifact metadata. Retry shortly.");
