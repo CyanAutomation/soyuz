@@ -837,6 +837,18 @@ describe("Soyuz Worker API", () => {
     expect(second.body.data.id).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it("[RUN-DISPLAY-ID-02] rejects attempts to clear an assigned display ID", async () => {
+    const { bindings } = testEnv();
+    const created = await submit(bindings, {}, "00000000-0000-4000-8000-000000000073");
+
+    await expect(bindings.DB.prepare("UPDATE runs SET display_id = NULL WHERE id = ?")
+      .bind(created.body.data.id).run()).rejects.toThrow();
+
+    const stored = await bindings.DB.prepare("SELECT display_id FROM runs WHERE id = ?")
+      .bind(created.body.data.id).first<{ display_id: string }>();
+    expect(stored?.display_id).toBe(created.body.data.displayId);
+  });
+
   it("[RUN-ORIGIN-01] derives Kaseki provenance from its scoped credential and scopes idempotency", async () => {
     const { bindings, sent } = testEnv();
     const kaseki = {
