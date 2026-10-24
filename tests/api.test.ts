@@ -421,7 +421,7 @@ describe("Soyuz Worker API", () => {
     const response = await call(bindings, "/dashboard/api/runs?limit=30", { token: accessToken });
     expect(response.response.status).toBe(200);
     expect(response.body.data.runs).toEqual(expect.arrayContaining([
-      expect.objectContaining({ runId, stage: null, operationalHealth: "suspect_stalled", lastHeartbeatAt: heartbeat }),
+      expect.objectContaining({ runId, displayId: created.body.data.displayId, stage: null, operationalHealth: "suspect_stalled", lastHeartbeatAt: heartbeat }),
     ]));
   });
 
@@ -491,6 +491,7 @@ describe("Soyuz Worker API", () => {
     expect(detail.response.status).toBe(200);
     expect(detail.body.data).toMatchObject({
       runId,
+      displayId: created.body.data.displayId,
       repoUrl: "https://github.com/example/private-project",
       outcomeSummary: "Completed safely",
       publishedUrl: "https://github.com/example/private-project",
@@ -768,6 +769,8 @@ describe("Soyuz Worker API", () => {
     expect(response.status).toBe(202);
     expect(body.data.status).toBe("queued");
     expect(body.data.contractVersion).toBe("1");
+    expect(body.data.displayId).toMatch(/^soyuz-\d+$/);
+    expect(body.data.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(body.data.ref).toBe("main");
     expect(body.data.publishMode).toBe("pr");
     expect(sent).toHaveLength(1);
@@ -779,14 +782,21 @@ describe("Soyuz Worker API", () => {
 
     const stored = await getRun(bindings.DB, body.data.id);
     expect(stored?.status).toBe("queued");
+    expect(stored?.display_id).toBe(body.data.displayId);
     expect(stored?.idempotency_key).toBe(CLIENT_KEY);
     expect(stored?.queued_at).toBeTruthy();
 
     const workerState = await call(bindings, `/v1/worker/runs/${body.data.id}`, { token: WORKER_TOKEN });
     expect(workerState.response.status).toBe(200);
     expect(workerState.body.data.status).toBe("queued");
+    expect(workerState.body.data.displayId).toBe(body.data.displayId);
     const clientCannotPollAsWorker = await call(bindings, `/v1/worker/runs/${body.data.id}`, { token: CLIENT_TOKEN });
     expect(clientCannotPollAsWorker.response.status).toBe(401);
+
+    const detail = await call(bindings, `/v1/runs/${body.data.id}`, { token: CLIENT_TOKEN });
+    const list = await call(bindings, "/v1/runs?limit=30", { token: CLIENT_TOKEN });
+    expect(detail.body.data).toMatchObject({ id: body.data.id, displayId: body.data.displayId });
+    expect(list.body.data.runs[0]).toMatchObject({ id: body.data.id, displayId: body.data.displayId });
   });
 
   it("[RUN-IDEMPOTENCY-01] replays equivalent submissions and rejects key reuse for different work", async () => {
@@ -804,12 +814,27 @@ describe("Soyuz Worker API", () => {
     expect(first.response.status).toBe(202);
     expect(replay.response.status).toBe(200);
     expect(replay.body.data.id).toBe(first.body.data.id);
+    expect(replay.body.data.displayId).toBe(first.body.data.displayId);
     expect(sent).toHaveLength(1);
 
     const conflict = await submit(bindings, { taskPrompt: "Use the same idempotency key with different work." });
     expect(conflict.response.status).toBe(409);
     expect(conflict.body.error.code).toBe("IDEMPOTENCY_KEY_REUSED");
     expect(sent).toHaveLength(1);
+  });
+
+  it("[RUN-DISPLAY-ID-01] assigns a unique, increasing Soyuz display ID without replacing the canonical UUID", async () => {
+    const { bindings } = testEnv();
+    const first = await submit(bindings, {}, "00000000-0000-4000-8000-000000000071");
+    const second = await submit(bindings, {}, "00000000-0000-4000-8000-000000000072");
+
+    expect(first.body.data.displayId).toMatch(/^soyuz-\d+$/);
+    expect(second.body.data.displayId).toMatch(/^soyuz-\d+$/);
+    expect(first.body.data.displayId).not.toBe(second.body.data.displayId);
+    expect(Number(second.body.data.displayId.slice("soyuz-".length)))
+      .toBeGreaterThan(Number(first.body.data.displayId.slice("soyuz-".length)));
+    expect(first.body.data.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second.body.data.id).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it("[RUN-ORIGIN-01] derives Kaseki provenance from its scoped credential and scopes idempotency", async () => {

@@ -41,7 +41,7 @@ Content-Type: application/json
 }
 ```
 
-Fresh admission returns HTTP 202 and an RFC 9562 UUIDv7 run ID. Existing Kaseki clients should not depend on the old `kaseki-N` format.
+Fresh admission returns HTTP 202 with a canonical RFC 9562 UUIDv7 `id` and a stable, user-facing `displayId` such as `soyuz-213`. Soyuz assigns display IDs in creation order and includes them in run create, read, list, worker-read, dashboard, and MCP responses. Keep using the UUID `id`/`runId` in API paths, worker callbacks, Queue messages, and deduplication; `displayId` is for showing or discussing runs with people. It is separate from Kaseki's host-local `kaseki-N` job ID. Existing Kaseki clients should not depend on the old `kaseki-N` format as Soyuz's canonical ID.
 
 If `Queue.send()` throws, its outcome may be unknown: Cloudflare could have accepted the message while the response was lost. Soyuz returns 503 `QUEUE_PUBLISH_UNCERTAIN`, keeps the run in `admitting`, and retries the same run ID through its scheduled reconciler. After five unsuccessful attempts, the run becomes `admission_failed`; its failure message directs callers to check Queue availability and submit a new run with a new idempotency key. Before then, callers should retry with the same idempotency key to retrieve the pending run.
 
@@ -76,7 +76,7 @@ Requirement IDs: `AUTH-REST-01`, `WORKER-READ-01`, `WORKER-CLAIM-01`, `WORKER-ST
 
 Every worker request uses `Authorization: Bearer <WORKER_API_TOKEN>`, distinct from the client token.
 
-- `GET /v1/worker/runs/:id` returns the canonical `status`, `cancelRequestedAt`, `claimExpiresAt`, `workerId`, current `claimCallbackId`, stage, update time, `lastHeartbeatAt`, and `operationalHealth` (`unknown`, `healthy`, or `suspect_stalled`). Claim and health fields are additive contract-v1 metadata and do not change lifecycle status.
+- `GET /v1/worker/runs/:id` returns both the canonical `runId` and human-facing `displayId`, plus `status`, `cancelRequestedAt`, `claimExpiresAt`, `workerId`, current `claimCallbackId`, stage, update time, `lastHeartbeatAt`, and `operationalHealth` (`unknown`, `healthy`, or `suspect_stalled`). Claim, display, and health fields are additive contract-v1 metadata and do not change lifecycle status.
 - `POST /v1/worker/runs/:id/claim` body: `{ contractVersion, callbackId, workerId, leaseSeconds? }`. The default lease is 120 seconds (allowed range 30–300 seconds). A compare-and-set from `queued` to `claimed` selects one execution host.
 - `POST /v1/worker/runs/:id/started` body: `{ contractVersion, callbackId, workerId, claimCallbackId?, startedAt?, stage? }`.
 - `POST /v1/worker/runs/:id/events` body: `{ contractVersion, eventId, workerId, claimCallbackId?, type, stage?, step?, timestamp?, payload? }`. Event types are bounded operational events: stage/step changes, progress updates, heartbeat, validation completion, and publication completion. Each event is capped at 12 KB.

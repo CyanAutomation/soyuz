@@ -40,6 +40,8 @@ Requirement IDs: `MCP-TOOLS-01`, `MCP-CREATE-01`, `MCP-PUBLISH-01`, `MCP-LIST-PA
 | `get_run_events` | `runId`; optional `after`, `limit` (1–200) | Returns a bounded page of stored operational events in sequence order. Read-only. |
 | `cancel_run` | `runId` | Records cancellation intent through Soyuz and returns canonical state. State-changing. |
 
+Run summaries include both `runId` (the canonical UUID required by Soyuz tools and APIs) and `displayId` (a human-facing identifier such as `soyuz-213`). Refer to runs by `displayId` in user-facing replies; pass `runId` when calling tools.
+
 `list_runs.status` accepts the current Soyuz states: `admitting`, `queued`, `claimed`, `running`, `cancel_requested`, `cancelled`, `completed`, `failed`, and `admission_failed`.
 
 Soyuz retains and exposes at most the latest 30 runs across all statuses. Status filters and cursors apply within that 30-run history window; older run details, events, and artifacts are not available.
@@ -72,6 +74,7 @@ create_run({
 Soyuz:
 {
   runId: "...",
+  displayId: "soyuz-213",
   status: "queued",
   publishMode: "none"
 }

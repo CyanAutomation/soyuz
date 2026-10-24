@@ -81,7 +81,7 @@ Kaseki must leave a pulled message unacknowledged while Soyuz still reports `adm
 
 Requirement ID: `RUN-ID-UUIDV7-01`.
 
-Soyuz generates RFC 9562 UUIDv7 IDs from the current millisecond timestamp and Web Crypto random bytes rather than Kaseki's historical `kaseki-N`. They are URL-safe and lexicographically time-sortable; D1 timestamps remain the source for deterministic history ordering. Callers must treat IDs as opaque strings.
+Soyuz generates RFC 9562 UUIDv7 IDs from the current millisecond timestamp and Web Crypto random bytes rather than Kaseki's historical `kaseki-N`. These remain the canonical IDs used for API paths, Queue delivery, and worker callbacks. Each run also receives a persisted, increasing `soyuz-N` display ID for people; it is not a Kaseki local job ID and never replaces the UUID. UUIDs are URL-safe and lexicographically time-sortable; D1 timestamps remain the source for deterministic history ordering. Callers must treat canonical IDs as opaque strings.
 
 Client and worker APIs have separate bearer secrets. Public health is unauthenticated. `/mcp` accepts the legacy client key or OAuth tokens; OAuth read and write scopes separate reads from run creation/cancellation. The private read-only dashboard uses GitHub OAuth and an explicit user-ID allowlist. Worker artifact uploads require the shared worker token plus the current worker and claim fencing IDs. These routes cannot be used to execute work directly. Kaseki remains responsible for execution-context safety, Docker, repository access, validation, and publication. See [the MCP interface](MCP.md) and [deployment guide](DEPLOYMENT.md) for OAuth configuration.
 

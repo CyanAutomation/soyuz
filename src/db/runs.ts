@@ -7,6 +7,7 @@ export const MAX_RETAINED_RUNS = 30;
 
 export interface RunRow {
   id: string;
+  display_id: string;
   contract_version: string;
   repo_url: string;
   git_ref: string;
