@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchJson } from "../dashboard/api.ts";
 import { renderAuthUi } from "../dashboard/auth-ui.ts";
 import { revokeAccessToken } from "../dashboard/auth-api.ts";
@@ -49,11 +49,13 @@ describe("dashboard API responses", () => {
     expect(buildRunListPath({ status: "failed", cursor: "a+/=" })).toBe("/dashboard/api/runs?limit=30&status=failed&cursor=a%2B%2F%3D");
   });
 
-  it("[DASHBOARD-RUN-LIST-02] classifies active run states", () => {
-    expect(isActiveRunStatus("queued")).toBe(true);
-    expect(isActiveRunStatus("running")).toBe(true);
-    expect(isActiveRunStatus("completed")).toBe(false);
-    expect(isActiveRunStatus("failed")).toBe(false);
+  it("[DASHBOARD-RUN-LIST-02] classifies every known run state as active or terminal", () => {
+    for (const status of ["admitting", "queued", "claimed", "running", "cancel_requested"]) {
+      expect(isActiveRunStatus(status), status).toBe(true);
+    }
+    for (const status of ["cancelled", "completed", "failed", "admission_failed", "unknown"]) {
+      expect(isActiveRunStatus(status), status).toBe(false);
+    }
   });
 
   it("[DASHBOARD-PRESENTATION-01] uses one readable status catalog for filters and run cards", () => {
@@ -160,186 +162,209 @@ describe("dashboard API responses", () => {
   });
 });
 
-describe("dashboard authentication flow", () => {
-  it("[DASHBOARD-AUTH-FLOW-01/DASHBOARD-RUN-DISPLAY-01] shows readable run IDs and lets users copy the canonical ID", async () => {
-    const nodes = new Map([
-      ["#notice", createNode()],
-      ["#runs", createNode()],
-      ["#run-controls", createNode()],
-      ["#connect", createNode()],
-      ["#account", createNode()],
-      ["#refresh", createNode()],
-      ["#status-filter", createNode()],
-      ["#load-more", createNode()],
-      ["#updated", createNode()],
-    ]);
-    const sessionValues = new Map([
-      ["soyuz.dashboard.state", "state-value"],
-      ["soyuz.dashboard.verifier", "verifier-value"],
-      ["soyuz.dashboard.clientId", "dashboard-client"],
-      ["soyuz.dashboard.redirectUri", "https://soyuz.test/dashboard/"],
-    ]);
-    const storage: Pick<Storage, "getItem" | "removeItem" | "setItem"> = {
-      getItem: (key: string) => sessionValues.get(key) ?? null,
-      removeItem: (key: string) => { sessionValues.delete(key); },
-      setItem: (key: string, value: string) => { sessionValues.set(key, value); },
-    };
-    const requests: RecordedRequest[] = [];
-    const intervalCallbacks: Array<() => void> = [];
-    const writeClipboard = vi.fn(async (_value: string) => {});
-    const runId = "00000000-0000-4000-8000-000000000101";
-    const initialEvents = Array.from({ length: 100 }, (_, index) => ({
-      sequence: index + 1,
-      type: index === 0 ? "run.started" : index === 1 ? "artifacts.uploaded" : `run.progress.${index + 1}`,
-      stage: "validation",
-      step: "checks",
-      timestamp: "2026-10-18T12:01:00.000Z",
-      payload: index === 1
-        ? { status: "partial", uploadedCount: 2, failedCount: 1, skippedCount: 0 }
-        : { completed: index + 1 },
-    }));
-    const run = {
-      runId,
-      displayId: "soyuz-213",
-      status: "running",
-      repoUrl: "https://github.com/example/project",
-      ref: "main",
-      createdAt: "2026-10-18T12:00:00.000Z",
-      queuedAt: "2026-10-18T12:00:30.000Z",
-      startedAt: "2026-10-18T12:01:00.000Z",
-      completedAt: null,
-      stage: "validation",
-      origin: { type: "kaseki", id: "kaseki-prod" },
-      retryOf: null,
-      operationalHealth: "healthy",
-      lastHeartbeatAt: "2026-10-18T12:01:00.000Z",
-    };
-    const fetcher = vi.fn(async (path: string, init: RequestInit = {}): Promise<FakeResponse> => {
-      requests.push({ path, init });
-      const requestBody = init.body instanceof URLSearchParams
-        ? init.body
-        : new URLSearchParams(typeof init.body === "string" ? init.body : "");
-      if (path === "/oauth/token" && requestBody.has("grant_type")) {
-        return jsonResponse({ access_token: "dashboard-access-token" });
-      }
-      if (path === "/dashboard/api/me") return jsonResponse({ githubLogin: "current-user" });
-      if (path === "/dashboard/api/runs?limit=30") return jsonResponse({ runs: [run], nextCursor: "cursor+/1" });
-      if (path === `/dashboard/api/runs/${runId}`) return jsonResponse({
-        ...run,
-        outcomeSummary: "Validation passed",
-        taskMode: "inspect",
-        publishMode: "pr",
-        publishedUrl: "https://github.com/example/project/pull/7",
-        changedFileCount: 2,
-        failureClass: null,
-        exitCode: 0,
-      });
-      if (path === `/dashboard/api/runs/${runId}/artifacts`) return jsonResponse({ artifacts: [] });
-      if (path === `/dashboard/api/runs/${runId}/events?limit=100`) return jsonResponse({ events: initialEvents, nextAfter: 100, hasMore: true });
-      if (path === `/dashboard/api/runs/${runId}/events?after=100&limit=100`) return jsonResponse({ events: [{ sequence: 101, type: "run.completed", stage: "validation", step: "checks", timestamp: "2026-10-18T12:02:00.000Z", payload: { status: "completed" } }], nextAfter: 101, hasMore: false });
-      if (path === "/dashboard/api/runs?limit=30&cursor=cursor%2B%2F1") {
-        return jsonResponse({ runs: [{ ...run, runId: "00000000-0000-4000-8000-000000000102", status: "completed" }], nextCursor: null });
-      }
-      if (path === "/dashboard/api/runs?limit=30&status=running") return jsonResponse({ runs: [run], nextCursor: null });
-      if (path === "/oauth/token") return { ok: false, status: 503, json: async () => ({}) };
-      throw new Error(`Unexpected request: ${path}`);
-    });
-
-    const documentStub = {
-      visibilityState: "visible",
-      querySelector: (selector: string) => nodes.get(selector),
-      createElement: (tagName: string) => createNode(tagName),
-      addEventListener: vi.fn(),
-    };
-    vi.stubGlobal("document", documentStub);
-    vi.stubGlobal("location", {
-      href: "https://soyuz.test/dashboard/?code=auth-code&state=state-value",
-      origin: "https://soyuz.test",
-      assign: vi.fn(),
-    });
-    vi.stubGlobal("sessionStorage", storage);
-    vi.stubGlobal("history", { replaceState: vi.fn() });
-    vi.stubGlobal("fetch", fetcher);
-    vi.stubGlobal("navigator", { clipboard: { writeText: writeClipboard } });
-    vi.stubGlobal("setInterval", (callback: () => void) => { intervalCallbacks.push(callback); return 1; });
-    vi.stubGlobal("clearInterval", vi.fn());
+describe("dashboard application flows", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
     vi.resetModules();
+  });
 
-    try {
-      await import("../dashboard/app.ts");
-      await vi.waitFor(() => expect(nodeAt(nodes, "#connect").textContent).toBe("Sign out"));
-      await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=30")).toBe(true));
-      expect(nodeAt(nodes, "#run-controls").hidden).toBe(false);
-      expect(nodeAt(nodes, "#runs").hidden).toBe(false);
-      expect(nodeAt(nodes, "#account")).toMatchObject({ hidden: false, textContent: "Signed in as @current-user" });
-      await vi.waitFor(() => expect(nodeAt(nodes, "#notice").textContent).toContain("1 run"));
-      expect(nodeAt(nodes, "#runs").children).toHaveLength(1);
-      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("example/project");
-      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Soyuz run · soyuz-213");
-      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Technical ID");
-      expect(flattenText(nodeAt(nodes, "#runs"))).toContain(runId);
-      const copyIdButton = findNodeByClass(nodeAt(nodes, "#runs"), "run-card__copy-id");
-      expect(copyIdButton.textContent).toBe("Copy ID");
-      copyIdButton.click();
-      await vi.waitFor(() => expect(writeClipboard).toHaveBeenCalledWith(runId));
-      expect(copyIdButton.textContent).toBe("Copied");
-      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Status: Running");
-      expect(flattenText(nodeAt(nodes, "#runs"))).toContain(`Created ${new Date(run.createdAt).toLocaleString()}`);
-      expect(flattenText(nodeAt(nodes, "#runs"))).toContain(`Started ${new Date(run.startedAt).toLocaleString()}`);
-      expect(flattenText(nodeAt(nodes, "#status-filter"))).toContain("Cancellation requested");
-      expect(intervalCallbacks).toHaveLength(1);
-      documentStub.visibilityState = "hidden";
-      intervalCallbacks[0]!();
-      await Promise.resolve();
-      expect(requests.filter(({ path }) => path === "/dashboard/api/runs?limit=30")).toHaveLength(1);
-      documentStub.visibilityState = "visible";
-      intervalCallbacks[0]!();
-      await vi.waitFor(() => expect(requests.filter(({ path }) => path === "/dashboard/api/runs?limit=30")).toHaveLength(2));
+  it("[DASHBOARD-AUTH-FLOW-01] identifies the signed-in user and clears dashboard data after sign-out", async () => {
+    const { nodes, requests } = await mountDashboard();
 
-      const details = findNode(nodeAt(nodes, "#runs"), "DETAILS");
-      details.open = true;
-      details.listeners.toggle?.();
-      await vi.waitFor(() => expect(requests.some(({ path }) => path === `/dashboard/api/runs/${runId}/events?limit=100`)).toBe(true));
-      await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("https://github.com/example/project/pull/7"));
-      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Changed files 2");
-      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Exit code 0");
-      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Origin Kaseki (kaseki-prod)");
-      await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Run started"));
-      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Artifact upload report");
-      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Uploaded Count 2");
-      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Failed Count 1");
-      expect(flattenText(nodeAt(nodes, "#runs"))).toContain("No artifacts are available in Soyuz for this run.");
-      findNodeByClass(nodeAt(nodes, "#runs"), "load-older-events").click();
-      await vi.waitFor(() => expect(requests.some(({ path }) => path === `/dashboard/api/runs/${runId}/events?after=100&limit=100`)).toBe(true));
-      await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Run completed"));
+    expect(nodeAt(nodes, "#account")).toMatchObject({ hidden: false, textContent: "Signed in as @current-user" });
+    expect(nodeAt(nodes, "#runs").children).toHaveLength(1);
+    nodeAt(nodes, "#connect").listeners.click?.();
 
-      nodeAt(nodes, "#load-more").listeners.click?.();
-      await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=30&cursor=cursor%2B%2F1")).toBe(true));
-      await vi.waitFor(() => expect(nodeAt(nodes, "#runs").children).toHaveLength(2));
+    await vi.waitFor(() => expect(nodeAt(nodes, "#notice").textContent).toContain("couldn't confirm that your token was revoked"));
+    expect(nodeAt(nodes, "#connect")).toMatchObject({ textContent: "Sign in with GitHub", disabled: false });
+    expect(nodeAt(nodes, "#account")).toMatchObject({ hidden: true, textContent: "" });
+    expect(nodeAt(nodes, "#run-controls").hidden).toBe(true);
+    expect(nodeAt(nodes, "#runs").children).toEqual([]);
 
-      nodeAt(nodes, "#status-filter").value = "running";
-      nodeAt(nodes, "#status-filter").listeners.change?.();
-      await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=30&status=running")).toBe(true));
-      await vi.waitFor(() => expect(nodeAt(nodes, "#runs").children).toHaveLength(1));
+    const revocation = requests.at(-1);
+    expect(revocation?.path).toBe("/oauth/token");
+    const form = new URLSearchParams(String(revocation?.init.body));
+    expect(form.get("token")).toBe("dashboard-access-token");
+    expect(form.get("client_id")).toBe("dashboard-client");
+  });
 
-      nodeAt(nodes, "#connect").listeners.click?.();
-      await vi.waitFor(() => expect(nodeAt(nodes, "#notice").textContent).toContain("couldn't confirm that your token was revoked"));
-      expect(nodeAt(nodes, "#notice").textContent).toContain("couldn't confirm that your token was revoked");
-      expect(nodeAt(nodes, "#connect")).toMatchObject({ textContent: "Sign in with GitHub", disabled: false });
-      expect(nodeAt(nodes, "#account")).toMatchObject({ hidden: true, textContent: "" });
-      expect(nodeAt(nodes, "#run-controls").hidden).toBe(true);
-      expect(nodeAt(nodes, "#runs").children).toEqual([]);
-      const lastRequest = requests.at(-1);
-      if (!lastRequest) throw new Error("Expected an OAuth revocation request");
-      expect(lastRequest.path).toBe("/oauth/token");
-      expect(String(lastRequest.init.body)).toContain("token=dashboard-access-token");
-      expect(String(lastRequest.init.body)).toContain("client_id=dashboard-client");
-    } finally {
-      vi.unstubAllGlobals();
-      vi.resetModules();
-    }
+  it("[DASHBOARD-RUN-DISPLAY-01] shows a readable run ID and copies the canonical UUID", async () => {
+    const { nodes, run, runId, writeClipboard } = await mountDashboard();
+
+    expect(nodeAt(nodes, "#runs").children).toHaveLength(1);
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("example/project");
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Soyuz run · soyuz-213");
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Technical ID");
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain(runId);
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Status: Running");
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain(`Created ${new Date(run.createdAt).toLocaleString()}`);
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain(`Started ${new Date(run.startedAt).toLocaleString()}`);
+
+    const copyIdButton = findNodeByClass(nodeAt(nodes, "#runs"), "run-card__copy-id");
+    expect(copyIdButton.textContent).toBe("Copy ID");
+    copyIdButton.click();
+    await vi.waitFor(() => expect(writeClipboard).toHaveBeenCalledWith(runId));
+    expect(copyIdButton.textContent).toBe("Copied");
+  });
+
+  it("[DASHBOARD-RUN-EVENTS-01] loads run details and older event pages when expanded", async () => {
+    const { nodes, runId, requests } = await mountDashboard();
+    const details = findNode(nodeAt(nodes, "#runs"), "DETAILS");
+    details.open = true;
+    details.listeners.toggle?.();
+
+    await vi.waitFor(() => expect(requests.some(({ path }) => path === `/dashboard/api/runs/${runId}/events?limit=100`)).toBe(true));
+    await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("https://github.com/example/project/pull/7"));
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Changed files 2");
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Exit code 0");
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Origin Kaseki (kaseki-prod)");
+    await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Run started"));
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Artifact upload report");
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Uploaded Count 2");
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Failed Count 1");
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("No artifacts are available in Soyuz for this run.");
+
+    findNodeByClass(nodeAt(nodes, "#runs"), "load-older-events").click();
+    await vi.waitFor(() => expect(requests.some(({ path }) => path === `/dashboard/api/runs/${runId}/events?after=100&limit=100`)).toBe(true));
+    await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Run completed"));
+  });
+
+  it("[DASHBOARD-RUN-LIST-FLOW-01] pauses hidden refreshes and supports pagination and status filtering", async () => {
+    const { nodes, requests, intervalCallbacks, documentStub } = await mountDashboard();
+
+    expect(flattenText(nodeAt(nodes, "#status-filter"))).toContain("Cancellation requested");
+    expect(intervalCallbacks).toHaveLength(1);
+    documentStub.visibilityState = "hidden";
+    intervalCallbacks[0]!();
+    await Promise.resolve();
+    expect(requests.filter(({ path }) => path === "/dashboard/api/runs?limit=30")).toHaveLength(1);
+
+    documentStub.visibilityState = "visible";
+    intervalCallbacks[0]!();
+    await vi.waitFor(() => expect(requests.filter(({ path }) => path === "/dashboard/api/runs?limit=30")).toHaveLength(2));
+    await vi.waitFor(() => expect(nodeAt(nodes, "#load-more").disabled).toBe(false));
+
+    nodeAt(nodes, "#load-more").listeners.click?.();
+    await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=30&cursor=cursor%2B%2F1")).toBe(true));
+    await vi.waitFor(() => expect(nodeAt(nodes, "#runs").children).toHaveLength(2));
+    await vi.waitFor(() => expect(nodeAt(nodes, "#load-more").hidden).toBe(true));
+
+    nodeAt(nodes, "#status-filter").value = "running";
+    nodeAt(nodes, "#status-filter").listeners.change?.();
+    await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=30&status=running")).toBe(true));
+    await vi.waitFor(() => expect(nodeAt(nodes, "#runs").children).toHaveLength(1));
   });
 });
+
+async function mountDashboard() {
+  const nodes = new Map([
+    ["#notice", createNode()],
+    ["#runs", createNode()],
+    ["#run-controls", createNode()],
+    ["#connect", createNode()],
+    ["#account", createNode()],
+    ["#refresh", createNode()],
+    ["#status-filter", createNode()],
+    ["#load-more", createNode()],
+    ["#updated", createNode()],
+  ]);
+  const sessionValues = new Map([
+    ["soyuz.dashboard.state", "state-value"],
+    ["soyuz.dashboard.verifier", "verifier-value"],
+    ["soyuz.dashboard.clientId", "dashboard-client"],
+    ["soyuz.dashboard.redirectUri", "https://soyuz.test/dashboard/"],
+  ]);
+  const storage: Pick<Storage, "getItem" | "removeItem" | "setItem"> = {
+    getItem: (key: string) => sessionValues.get(key) ?? null,
+    removeItem: (key: string) => { sessionValues.delete(key); },
+    setItem: (key: string, value: string) => { sessionValues.set(key, value); },
+  };
+  const requests: RecordedRequest[] = [];
+  const intervalCallbacks: Array<() => void> = [];
+  const writeClipboard = vi.fn(async (_value: string) => {});
+  const runId = "00000000-0000-4000-8000-000000000101";
+  const initialEvents = Array.from({ length: 100 }, (_, index) => ({
+    sequence: index + 1,
+    type: index === 0 ? "run.started" : index === 1 ? "artifacts.uploaded" : `run.progress.${index + 1}`,
+    stage: "validation",
+    step: "checks",
+    timestamp: "2026-10-18T12:01:00.000Z",
+    payload: index === 1
+      ? { status: "partial", uploadedCount: 2, failedCount: 1, skippedCount: 0 }
+      : { completed: index + 1 },
+  }));
+  const run = {
+    runId,
+    displayId: "soyuz-213",
+    status: "running",
+    repoUrl: "https://github.com/example/project",
+    ref: "main",
+    createdAt: "2026-10-18T12:00:00.000Z",
+    queuedAt: "2026-10-18T12:00:30.000Z",
+    startedAt: "2026-10-18T12:01:00.000Z",
+    completedAt: null,
+    stage: "validation",
+    origin: { type: "kaseki", id: "kaseki-prod" },
+    retryOf: null,
+    operationalHealth: "healthy",
+    lastHeartbeatAt: "2026-10-18T12:01:00.000Z",
+  };
+  const fetcher = vi.fn(async (path: string, init: RequestInit = {}): Promise<FakeResponse> => {
+    requests.push({ path, init });
+    const requestBody = init.body instanceof URLSearchParams
+      ? init.body
+      : new URLSearchParams(typeof init.body === "string" ? init.body : "");
+    if (path === "/oauth/token" && requestBody.has("grant_type")) {
+      return jsonResponse({ access_token: "dashboard-access-token" });
+    }
+    if (path === "/dashboard/api/me") return jsonResponse({ githubLogin: "current-user" });
+    if (path === "/dashboard/api/runs?limit=30") return jsonResponse({ runs: [run], nextCursor: "cursor+/1" });
+    if (path === `/dashboard/api/runs/${runId}`) return jsonResponse({
+      ...run,
+      outcomeSummary: "Validation passed",
+      taskMode: "inspect",
+      publishMode: "pr",
+      publishedUrl: "https://github.com/example/project/pull/7",
+      changedFileCount: 2,
+      failureClass: null,
+      exitCode: 0,
+    });
+    if (path === `/dashboard/api/runs/${runId}/artifacts`) return jsonResponse({ artifacts: [] });
+    if (path === `/dashboard/api/runs/${runId}/events?limit=100`) return jsonResponse({ events: initialEvents, nextAfter: 100, hasMore: true });
+    if (path === `/dashboard/api/runs/${runId}/events?after=100&limit=100`) return jsonResponse({ events: [{ sequence: 101, type: "run.completed", stage: "validation", step: "checks", timestamp: "2026-10-18T12:02:00.000Z", payload: { status: "completed" } }], nextAfter: 101, hasMore: false });
+    if (path === "/dashboard/api/runs?limit=30&cursor=cursor%2B%2F1") {
+      return jsonResponse({ runs: [{ ...run, runId: "00000000-0000-4000-8000-000000000102", status: "completed" }], nextCursor: null });
+    }
+    if (path === "/dashboard/api/runs?limit=30&status=running") return jsonResponse({ runs: [run], nextCursor: null });
+    if (path === "/oauth/token") return { ok: false, status: 503, json: async () => ({}) };
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const documentStub = {
+    visibilityState: "visible",
+    querySelector: (selector: string) => nodes.get(selector),
+    createElement: (tagName: string) => createNode(tagName),
+    addEventListener: vi.fn(),
+  };
+
+  vi.resetModules();
+  vi.stubGlobal("document", documentStub);
+  vi.stubGlobal("location", {
+    href: "https://soyuz.test/dashboard/?code=auth-code&state=state-value",
+    origin: "https://soyuz.test",
+    assign: vi.fn(),
+  });
+  vi.stubGlobal("sessionStorage", storage);
+  vi.stubGlobal("history", { replaceState: vi.fn() });
+  vi.stubGlobal("fetch", fetcher);
+  vi.stubGlobal("navigator", { clipboard: { writeText: writeClipboard } });
+  vi.stubGlobal("setInterval", (callback: () => void) => { intervalCallbacks.push(callback); return 1; });
+  vi.stubGlobal("clearInterval", vi.fn());
+  await import("../dashboard/app.ts");
+  await vi.waitFor(() => expect(nodeAt(nodes, "#connect").textContent).toBe("Sign out"));
+  await vi.waitFor(() => expect(nodeAt(nodes, "#runs").children).toHaveLength(1));
+
+  return { nodes, requests, intervalCallbacks, writeClipboard, documentStub, run, runId };
+}
 
 function createNode(tagName = "DIV"): FakeNode {
   const node: FakeNode = {

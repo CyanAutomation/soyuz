@@ -19,7 +19,7 @@ describe("HTTP helpers", () => {
     await expect(hasBearerToken(shortRequest, shortToken)).resolves.toBe(false);
   });
 
-  it("[AUTH-ROTATION-GRACE-01] accepts a previous bearer key only during a bounded expiry window", async () => {
+  it("[AUTH-ROTATE-GRACE-01] accepts a previous bearer key only during a bounded expiry window", async () => {
     const current = "current-client-token-value-long-enough";
     const previous = "previous-client-token-value-long-enough";
     const request = new Request("https://soyuz.test", {

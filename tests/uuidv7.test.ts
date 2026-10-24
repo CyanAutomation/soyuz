@@ -25,10 +25,13 @@ describe("UUIDv7 run IDs", () => {
 });
 
 describe("isUuid", () => {
-  it("accepts UUID versions 1 through 8 and rejects malformed variants", () => {
+  it("[UUID-VALIDATION-01] accepts UUID versions 1 through 8 and rejects malformed UUIDs", () => {
+    for (const version of "12345678") {
+      expect(isUuid(`00000000-0000-${version}000-8000-000000000000`), `version ${version}`).toBe(true);
+    }
+
     const valid = "00000000-0000-4000-8000-000000000000";
-    expect(isUuid(valid)).toBe(true);
-    expect(isUuid("00000000-0000-7000-8000-000000000000")).toBe(true);
+    expect(isUuid("00000000-0000-0000-8000-000000000000")).toBe(false);
     expect(isUuid("00000000-0000-9000-8000-000000000000")).toBe(false);
     expect(isUuid("00000000-0000-4000-0000-000000000000")).toBe(false);
     expect(isUuid(`x${valid}`)).toBe(false);

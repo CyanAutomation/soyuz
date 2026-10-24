@@ -709,19 +709,24 @@ describe("Soyuz Worker API", () => {
     expect(history.body.error.message).toContain("cannot reach its run database");
   });
 
-  it("[HEALTH-SCHEMA-01] checks dashboard liveness columns before reporting ready", async () => {
+  it("[HEALTH-SCHEMA-01] reports unavailable when required liveness columns are missing", async () => {
     const { bindings } = testEnv();
-    const statements: string[] = [];
     const database = {
       prepare(sql: string) {
-        statements.push(sql);
+        if (sql.includes("last_heartbeat_at") || sql.includes("operational_health")) {
+          return {
+            first: async () => { throw new Error("no such column: last_heartbeat_at"); },
+          };
+        }
         return bindings.DB.prepare(sql);
       },
     } as unknown as Env["DB"];
     const response = await handleRequest(new Request("https://soyuz.test/health"), { ...bindings, DB: database });
+    const body = await response.json() as { status: string; message: string };
 
-    expect(response.status).toBe(200);
-    expect(statements.some((sql) => sql.includes("last_heartbeat_at") && sql.includes("operational_health"))).toBe(true);
+    expect(response.status).toBe(503);
+    expect(body.status).toBe("unavailable");
+    expect(body.message).toContain("verify its required schema");
   });
 
   it("[RETENTION-REQUEST-01] redacts old terminal request payloads while keeping run and idempotency history", async () => {
@@ -823,7 +828,7 @@ describe("Soyuz Worker API", () => {
     expect(sent).toHaveLength(1);
   });
 
-  it("[RUN-DISPLAY-ID-01] assigns a unique, increasing Soyuz display ID without replacing the canonical UUID", async () => {
+  it("[RUN-DISPLAY-ID-01] assigns stable increasing display IDs while keeping the UUID canonical", async () => {
     const { bindings } = testEnv();
     const first = await submit(bindings, {}, "00000000-0000-4000-8000-000000000071");
     const second = await submit(bindings, {}, "00000000-0000-4000-8000-000000000072");
@@ -835,14 +840,20 @@ describe("Soyuz Worker API", () => {
       .toBeGreaterThan(Number(first.body.data.displayId.slice("soyuz-".length)));
     expect(first.body.data.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(second.body.data.id).toMatch(/^[0-9a-f-]{36}$/);
+    const persisted = await call(bindings, `/v1/runs/${first.body.data.id}`, { token: CLIENT_TOKEN });
+    expect(persisted.response.status).toBe(200);
+    expect(persisted.body.data).toMatchObject({
+      id: first.body.data.id,
+      displayId: first.body.data.displayId,
+    });
   });
 
-  it("[RUN-DISPLAY-ID-02] rejects attempts to clear an assigned display ID", async () => {
+  it("[RUN-DISPLAY-ID-SCHEMA-01] rejects null display IDs at the database boundary", async () => {
     const { bindings } = testEnv();
     const created = await submit(bindings, {}, "00000000-0000-4000-8000-000000000073");
 
     await expect(bindings.DB.prepare("UPDATE runs SET display_id = NULL WHERE id = ?")
-      .bind(created.body.data.id).run()).rejects.toThrow();
+      .bind(created.body.data.id).run()).rejects.toThrow(/NOT NULL constraint failed: runs\.display_id/);
 
     const stored = await bindings.DB.prepare("SELECT display_id FROM runs WHERE id = ?")
       .bind(created.body.data.id).first<{ display_id: string }>();
