@@ -52,7 +52,7 @@ The three read tools return structured data. Run details omit worker identity an
 
 Requirement IDs: `MCP-IDEMPOTENCY-01`, `MCP-QUEUE-RETRY-01`.
 
-Soyuz's existing UUID `idempotencyKey` mechanism also applies to MCP `create_run`; MCP has no second idempotency store. Supply a fresh UUID for each intended run and reuse that same key with the same normalized execution request when retrying. Soyuz returns the existing run for an equivalent request and returns `IDEMPOTENCY_KEY_REUSED` if the key is reused for different work. Without a key, separate MCP calls can create separate runs. When Queue publication is uncertain, the error says to retry with the same key while Soyuz reconciles the same run ID.
+Soyuz's UUID `idempotencyKey` mechanism also applies to MCP `create_run`; MCP has no second idempotency store. Supply a fresh UUID for each intended run and reuse that same key with the same normalized execution request when retrying. Soyuz returns the existing run for an equivalent request while it remains in the newest-30 history window and returns `IDEMPOTENCY_KEY_REUSED` if the key is reused for different work. After the run is culled, the deduplication ledger returns `IDEMPOTENCY_KEY_EXPIRED` for matching reuse and prevents duplicate work without exposing the old run. Without a key, separate MCP calls can create separate runs. When Queue publication is uncertain, the error says to retry with the same key while Soyuz reconciles the same run ID.
 
 ## Example
 
