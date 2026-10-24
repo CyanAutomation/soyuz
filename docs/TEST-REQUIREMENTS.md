@@ -7,6 +7,9 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `AUTH-MINIMUM-01` | Configured API tokens have a 16-character minimum. | [Deployment token configuration](DEPLOYMENT.md#api-token-configuration) |
 | `AUTH-REST-01` | Client and worker routes use separate credentials. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
 | `CONTRACT-VERSION-01` | Soyuz/Kaseki messages use contract version 1. | [Transport contract: overview](CONTRACT.md) |
+| `KASEKI-HANDOFF-01` | A Kaseki host can consume the published contract-v1 envelope, persist claim intent, claim the canonical run, and start with the current claim fencing ID. | [Transport contract: Queue message and worker callbacks](CONTRACT.md#queue-message); [Kaseki handoff](KASEKI-INTEGRATION.md#handoff-and-authorization) |
+| `KASEKI-RECOVERY-01` | Uncertain claim responses and duplicate delivery after host restart reuse the same run and callback IDs without duplicate lifecycle events. | [Transport contract: Queue message and worker callbacks](CONTRACT.md#queue-message); [Kaseki handoff](KASEKI-INTEGRATION.md#handoff-and-authorization) |
+| `KASEKI-CANCEL-POLL-01` | A Kaseki host observes canonical cancellation state and confirms cancellation after cleanup. | [Transport contract: cancellation](CONTRACT.md#public-endpoints); [Kaseki cancellation behavior](KASEKI-INTEGRATION.md#callback-and-cancellation-behavior) |
 | `AUTH-CONFIG-01` | Missing server-side API keys return 503. | [Transport contract: errors](CONTRACT.md#errors) |
 | `AUTH-ROTATE-01` | Rotated or revoked credentials are rejected; static tokens do not expire automatically. | [Transport contract: errors](CONTRACT.md#errors) |
 | `ARTIFACTS-01` | A running worker can upload an owned artifact and clients need authentication to list or download it. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks); [public endpoints](CONTRACT.md#public-endpoints) |
@@ -106,3 +109,4 @@ These tests protect implementation helpers and direct callers, but they do not r
 | `SERIALIZE-SHARED-01` | Reusing an object in separate branches is not mistaken for a cycle. |
 | `SERIALIZE-ARRAY-01` | Stable serialization preserves nested array values and deterministic object-key ordering. |
 | `SERIALIZE-SHA256-01` | The SHA-256 helper returns the standard hexadecimal digest. |
+| `KASEKI-SIMULATOR-01` | The test-only Kaseki protocol simulator rejects unsupported Queue contract versions before making Soyuz requests. |
