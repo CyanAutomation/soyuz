@@ -89,6 +89,14 @@ async function handleHealth(requestId: string, env: Env): Promise<Response> {
       SELECT id, origin_type, origin_id, retry_of, last_heartbeat_at, operational_health, request_redacted_at
       FROM runs LIMIT 0
     `).first();
+    await env.DB.prepare(`
+      SELECT origin_type, origin_id, idempotency_key, request_hash, run_id
+      FROM run_idempotency_keys LIMIT 0
+    `).first();
+    await env.DB.prepare(`
+      SELECT object_key, queued_at, last_attempt_at
+      FROM artifact_deletion_queue LIMIT 0
+    `).first();
     return jsonResponse(200, { status: "ok", contractVersion: "1", requestId });
   } catch {
     return jsonResponse(503, {

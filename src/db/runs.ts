@@ -154,17 +154,21 @@ export async function isRunRetained(db: D1Database, id: string): Promise<boolean
   return row !== null;
 }
 
-export async function getRunByIdempotencyKey(
+export interface RunIdempotencyRecord {
+  run_id: string;
+  request_hash: string;
+}
+
+export async function getRunIdempotencyRecord(
   db: D1Database,
   key: string,
   originType = "api_client",
   originId = "client-api",
-): Promise<RunRow | null> {
+): Promise<RunIdempotencyRecord | null> {
   return db.prepare(`
-    SELECT * FROM runs
+    SELECT run_id, request_hash FROM run_idempotency_keys
     WHERE origin_type = ? AND origin_id = ? AND idempotency_key = ?
-      AND id IN (SELECT id FROM runs ORDER BY created_at DESC, id DESC LIMIT ?)
-  `).bind(originType, originId, key, MAX_RETAINED_RUNS).first<RunRow>();
+  `).bind(originType, originId, key).first<RunIdempotencyRecord>();
 }
 
 export async function insertRun(
@@ -195,7 +199,7 @@ export async function insertRun(
     payload: { status: "admitting" },
   };
 
-  await db.batch([
+  const statements = [
     db.prepare(`
       INSERT INTO runs (
         id, contract_version, repo_url, git_ref, project_name, status, task_mode,
@@ -224,7 +228,15 @@ export async function insertRun(
       createdAt,
     ),
     eventStatement(db, id, initialEvent),
-  ]);
+  ];
+  if (idempotencyKey) {
+    statements.push(db.prepare(`
+      INSERT INTO run_idempotency_keys (
+        origin_type, origin_id, idempotency_key, request_hash, run_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).bind(originType, originId, idempotencyKey, requestHash, id, createdAt));
+  }
+  await db.batch(statements);
 }
 
 export async function transitionRun(
