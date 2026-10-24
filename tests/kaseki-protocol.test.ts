@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { handleRequest } from "../src/index";
 import type { Env } from "../src/env";
 import type { QueuedRun } from "../src/contracts/queue-message";
-import { KasekiProtocolSimulator, type KasekiJobIntent } from "./support/kaseki-protocol-simulator";
+import {
+  KasekiProtocolSimulator,
+  requireWorkerRunData,
+  type KasekiJobIntent,
+} from "./support/kaseki-protocol-simulator";
 
 const CLIENT_TOKEN = "client-kaseki-test-token-value-long-enough";
 const KASEKI_TOKEN = "kaseki-submit-test-token-value-long-enough";
@@ -162,5 +166,16 @@ describe("Kaseki protocol simulator", () => {
 
     await expect(host.deliver({ contractVersion: "2" })).rejects.toThrow("Unsupported Soyuz contract version");
     expect(host.requests).toHaveLength(0);
+  });
+
+  it("[KASEKI-SIMULATOR-DATA-01] rejects successful worker responses without an object data envelope", () => {
+    const error = "Soyuz worker read returned a 2xx response without valid run data.";
+    expect(() => requireWorkerRunData(undefined)).toThrow(error);
+    expect(() => requireWorkerRunData(null)).toThrow(error);
+    expect(() => requireWorkerRunData([])).toThrow(error);
+    expect(() => requireWorkerRunData({})).toThrow(error);
+    expect(() => requireWorkerRunData({ runId: "run-id" })).toThrow(error);
+    expect(requireWorkerRunData({ runId: "run-id", status: "running" }))
+      .toEqual({ runId: "run-id", status: "running" });
   });
 });

@@ -110,3 +110,4 @@ These tests protect implementation helpers and direct callers, but they do not r
 | `SERIALIZE-ARRAY-01` | Stable serialization preserves nested array values and deterministic object-key ordering. |
 | `SERIALIZE-SHA256-01` | The SHA-256 helper returns the standard hexadecimal digest. |
 | `KASEKI-SIMULATOR-01` | The test-only Kaseki protocol simulator rejects unsupported Queue contract versions before making Soyuz requests. |
+| `KASEKI-SIMULATOR-DATA-01` | The test-only Kaseki protocol simulator reports malformed successful worker-read envelopes clearly. |
