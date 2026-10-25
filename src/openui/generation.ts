@@ -39,7 +39,7 @@ export async function handleOpenUIGenerationRequest(
     return errorResponse(requestId, 400, "INVALID_EXISTING_PROGRAM", "The existing interface is invalid and cannot be refined.");
   }
 
-  if (env.OPENUI_DEMO_MODE === "true" && !hasProviderConfig(env)) {
+  if (env.OPENUI_DEMO_MODE === "true") {
     return demoResponse();
   }
   const providerUrl = configuredProviderUrl(env.OPENUI_PROVIDER_URL);
@@ -56,7 +56,7 @@ export async function handleOpenUIGenerationRequest(
       redirect: "error",
       signal: aborter.signal,
       headers: {
-        authorization: `Bearer ${env.OPENUI_PROVIDER_API_KEY}`,
+        authorization: `Bearer ${env.OPENUI_PROVIDER_API_KEY.trim()}`,
         "content-type": "application/json",
         accept: "text/event-stream, application/json",
       },
@@ -133,10 +133,6 @@ export async function handleOpenUIGenerationRequest(
       "x-request-id": requestId,
     },
   });
-}
-
-function hasProviderConfig(env: Env): boolean {
-  return Boolean(configuredProviderUrl(env.OPENUI_PROVIDER_URL) && env.OPENUI_PROVIDER_API_KEY?.trim() && env.OPENUI_MODEL?.trim());
 }
 
 function configuredProviderUrl(value: string | undefined): string | null {
