@@ -7,3 +7,4 @@ worker-configuration.d.ts
 coverage/
 dist/
 public/dashboard/*.js
+/public/dashboard/analysis/app.js

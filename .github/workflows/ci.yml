@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  OPENUI_TELEMETRY_DISABLED: "1"
+
 concurrency:
   group: soyuz-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

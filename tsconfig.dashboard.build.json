@@ -7,6 +7,10 @@
     "rootDir": "dashboard",
     "rewriteRelativeImportExtensions": true
   },
-  "include": ["dashboard/**/*.ts"],
-  "exclude": []
+  "include": [
+    "dashboard/**/*.ts"
+  ],
+  "exclude": [
+    "dashboard/analysis/**/*.ts"
+  ]
 }
