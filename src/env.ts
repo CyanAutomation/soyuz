@@ -25,4 +25,12 @@ export interface Env {
   GITHUB_OAUTH_CLIENT_ID?: string;
   GITHUB_OAUTH_CLIENT_SECRET?: string;
   SOYUZ_OAUTH_ALLOWED_GITHUB_IDS?: string;
+  /** Full HTTPS OpenAI-compatible chat completions endpoint. */
+  OPENUI_PROVIDER_URL?: string;
+  /** Server-side credential for the configured model provider or AI Gateway. */
+  OPENUI_PROVIDER_API_KEY?: string;
+  /** Provider model identifier. */
+  OPENUI_MODEL?: string;
+  /** Explicit opt-in deterministic local fixture mode; keep disabled in production. */
+  OPENUI_DEMO_MODE?: string;
 }

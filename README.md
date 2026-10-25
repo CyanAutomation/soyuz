@@ -64,7 +64,9 @@ PUT  /v1/worker/runs/:id/artifacts/:artifactId
 
 Artifact uploads require the current worker ID and claim callback ID as headers, are limited to 25 MB each and 100 per run, and are retained for 30 days. The dashboard uses OAuth with an explicit GitHub user-ID allowlist; it exposes read-only run and artifact data.
 
-All Soyuz↔Kaseki messages carry `contractVersion: "1"`. See [the architecture](docs/ARCHITECTURE.md), [transport contract](docs/CONTRACT.md), [MCP interface](docs/MCP.md), [Kaseki integration](docs/KASEKI-INTEGRATION.md), and [Cloudflare setup](docs/DEPLOYMENT.md).
+The optional `/dashboard/analysis/` page uses OpenUI Core and a native TypeScript DOM renderer to build read-only run-analysis views from natural-language prompts. Local development enables a deterministic fixture by default; configure an OpenAI-compatible provider to use live generation. See [OpenUI run analysis](docs/OPENUI-ANALYSIS.md) for local/provider setup and security boundaries.
+
+All Soyuz↔Kaseki messages carry `contractVersion: "1"`. See [the architecture](docs/ARCHITECTURE.md), [transport contract](docs/CONTRACT.md), [MCP interface](docs/MCP.md), [OpenUI run analysis](docs/OPENUI-ANALYSIS.md), [Kaseki integration](docs/KASEKI-INTEGRATION.md), and [Cloudflare setup](docs/DEPLOYMENT.md).
 
 Client and worker keys are static bearer secrets; Soyuz does not assign them an automatic expiry time. Rotating or revoking a configured key makes earlier keys invalid. Authentication errors return 401 with guidance to use the current key; a missing server-side key returns 503 so it is distinguishable from a caller credential error.
 

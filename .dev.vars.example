@@ -1,3 +1,8 @@
 CLIENT_API_TOKEN=replace-with-a-random-client-token-at-least-32-characters
 KASEKI_SUBMISSION_API_TOKEN=replace-with-a-distinct-kaseki-submission-token-at-least-32-characters
 WORKER_API_TOKEN=replace-with-a-different-random-worker-token-at-least-32-characters
+OPENUI_DEMO_MODE=true
+# For live local generation, set the OpenAI-compatible chat completions URL and credential.
+# OPENUI_PROVIDER_URL=https://gateway.ai.cloudflare.com/v1/account-id/gateway-id/openai/chat/completions
+# OPENUI_PROVIDER_API_KEY=replace-with-a-server-side-provider-or-gateway-credential
+# OPENUI_MODEL=provider/model-name

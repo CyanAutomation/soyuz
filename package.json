@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "npm run build && wrangler dev",
     "deploy": "npm run build && wrangler deploy",
-    "build": "tsc -p tsconfig.dashboard.build.json",
+    "build": "tsc -p tsconfig.dashboard.build.json && esbuild dashboard/analysis/app.ts --bundle --platform=browser --target=es2022 --format=esm --minify --outfile=public/dashboard/analysis/app.js",
     "typecheck": "wrangler types && tsc --noEmit && tsc -p tsconfig.browser.json && tsc -p tsconfig.node.json",
     "test": "vitest run",
     "test:kaseki": "vitest run tests/kaseki-protocol.test.ts",
@@ -22,6 +22,7 @@
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^1.2.3",
     "@modelcontextprotocol/server": "^2.0.0",
+    "@openuidev/lang-core": "^1.0.1",
     "agents": "^0.28.1",
     "zod": "^4.6.7"
   },
@@ -33,6 +34,8 @@
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.4.4",
     "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "linkedom": "^0.18.14",
     "typescript": "^7.0.2",
     "vitest": "^4.1.0",
     "wrangler": "^4.151.1"

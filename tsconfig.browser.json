@@ -1,11 +1,20 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "types": [],
     "noEmit": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["dashboard/**/*.ts", "tests/dashboard-api.test.ts"],
+  "include": [
+    "dashboard/**/*.ts",
+    "openui/**/*.ts",
+    "tests/dashboard-api.test.ts",
+    "tests/openui.test.ts"
+  ],
   "exclude": []
 }

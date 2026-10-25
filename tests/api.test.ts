@@ -18,7 +18,7 @@ const EVENT_ID = "00000000-0000-4000-8000-000000000012";
 
 type QueueMessage = { runId: string; contractVersion: string; [key: string]: unknown };
 
-function testEnv(options: { queueFailure?: boolean; artifacts?: Env["ARTIFACTS"]; oauth?: boolean } = {}) {
+function testEnv(options: { queueFailure?: boolean; artifacts?: Env["ARTIFACTS"]; oauth?: boolean; openuiDemo?: boolean } = {}) {
   const sent: QueueMessage[] = [];
   const send = vi.fn(async (message: unknown) => {
     if (options.queueFailure) throw new Error("simulated queue failure");
@@ -35,6 +35,7 @@ function testEnv(options: { queueFailure?: boolean; artifacts?: Env["ARTIFACTS"]
     GITHUB_OAUTH_CLIENT_ID: options.oauth ? "test-github-client-id" : undefined,
     GITHUB_OAUTH_CLIENT_SECRET: options.oauth ? "test-github-client-secret" : undefined,
     SOYUZ_OAUTH_ALLOWED_GITHUB_IDS: options.oauth ? "123" : undefined,
+    OPENUI_DEMO_MODE: options.openuiDemo ? "true" : undefined,
   };
   return { bindings, sent, send };
 }
@@ -545,6 +546,46 @@ describe("Soyuz Worker API", () => {
     });
     expect(mcpWrite.response.status).toBe(403);
     expect((mcpWrite.body as any).error).toBe("insufficient_scope");
+  });
+
+  it("[OAUTH-02] allows only the authenticated analysis-generation POST with read scope", async () => {
+    const { bindings } = testEnv({ oauth: true, openuiDemo: true });
+    const accessToken = await createOAuthAccessToken(bindings);
+    const request = {
+      method: "POST",
+      token: accessToken,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: "Summarise the last 10 runs.", mode: "generate" }),
+    };
+
+    const analysis = await callBinary(bindings, "/dashboard/api/analysis/generate", request);
+    expect(analysis.response.status).toBe(200);
+    expect(analysis.response.headers.get("content-type")).toContain("text/event-stream");
+    expect(analysis.body).toContain("list_runs");
+    expect(analysis.body).toContain('"done":true');
+
+    const unauthenticated = await callBinary(bindings, "/dashboard/api/analysis/generate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: request.body,
+    });
+    expect(unauthenticated.response.status).toBe(401);
+
+    const writeOnlyToken = await createOAuthAccessToken(bindings, ["soyuz:write"]);
+    const writeOnly = await callBinary(bindings, "/dashboard/api/analysis/generate", {
+      method: "POST",
+      token: writeOnlyToken,
+      headers: { "content-type": "application/json" },
+      body: request.body,
+    });
+    expect(writeOnly.response.status).toBe(403);
+
+    const otherPost = await call(bindings, "/dashboard/api/runs", {
+      method: "POST",
+      token: accessToken,
+      body: validRequest(),
+    });
+    expect(otherPost.response.status).toBe(405);
   });
 
   it("[OAUTH-03] renders an escaped, non-framable consent page and binds approval to the browser request", async () => {
