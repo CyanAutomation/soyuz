@@ -13,6 +13,21 @@ describe("OpenUI generation adapter", () => {
     expect(demo.status).toBe(200);
     expect(await demo.text()).toContain("list_runs");
 
+    const configuredDemoFetcher = vi.fn();
+    const configuredDemo = await handleOpenUIGenerationRequest(new Request("https://soyuz.test/dashboard/api/analysis/generate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: "Summarise the last 10 runs.", mode: "generate" }),
+    }), {
+      OPENUI_DEMO_MODE: "true",
+      OPENUI_PROVIDER_URL: "https://gateway.example.test/v1/chat/completions",
+      OPENUI_PROVIDER_API_KEY: "provider-secret",
+      OPENUI_MODEL: "test-model",
+    } as Env, "demo-request", configuredDemoFetcher as typeof fetch);
+    expect(configuredDemo.status).toBe(200);
+    expect(await configuredDemo.text()).toContain("list_runs");
+    expect(configuredDemoFetcher).not.toHaveBeenCalled();
+
     const fetcher = vi.fn();
     const missingProvider = await handleOpenUIGenerationRequest(new Request("https://soyuz.test/dashboard/api/analysis/generate", {
       method: "POST",
@@ -30,7 +45,7 @@ describe("OpenUI generation adapter", () => {
     expect(invalidInput.status).toBe(400);
   });
 
-  it("[OPENUI-GENERATION-01] keeps provider credentials server-side and relays chat-completion streams", async () => {
+  it("[OPENUI-GENERATION-02] keeps provider credentials server-side and relays chat-completion streams", async () => {
     const providerRequest = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       expect(new Headers(init?.headers).get("authorization")).toBe("Bearer provider-secret");
       const body = JSON.parse(String(init?.body)) as { stream: boolean; model: string; messages: Array<{ role: string; content: string }> };
@@ -47,7 +62,7 @@ describe("OpenUI generation adapter", () => {
       body: JSON.stringify({ prompt: "Summarise the last 10 runs." }),
     }), {
       OPENUI_PROVIDER_URL: "https://gateway.example.test/v1/chat/completions",
-      OPENUI_PROVIDER_API_KEY: "provider-secret",
+      OPENUI_PROVIDER_API_KEY: " provider-secret ",
       OPENUI_MODEL: "test-model",
     } as Env, "request-test", providerRequest as typeof fetch);
     const streamed = await response.text();
