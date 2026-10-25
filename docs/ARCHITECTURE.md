@@ -5,6 +5,10 @@ flowchart TD
     CLI[CLI] -->|REST| REST[REST adapter]
     UI[Web UI and integrations] -->|REST| REST
     UI -->|GitHub OAuth, read-only| Dashboard[Private run dashboard]
+    UI -->|GitHub OAuth, read-only| Analysis[OpenUI analysis page]
+    Analysis -->|bounded approved GET queries| DashboardApi[Dashboard read API]
+    Analysis -->|read-scope authenticated POST| Generation[Analysis generation adapter]
+    Generation -->|optional OpenAI-compatible streaming| Provider[Configured model provider]
     AI[AI clients] -->|Streamable HTTP at /mcp| MCP[MCP adapter]
     REST --> App[Shared run application operations]
     MCP --> App
@@ -16,11 +20,15 @@ flowchart TD
     Worker -->|claim-fenced upload| R2[(Private R2 artifacts)]
     Dashboard -->|authorized read| D1
     Dashboard -->|authorized download| R2
+    DashboardApi -->|authorized read| D1
+    DashboardApi -->|authorized download| R2
     K --> Docker[Disposable Docker workers]
     Docker --> Repo[Repository, Pi, validation, publication]
 ```
 
 The REST and MCP adapters call the same run application operations. MCP does not make an internal HTTP request to `/v1`; it uses the same validation, idempotency, D1, Queue, read, event, and cancellation paths directly.
+
+The OpenUI analysis page is a separate optional presentation over the existing dashboard read APIs. Its only dashboard API write verb is the authenticated generation POST; it sends the user's prompt to an optional server-configured model provider, while the browser retrieves run data through bounded read-only queries. See [OpenUI run analysis](OPENUI-ANALYSIS.md) for its component, query, and security boundaries.
 
 ## Ownership boundary
 
@@ -83,7 +91,7 @@ Requirement ID: `RUN-ID-UUIDV7-01`.
 
 Soyuz generates RFC 9562 UUIDv7 IDs from the current millisecond timestamp and Web Crypto random bytes rather than Kaseki's historical `kaseki-N`. These remain the canonical IDs used for API paths, Queue delivery, and worker callbacks. Each run also receives a persisted, increasing `soyuz-N` display ID for people; it is not a Kaseki local job ID and never replaces the UUID. UUIDs are URL-safe and lexicographically time-sortable; D1 timestamps remain the source for deterministic history ordering. Callers must treat canonical IDs as opaque strings.
 
-Client and worker APIs have separate bearer secrets. Public health is unauthenticated. `/mcp` accepts the legacy client key or OAuth tokens; OAuth read and write scopes separate reads from run creation/cancellation. The private read-only dashboard uses GitHub OAuth and an explicit user-ID allowlist. Worker artifact uploads require the shared worker token plus the current worker and claim fencing IDs. These routes cannot be used to execute work directly. Kaseki remains responsible for execution-context safety, Docker, repository access, validation, and publication. See [the MCP interface](MCP.md) and [deployment guide](DEPLOYMENT.md) for OAuth configuration.
+Client and worker APIs have separate bearer secrets. Public health is unauthenticated. `/mcp` accepts the legacy client key or OAuth tokens; OAuth read and write scopes separate reads from run creation/cancellation. The private dashboard and optional analysis page use GitHub OAuth and an explicit user-ID allowlist; analysis generation requires `soyuz:read` and cannot mutate runs. Worker artifact uploads require the shared worker token plus the current worker and claim fencing IDs. These routes cannot be used to execute work directly. Kaseki remains responsible for execution-context safety, Docker, repository access, validation, and publication. See [the MCP interface](MCP.md) and [deployment guide](DEPLOYMENT.md) for OAuth configuration.
 
 The caller migration can be gradual: direct callers may keep using the current Kaseki API while new or selected clients submit to Soyuz. Soyuz and Kaseki remain independently deployable.
 

@@ -26,7 +26,7 @@ Requests may use `Authorization: Bearer $CLIENT_API_TOKEN` or OAuth access token
 
 MCP is a client interface to Soyuz's control plane. The private `/v1/worker/**` API remains the Kaseki execution-plane contract. MCP cannot claim, start, complete, fail, or otherwise manipulate worker lifecycle transitions. It does not contact a Kaseki host. Kaseki remains responsible for execution-context safety, host capacity, Docker, repository access, validation, detailed diagnostics, and publication.
 
-The OAuth authorization-code flow uses PKCE and asks GitHub only for `read:user`; Soyuz stores the numeric account ID and checks the allowlist on every API request. Access tokens are bound to the Soyuz resource and protected-resource metadata is published for MCP client discovery. Keep the GitHub token transient and do not put a token in a tool definition or response. The same OAuth provider serves the private dashboard; its API is GET-only and includes artifact listing/downloads.
+The OAuth authorization-code flow uses PKCE and asks GitHub only for `read:user`; Soyuz stores the numeric account ID and checks the allowlist on every API request. Access tokens are bound to the Soyuz resource and protected-resource metadata is published for MCP client discovery. Keep the GitHub token transient and do not put a token in a tool definition or response. The same OAuth provider serves the private dashboard. Its API is GET-only except for `POST /dashboard/api/analysis/generate`, which requires the same allowlisted `soyuz:read` scope and only invokes the optional read-only OpenUI generation adapter; it does not mutate Soyuz runs. See [OpenUI run analysis](OPENUI-ANALYSIS.md).
 
 ## V1 tools
 
