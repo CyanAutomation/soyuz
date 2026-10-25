@@ -108,12 +108,17 @@ Requirement IDs: `HEALTH-DB-01`, `RUN-READ-REST-01`, `CANCEL-QUEUED-01`, `CANCEL
 | `POST /v1/runs/:id/cancel` | Client | Cancel queued work or record running cancellation intent |
 | `POST /mcp` | Client key or OAuth | Stateless Streamable HTTP MCP tools |
 | `GET /dashboard/` | Browser | Private read-only dashboard; requires OAuth for its API |
+| `GET /dashboard/analysis/` | Browser | Optional OpenUI run-analysis page |
+| `POST /dashboard/api/analysis/generate` | OAuth `soyuz:read` | Stream a generated OpenUI Lang program; does not change run state |
 
-Run history is limited to the newest 30 runs across all statuses. Status filters and cursors apply within that window, and details, events, and artifacts for older runs are unavailable. Soyuz culls older run rows and their associated data during its minutely retention sweep.
 | `GET /dashboard/api/me` | OAuth `soyuz:read` | Current allowlisted GitHub account login |
 | `GET /dashboard/api/**` | OAuth `soyuz:read` | Dashboard run/event/artifact reads |
 
-The dashboard displays the authenticated GitHub login after verifying it through `/dashboard/api/me`. Sign-out revokes the dashboard's active OAuth access token through the OAuth token endpoint and clears the displayed run data. This ends the Soyuz dashboard session; it does not sign the user out of GitHub. The browser keeps the access token in memory, so reloading the page requires signing in again.
+Run history is limited to the newest 30 runs across all statuses. Status filters and cursors apply within that window, and details, events, and artifacts for older runs are unavailable. Soyuz culls older run rows and their associated data during its minutely retention sweep.
+
+`POST /dashboard/api/analysis/generate` is the only POST exception under the dashboard API. It accepts a bounded `{ "prompt": "...", "mode": "generate" | "edit", "existingProgram"?: "..." }` JSON request and streams OpenUI Lang as server-sent events. It requires an authenticated, allowlisted `soyuz:read` token, uses only server-side provider credentials, and cannot create or mutate runs. Other non-GET dashboard API methods return 405. Provider configuration and deterministic local fixture mode are described in [OpenUI run analysis](OPENUI-ANALYSIS.md).
+
+The dashboards display the authenticated GitHub login after verifying it through `/dashboard/api/me`. Sign-out revokes the dashboard's active OAuth access token through the OAuth token endpoint and clears the displayed run data. This ends the Soyuz dashboard session; it does not sign the user out of GitHub. The browser keeps the access token in memory, so reloading the page requires signing in again.
 
 Queued cancellation becomes terminal `cancelled` immediately; a later Queue delivery must be skipped. Claimed-but-not-started cancellation also becomes terminal `cancelled`; the Kaseki adapter must wait for `started` to succeed before launching execution. Running cancellation becomes `cancel_requested`; the worker polls and confirms with `/cancelled`. If execution completes or fails first, that terminal result is retained.
 
