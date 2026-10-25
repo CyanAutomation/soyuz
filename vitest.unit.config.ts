@@ -6,6 +6,7 @@ export default defineConfig({
       "tests/json.test.ts",
       "tests/state-machine.test.ts",
       "tests/uuidv7.test.ts",
+      "tests/openui.test.ts",
     ],
   },
 });
