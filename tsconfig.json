@@ -15,6 +15,7 @@
   },
   "include": ["src/**/*.ts", "tests/**/*.ts", "worker-configuration.d.ts", "vitest.config.ts", "vitest.unit.config.ts"],
   "exclude": [
+    "tests/openui.test.ts",
     "tests/dashboard-api.test.ts",
     "tests/migration-impact.test.ts",
     "tests/soyuz-production-smoke.test.ts",
