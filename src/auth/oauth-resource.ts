@@ -74,12 +74,15 @@ export async function handleDashboardApiRequest(
 ): Promise<Response> {
   const access = authorizeOAuthContext(context, env);
   if (!access.ok) return access.response;
-  if (request.method !== "GET") return errorResponse(requestIdFor(request), 405, "METHOD_NOT_ALLOWED", "The dashboard is read-only.");
-
   const url = new URL(request.url);
   const path = url.pathname.slice(API_PREFIX.length) || "/";
   const segments = path.split("/").filter(Boolean);
   const requestId = requestIdFor(request);
+  if (request.method === "POST" && segments.length === 2 && segments[0] === "analysis" && segments[1] === "generate") {
+    const { handleOpenUIGenerationRequest } = await import("../openui/generation");
+    return handleOpenUIGenerationRequest(request, env, requestId);
+  }
+  if (request.method !== "GET") return errorResponse(requestId, 405, "METHOD_NOT_ALLOWED", "The dashboard is read-only except for AI analysis generation.");
   return routeDashboardApiRequest(request, env, url, segments, requestId, access.context);
 }
 
@@ -213,6 +216,7 @@ function dashboardRunSummary(row: RunRow): Record<string, unknown> {
     publishMode: row.publish_mode,
     stage: row.stage,
     operationalHealth: row.operational_health,
+    failureClass: row.failure_class,
     lastHeartbeatAt: row.last_heartbeat_at,
     createdAt: row.created_at,
     queuedAt: row.queued_at,
