@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Soyuz run analysis</title>
+  <link rel="stylesheet" href="/dashboard/style.css">
+  <script type="module" src="/dashboard/analysis/app.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">Soyuz</p>
+        <h1>Run analysis</h1>
+        <p class="muted">Ask a question about retained Kaseki-agent runs and compose a read-only view from the data Soyuz records.</p>
+        <nav class="analysis-nav" aria-label="Soyuz dashboards">
+          <a href="/dashboard/">Recent runs</a>
+        </nav>
+      </div>
+      <div class="auth-controls">
+        <p id="analysis-account" class="meta" hidden></p>
+        <button id="analysis-connect" class="button button--primary" type="button">Sign in with GitHub</button>
+      </div>
+    </header>
+
+    <p id="analysis-notice" class="notice notice--info" role="status" aria-live="polite">Sign in with GitHub to analyze retained runs.</p>
+    <form id="analysis-form" class="analysis-form" hidden>
+      <label for="analysis-question">What would you like to know?</label>
+      <textarea id="analysis-question" name="prompt" maxlength="2000" rows="3" required placeholder="Summarise the last 10 runs, compare completed run durations, or show events for a selected run."></textarea>
+      <div class="analysis-form__actions">
+        <button id="analysis-generate" class="button button--primary" type="submit" value="generate">Generate interface</button>
+        <button id="analysis-refine" class="button button--secondary" type="submit" value="edit" hidden>Refine current interface</button>
+      </div>
+    </form>
+    <p id="analysis-data-notice" class="notice notice--empty" role="status" aria-live="polite" hidden></p>
+    <section id="analysis-output" class="analysis-output" aria-label="Generated run analysis"></section>
+  </main>
+</body>
+</html>
