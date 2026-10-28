@@ -175,11 +175,18 @@ async function handleOAuthRequest(
   if (!provider) return errorResponse(requestId, 503, "OAUTH_UNAVAILABLE", "OAuth is not configured.");
   const url = new URL(request.url);
   if (url.pathname === "/oauth/register" && request.method === "POST") {
+    const clientIp = request.headers.get("cf-connecting-ip")?.trim();
+    if (!clientIp) {
+      return errorResponse(
+        requestId,
+        503,
+        "CLIENT_IP_UNAVAILABLE",
+        "OAuth registration is temporarily unavailable because a connecting IP could not be determined.",
+      );
+    }
     let outcome: RateLimitOutcome;
     try {
-      outcome = await env.OAUTH_REGISTRATION_LIMITER.limit({
-        key: request.headers.get("cf-connecting-ip")?.trim() || "unknown",
-      });
+      outcome = await env.OAUTH_REGISTRATION_LIMITER.limit({ key: clientIp });
     } catch {
       return errorResponse(requestId, 503, "RATE_LIMITER_UNAVAILABLE", "OAuth registration is temporarily unavailable. Retry shortly.");
     }
