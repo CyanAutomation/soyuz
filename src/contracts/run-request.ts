@@ -1,6 +1,15 @@
 import { z } from "zod";
 
-const RepoUrlSchema = z.string().url().max(2_048);
+export function isHttpsRepositoryUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+const RepoUrlSchema = z.string().url().max(2_048).refine(isHttpsRepositoryUrl, "repoUrl must use HTTPS");
 const TaskPromptSchema = z.string().min(10).max(32_000);
 const RefSchema = z.string().min(1).max(512);
 const ValidationCommandsSchema = z.array(z.string().min(1).max(2_048)).max(50);
