@@ -132,6 +132,8 @@ Requirement IDs: `AUTH-CONFIG-01`, `AUTH-ROTATE-01`, `HTTP-BODY-01`, `ERRORS-01`
 
 Request bodies larger than 96 KiB return 413 `REQUEST_TOO_LARGE`.
 
+OAuth client registration fails closed with 503 `CLIENT_IP_UNAVAILABLE` if the connecting IP is absent or blank, rather than sharing a fallback rate-limit bucket.
+
 Invalid JSON returns 400; structurally invalid run requests return 422; an absent or invalid caller key returns 401; a valid scoped Kaseki key used outside its create/retry/cancel permissions returns 403 `INSUFFICIENT_SCOPE`; a missing server-side API key returns 503 `AUTHENTICATION_UNAVAILABLE`; unknown runs return 404; expired idempotency replays return 410 `IDEMPOTENCY_KEY_EXPIRED`; idempotency conflicts and invalid lifecycle transitions return 409; temporary D1 or Queue admission problems return 503 with a user-facing message and request ID. Internal stack traces and raw binding errors are not returned. Soyuz keys are static bearer secrets without automatic expiry; rotation or revocation invalidates older values.
 
 The MCP endpoint exposes only `create_run`, `list_runs`, `get_run`, `get_run_events`, and `cancel_run`. It uses the same client bearer credential and shared run operations as REST. `create_run` defaults an omitted `publishMode` to `none`; REST keeps its existing `pr` default. MCP does not expose `/v1/worker/**` lifecycle operations. See [the MCP interface and security boundary](MCP.md).

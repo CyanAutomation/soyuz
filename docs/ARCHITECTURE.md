@@ -36,7 +36,7 @@ Soyuz owns public control-plane authentication, request shape validation (includ
 
 Kaseki owns host capacity, local scheduling, Docker containers, repository access, dependency preparation, Pi execution, safety/admission checks that need execution context, validation, diagnostic artifacts, and GitHub publication. Soyuz does not connect to a Kaseki host to launch work and does not attempt runtime preflight checks.
 
-Cloudflare Rate Limit bindings cap OAuth client registration at 10 requests per connecting IP per minute and AI analysis generation at 5 requests per allowlisted GitHub user per minute. These limits are enforced locally at Cloudflare locations rather than as a global quota, so they help contain automated abuse and provider costs but do not replace a global billing quota. Kaseki still owns destination and execution-context safety for HTTPS repositories.
+Cloudflare Rate Limit bindings cap OAuth client registration at 10 requests per connecting IP per minute and AI analysis generation at 5 requests per allowlisted GitHub user per minute. Registration fails closed with 503 if the connecting IP is unavailable rather than sharing a fallback bucket. These limits are enforced locally at Cloudflare locations rather than as a global quota, so they help contain automated abuse and provider costs but do not replace a global billing quota. Kaseki still owns destination and execution-context safety for HTTPS repositories.
 
 Messages are typed in Soyuz and carry `contractVersion: "1"`. The repositories do not share source code. A Kaseki consumer calls `GET /v1/worker/runs/:id` before start and while running, then reports lifecycle callbacks using the worker token.
 

@@ -109,6 +109,7 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `RUN-REPO-HTTPS-01` | REST and MCP run submissions accept HTTPS repository URLs and reject other URL schemes. | [Transport contract: run request](CONTRACT.md#run-request) |
 | `RUN-RETRY-HTTPS-01` | A terminal legacy run with a non-HTTPS repository URL cannot be requeued through retry. | [Transport contract: run request](CONTRACT.md#run-request) |
 | `OAUTH-RATE-LIMIT-01` | Public OAuth client registration is capped at 10 requests per connecting IP per minute. | [Architecture: ownership boundary](ARCHITECTURE.md#ownership-boundary) |
+| `OAUTH-RATE-LIMIT-IP-01` | OAuth registration fails closed without a connecting IP and never shares a fallback rate-limit bucket. | [Architecture: ownership boundary](ARCHITECTURE.md#ownership-boundary) |
 | `OPENUI-RATE-LIMIT-01` | Analysis generation is capped at 5 requests per allowlisted GitHub user per minute. | [Architecture: ownership boundary](ARCHITECTURE.md#ownership-boundary) |
 | `RATE-LIMIT-FAIL-CLOSED-01` | OAuth registration and analysis generation return unavailable rather than bypassing throttling if their rate limiter fails. | [Architecture: ownership boundary](ARCHITECTURE.md#ownership-boundary) |
 | `ERRORS-01` | Invalid run requests return a stable 422 error response. | [Transport contract: errors](CONTRACT.md#errors) |

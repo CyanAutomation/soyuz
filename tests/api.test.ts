@@ -436,6 +436,27 @@ describe("Soyuz Worker API", () => {
     expect(oauthRegistrationLimiter.limit).toHaveBeenCalledWith({ key: "198.51.100.10" });
   });
 
+  it.each([
+    ["missing", undefined],
+    ["blank", "   "],
+  ])("[OAUTH-RATE-LIMIT-IP-01] fails closed when the connecting IP is %s", async (_label, clientIp) => {
+    const { bindings, oauthRegistrationLimiter } = testEnv({ oauth: true });
+    oauthRegistrationLimiter.limit.mockResolvedValue({ success: false });
+    const headers = new Headers({ "content-type": "application/json" });
+    if (clientIp !== undefined) headers.set("cf-connecting-ip", clientIp);
+
+    const response = await handleRequest(new Request("https://soyuz.test/oauth/register", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ client_name: "Rate limit test" }),
+    }), bindings);
+    const body = await response.json() as { error?: { code?: string } };
+
+    expect(response.status).toBe(503);
+    expect(body.error?.code).toBe("CLIENT_IP_UNAVAILABLE");
+    expect(oauthRegistrationLimiter.limit).not.toHaveBeenCalled();
+  });
+
   it("[OAUTH-07] includes run liveness fields in dashboard list summaries", async () => {
     const { bindings } = testEnv({ oauth: true });
     const created = await submit(bindings);
