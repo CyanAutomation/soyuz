@@ -4,7 +4,7 @@ import { getSoyuzOAuthProvider, isOAuthConfigured } from "./auth/oauth";
 import { handleClientRuns } from "./api/runs";
 import { handleClientArtifacts, purgeExpiredArtifacts } from "./api/artifacts";
 import { handleWorkerArtifacts } from "./api/worker-artifacts";
-import { errorResponse, jsonResponse, requestIdFor } from "./api/http";
+import { ApiError, errorResponse, jsonResponse, rateLimitedResponse, requestIdFor, requestWithBoundedBody } from "./api/http";
 import { handleWorkerCallbacks } from "./api/workers";
 import { purgeExpiredRunRequests, purgeOldRuns } from "./api/retention";
 import type { Env } from "./env";
@@ -146,7 +146,12 @@ async function handleMcpRequest(
   }
   const authFailure = await authorizeMcpClient(request, env, requestId);
   if (authFailure) return authFailure;
-  return createSoyuzMcpHandler(env).fetch(request);
+  try {
+    return createSoyuzMcpHandler(env).fetch(await requestWithBoundedBody(request));
+  } catch (error) {
+    if (error instanceof ApiError) return error.toResponse(requestId);
+    throw error;
+  }
 }
 
 async function handleDashboardApi(
@@ -168,6 +173,18 @@ async function handleOAuthRequest(
 ): Promise<Response> {
   const provider = getSoyuzOAuthProvider(env);
   if (!provider) return errorResponse(requestId, 503, "OAUTH_UNAVAILABLE", "OAuth is not configured.");
+  const url = new URL(request.url);
+  if (url.pathname === "/oauth/register" && request.method === "POST") {
+    let outcome: RateLimitOutcome;
+    try {
+      outcome = await env.OAUTH_REGISTRATION_LIMITER.limit({
+        key: request.headers.get("cf-connecting-ip")?.trim() || "unknown",
+      });
+    } catch {
+      return errorResponse(requestId, 503, "RATE_LIMITER_UNAVAILABLE", "OAuth registration is temporarily unavailable. Retry shortly.");
+    }
+    if (!outcome.success) return rateLimitedResponse(requestId);
+  }
   return provider.fetch(request, env, context);
 }
 

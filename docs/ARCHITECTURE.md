@@ -32,9 +32,11 @@ The OpenUI analysis page is a separate optional presentation over the existing d
 
 ## Ownership boundary
 
-Soyuz owns public control-plane authentication, request shape validation, run IDs, idempotent admission, canonical external state, cancellation intent, Queue publication, and operational event metadata. D1 remains the source of truth even while Kaseki is offline.
+Soyuz owns public control-plane authentication, request shape validation (including HTTPS-only repository URLs), run IDs, idempotent admission, canonical external state, cancellation intent, Queue publication, and operational event metadata. D1 remains the source of truth even while Kaseki is offline.
 
 Kaseki owns host capacity, local scheduling, Docker containers, repository access, dependency preparation, Pi execution, safety/admission checks that need execution context, validation, diagnostic artifacts, and GitHub publication. Soyuz does not connect to a Kaseki host to launch work and does not attempt runtime preflight checks.
+
+Cloudflare Rate Limit bindings cap OAuth client registration at 10 requests per connecting IP per minute and AI analysis generation at 5 requests per allowlisted GitHub user per minute. These limits are enforced locally at Cloudflare locations rather than as a global quota, so they help contain automated abuse and provider costs but do not replace a global billing quota. Kaseki still owns destination and execution-context safety for HTTPS repositories.
 
 Messages are typed in Soyuz and carry `contractVersion: "1"`. The repositories do not share source code. A Kaseki consumer calls `GET /v1/worker/runs/:id` before start and while running, then reports lifecycle callbacks using the worker token.
 
