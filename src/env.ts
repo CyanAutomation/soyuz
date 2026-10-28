@@ -3,6 +3,8 @@ import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 export interface Env {
   DB: D1Database;
   RUN_QUEUE: Queue;
+  OAUTH_REGISTRATION_LIMITER: RateLimit;
+  OPENUI_GENERATION_LIMITER: RateLimit;
   CLIENT_API_TOKEN: string;
   /** Optional one-time previous client key during a bounded rotation. */
   CLIENT_API_TOKEN_PREVIOUS?: string;

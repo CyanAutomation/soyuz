@@ -5,7 +5,7 @@ import type { Env } from "../env";
 import { isUuid } from "../lib/uuid";
 import { safeUrlForDisplay } from "../lib/safe-url";
 import { handleClientArtifacts } from "../api/artifacts";
-import { errorResponse, requestIdFor, successResponse } from "../api/http";
+import { ApiError, errorResponse, rateLimitedResponse, requestIdFor, requestWithBoundedBody, successResponse } from "../api/http";
 import { createSoyuzMcpHandler } from "../mcp/server";
 import { isAllowedGithubUser, SOYUZ_READ_SCOPE, SOYUZ_WRITE_SCOPE, type OAuthProps } from "./oauth-policy";
 
@@ -61,10 +61,17 @@ export async function handleOAuthMcpRequest(
 ): Promise<Response> {
   const access = authorizeOAuthContext(context, env);
   if (!access.ok) return access.response;
-  if (await requestNeedsWriteScope(request) && !access.context.auth.scope.includes(SOYUZ_WRITE_SCOPE)) {
+  let scopedRequest: Request;
+  try {
+    scopedRequest = await requestWithBoundedBody(request);
+  } catch (error) {
+    if (error instanceof ApiError) return error.toResponse(requestIdFor(request));
+    throw error;
+  }
+  if (await requestNeedsWriteScope(scopedRequest) && !access.context.auth.scope.includes(SOYUZ_WRITE_SCOPE)) {
     return insufficientScope(access.context.auth, [SOYUZ_READ_SCOPE, SOYUZ_WRITE_SCOPE]);
   }
-  return createSoyuzMcpHandler(env).fetch(request);
+  return createSoyuzMcpHandler(env).fetch(scopedRequest);
 }
 
 export async function handleDashboardApiRequest(
@@ -79,6 +86,13 @@ export async function handleDashboardApiRequest(
   const segments = path.split("/").filter(Boolean);
   const requestId = requestIdFor(request);
   if (request.method === "POST" && segments.length === 2 && segments[0] === "analysis" && segments[1] === "generate") {
+    let outcome: RateLimitOutcome;
+    try {
+      outcome = await env.OPENUI_GENERATION_LIMITER.limit({ key: access.context.props.githubUserId });
+    } catch {
+      return errorResponse(requestId, 503, "RATE_LIMITER_UNAVAILABLE", "Analysis generation is temporarily unavailable. Retry shortly.");
+    }
+    if (!outcome.success) return rateLimitedResponse(requestId);
     const { handleOpenUIGenerationRequest } = await import("../openui/generation");
     return handleOpenUIGenerationRequest(request, env, requestId);
   }

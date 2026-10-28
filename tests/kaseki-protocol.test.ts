@@ -21,6 +21,8 @@ function testEnv() {
     RUN_QUEUE: {
       send: async (message: unknown) => { messages.push(message as QueuedRun); },
     } as unknown as Env["RUN_QUEUE"],
+    OAUTH_REGISTRATION_LIMITER: { limit: async () => ({ success: true }) } as Env["OAUTH_REGISTRATION_LIMITER"],
+    OPENUI_GENERATION_LIMITER: { limit: async () => ({ success: true }) } as Env["OPENUI_GENERATION_LIMITER"],
     CLIENT_API_TOKEN: CLIENT_TOKEN,
     KASEKI_SUBMISSION_API_TOKEN: KASEKI_TOKEN,
     KASEKI_SUBMISSION_IDENTITY: "kaseki-test-host",

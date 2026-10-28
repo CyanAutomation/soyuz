@@ -20,6 +20,8 @@ type QueueMessage = { runId: string; contractVersion: string; [key: string]: unk
 
 function testEnv(options: { queueFailure?: boolean; artifacts?: Env["ARTIFACTS"]; oauth?: boolean; openuiDemo?: boolean } = {}) {
   const sent: QueueMessage[] = [];
+  const oauthRegistrationLimiter = { limit: vi.fn(async () => ({ success: true })) };
+  const openuiGenerationLimiter = { limit: vi.fn(async () => ({ success: true })) };
   const send = vi.fn(async (message: unknown) => {
     if (options.queueFailure) throw new Error("simulated queue failure");
     sent.push(message as QueueMessage);
@@ -27,6 +29,8 @@ function testEnv(options: { queueFailure?: boolean; artifacts?: Env["ARTIFACTS"]
   const bindings: Env = {
     DB: runtimeEnv.DB,
     RUN_QUEUE: { send } as unknown as Env["RUN_QUEUE"],
+    OAUTH_REGISTRATION_LIMITER: oauthRegistrationLimiter as unknown as Env["OAUTH_REGISTRATION_LIMITER"],
+    OPENUI_GENERATION_LIMITER: openuiGenerationLimiter as unknown as Env["OPENUI_GENERATION_LIMITER"],
     CLIENT_API_TOKEN: CLIENT_TOKEN,
     WORKER_API_TOKEN: WORKER_TOKEN,
     ARTIFACTS: options.artifacts,
@@ -37,7 +41,7 @@ function testEnv(options: { queueFailure?: boolean; artifacts?: Env["ARTIFACTS"]
     SOYUZ_OAUTH_ALLOWED_GITHUB_IDS: options.oauth ? "123" : undefined,
     OPENUI_DEMO_MODE: options.openuiDemo ? "true" : undefined,
   };
-  return { bindings, sent, send };
+  return { bindings, sent, send, oauthRegistrationLimiter, openuiGenerationLimiter };
 }
 
 async function createOAuthAccessToken(env: Env, scope: string[] = ["soyuz:read"]): Promise<string> {
@@ -99,6 +103,7 @@ function apiRequest(
   options: { method?: string; body?: unknown; token?: string; headers?: Record<string, string> } = {},
 ): Request {
   const headers = new Headers(options.headers);
+  if (!headers.has("cf-connecting-ip")) headers.set("cf-connecting-ip", "198.51.100.10");
   if (options.token) headers.set("authorization", `Bearer ${options.token}`);
   if (options.body !== undefined) headers.set("content-type", "application/json");
   return new Request(`https://soyuz.test${path}`, {
@@ -410,6 +415,48 @@ describe("Soyuz Worker API", () => {
     expect(revoked.body.error.code).toBe("ACCESS_DENIED");
   });
 
+  it("[OAUTH-RATE-LIMIT-01] limits public OAuth client registration by connecting IP", async () => {
+    const { bindings, oauthRegistrationLimiter } = testEnv({ oauth: true });
+    oauthRegistrationLimiter.limit.mockResolvedValue({ success: false });
+
+    const result = await call(bindings, "/oauth/register", {
+      method: "POST",
+      body: {
+        client_name: "Rate limit test",
+        redirect_uris: ["https://client.example.test/callback"],
+        grant_types: ["authorization_code"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+      },
+    });
+
+    expect(result.response.status).toBe(429);
+    expect(result.response.headers.get("retry-after")).toBe("60");
+    expect(result.body.error.code).toBe("RATE_LIMITED");
+    expect(oauthRegistrationLimiter.limit).toHaveBeenCalledWith({ key: "198.51.100.10" });
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["blank", "   "],
+  ])("[OAUTH-RATE-LIMIT-IP-01] fails closed when the connecting IP is %s", async (_label, clientIp) => {
+    const { bindings, oauthRegistrationLimiter } = testEnv({ oauth: true });
+    oauthRegistrationLimiter.limit.mockResolvedValue({ success: false });
+    const headers = new Headers({ "content-type": "application/json" });
+    if (clientIp !== undefined) headers.set("cf-connecting-ip", clientIp);
+
+    const response = await handleRequest(new Request("https://soyuz.test/oauth/register", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ client_name: "Rate limit test" }),
+    }), bindings);
+    const body = await response.json() as { error?: { code?: string } };
+
+    expect(response.status).toBe(503);
+    expect(body.error?.code).toBe("CLIENT_IP_UNAVAILABLE");
+    expect(oauthRegistrationLimiter.limit).not.toHaveBeenCalled();
+  });
+
   it("[OAUTH-07] includes run liveness fields in dashboard list summaries", async () => {
     const { bindings } = testEnv({ oauth: true });
     const created = await submit(bindings);
@@ -586,6 +633,69 @@ describe("Soyuz Worker API", () => {
       body: validRequest(),
     });
     expect(otherPost.response.status).toBe(405);
+  });
+
+  it("[MCP-BODY-01] rejects oversized OAuth MCP requests before scope inspection buffers them", async () => {
+    const { bindings } = testEnv({ oauth: true });
+    const accessToken = await createOAuthAccessToken(bindings);
+    const response = await callBinary(bindings, "/mcp", {
+      method: "POST",
+      token: accessToken,
+      headers: {
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+        "mcp-protocol-version": "2025-03-26",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "ping",
+        params: { padding: "x".repeat(100 * 1024) },
+      }),
+    });
+
+    expect(response.response.status).toBe(413);
+    expect((response.body as any).error.code).toBe("REQUEST_TOO_LARGE");
+  });
+
+  it("[OPENUI-RATE-LIMIT-01] applies a per-GitHub-user limit before analysis generation", async () => {
+    const { bindings, openuiGenerationLimiter } = testEnv({ oauth: true, openuiDemo: true });
+    const accessToken = await createOAuthAccessToken(bindings);
+    openuiGenerationLimiter.limit.mockResolvedValue({ success: false });
+
+    const response = await callBinary(bindings, "/dashboard/api/analysis/generate", {
+      method: "POST",
+      token: accessToken,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: "Summarise the last 10 runs.", mode: "generate" }),
+    });
+
+    expect(response.response.status).toBe(429);
+    expect(response.response.headers.get("retry-after")).toBe("60");
+    expect(openuiGenerationLimiter.limit).toHaveBeenCalledWith({ key: "123" });
+  });
+
+  it("[RATE-LIMIT-FAIL-CLOSED-01] blocks quota-protected routes when Cloudflare rate limiting is unavailable", async () => {
+    const registration = testEnv({ oauth: true });
+    registration.oauthRegistrationLimiter.limit.mockRejectedValue(new Error("simulated limiter failure"));
+    const registrationResponse = await call(registration.bindings, "/oauth/register", {
+      method: "POST",
+      body: { client_name: "Rate limit test" },
+    });
+    expect(registrationResponse.response.status).toBe(503);
+    expect(registrationResponse.body.error.code).toBe("RATE_LIMITER_UNAVAILABLE");
+
+    const analysis = testEnv({ oauth: true, openuiDemo: true });
+    const accessToken = await createOAuthAccessToken(analysis.bindings);
+    analysis.openuiGenerationLimiter.limit.mockRejectedValue(new Error("simulated limiter failure"));
+    const analysisResponse = await callBinary(analysis.bindings, "/dashboard/api/analysis/generate", {
+      method: "POST",
+      token: accessToken,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: "Summarise the last 10 runs.", mode: "generate" }),
+    });
+    expect(analysisResponse.response.status).toBe(503);
+    expect((analysisResponse.body as any).error.code).toBe("RATE_LIMITER_UNAVAILABLE");
   });
 
   it("[OAUTH-03] renders an escaped, non-framable consent page and binds approval to the browser request", async () => {
@@ -1020,6 +1130,26 @@ describe("Soyuz Worker API", () => {
     });
     expect(rejected.response.status).toBe(409);
     expect(rejected.body.error.code).toBe("RUN_NOT_RETRYABLE");
+  });
+
+  it("[RUN-RETRY-HTTPS-01] rejects retries of legacy runs whose repository URL is not HTTPS", async () => {
+    const { bindings, sent } = testEnv();
+    const source = await submit(bindings, {}, "00000000-0000-4000-8000-000000000077");
+    const sourceRunId = source.body.data.id as string;
+    const legacyRequest = validRequest({ repoUrl: "http://github.com/example/legacy-project.git" });
+    await bindings.DB.prepare("UPDATE runs SET repo_url = ?, request_json = ?, status = 'completed', completed_at = ? WHERE id = ?")
+      .bind(legacyRequest.repoUrl, JSON.stringify(legacyRequest), "2026-10-20T00:00:00.000Z", sourceRunId).run();
+
+    const retry = await call(bindings, `/v1/runs/${sourceRunId}/retry`, {
+      method: "POST",
+      token: CLIENT_TOKEN,
+      body: { idempotencyKey: "00000000-0000-4000-8000-000000000078" },
+    });
+
+    expect(retry.response.status).toBe(409);
+    expect(retry.body.error.code).toBe("RUN_REPOSITORY_URL_UNSUPPORTED");
+    expect(retry.body.error.message).toContain("HTTPS");
+    expect(sent).toHaveLength(1);
   });
 
   it("[RUN-RETRY-ORIGIN-01] rejects retrying a run owned by another origin", async () => {

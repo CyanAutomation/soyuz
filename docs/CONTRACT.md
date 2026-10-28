@@ -12,11 +12,15 @@ Requirement IDs: `RUN-VALIDATE-01`, `RUN-IDEMPOTENCY-01`, `RUN-ADMISSION-01`, `Q
 
 `taskPrompt` is required unless `startupCheck` is `true`. Validation is structural only. In particular, Soyuz does not assess shell commands, repository contents, publication credentials, or host readiness; Kaseki keeps its current execution-context admission checks.
 
+`repoUrl` must be an absolute HTTPS URL on both REST and MCP submission paths. HTTP, SSH, file, and other schemes are rejected. This transport rule does not restrict HTTPS destinations; Kaseki must continue applying its host-side repository and network safety checks.
+
 V1 rejects `webhookConfig`. Kaseki's current webhook option can carry a signing secret. Passing it through both the D1 request record and Queue needs a defined secret-storage and webhook-delivery owner first. Direct Kaseki API callers can continue using that option until a separately versioned migration is designed.
 
 Clients may send an RFC UUID in the request's `idempotencyKey`, the `Idempotency-Key` header, or both (if both are sent they must match). For the same key and equivalent normalized execution request, Soyuz returns the existing run with HTTP 200 while that run remains in the newest-30 history window. Reusing a key for different execution input returns 409 `IDEMPOTENCY_KEY_REUSED`. After a run leaves that window, Soyuz keeps only its origin-scoped key, request fingerprint, and run ID in a deduplication ledger; matching reuse returns 410 `IDEMPOTENCY_KEY_EXPIRED` and does not create duplicate work. After migration `0004_run_origin_retry.sql`, keys are scoped by the authenticated origin. The Kaseki host must persist and reuse its key after an uncertain response.
 
 `POST /v1/runs/:id/retry` accepts `{ "idempotencyKey": "<UUID>" }`. It creates one new run only when the source is terminal (`completed`, `failed`, `cancelled`, or `admission_failed`); the new run includes `retryOf` with the source UUID. Reusing that retry key replays the same new run. Retry and cancellation require the caller's origin to match the source run's origin. The scoped Kaseki credential is restricted to create/retry/cancel and must be distinct from `CLIENT_API_TOKEN`.
+
+Retries of historical runs whose stored repository URL is not HTTPS return 409 `RUN_REPOSITORY_URL_UNSUPPORTED`; submit a new run with an HTTPS URL to continue that work.
 
 Each run response includes an `origin` object derived from the matched credential (for example `{ "type": "kaseki", "id": "kaseki-prod" }`) and `retryOf` (null for a non-retry run). Neither field is accepted from the request body. The same trusted origin and retry lineage appear in the read-only dashboard.
 
@@ -127,6 +131,8 @@ Queued cancellation becomes terminal `cancelled` immediately; a later Queue deli
 Requirement IDs: `AUTH-CONFIG-01`, `AUTH-ROTATE-01`, `HTTP-BODY-01`, `ERRORS-01`.
 
 Request bodies larger than 96 KiB return 413 `REQUEST_TOO_LARGE`.
+
+OAuth client registration fails closed with 503 `CLIENT_IP_UNAVAILABLE` if the connecting IP is absent or blank, rather than sharing a fallback rate-limit bucket.
 
 Invalid JSON returns 400; structurally invalid run requests return 422; an absent or invalid caller key returns 401; a valid scoped Kaseki key used outside its create/retry/cancel permissions returns 403 `INSUFFICIENT_SCOPE`; a missing server-side API key returns 503 `AUTHENTICATION_UNAVAILABLE`; unknown runs return 404; expired idempotency replays return 410 `IDEMPOTENCY_KEY_EXPIRED`; idempotency conflicts and invalid lifecycle transitions return 409; temporary D1 or Queue admission problems return 503 with a user-facing message and request ID. Internal stack traces and raw binding errors are not returned. Soyuz keys are static bearer secrets without automatic expiry; rotation or revocation invalidates older values.
 

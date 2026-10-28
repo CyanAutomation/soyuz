@@ -98,7 +98,7 @@ const MCP_EVENT_PAYLOAD_KEYS = new Set([
 export function createSoyuzMcpHandler(env: Env) {
   return createMcpHandler(
     ({ requestInfo }) => createSoyuzMcpServer(env, requestInfo),
-    { route: "/mcp", legacy: "stateless", responseMode: "auto" },
+    { route: "/mcp", legacy: "stateless", responseMode: "auto", maxRequestBodySize: 96 * 1024 },
   );
 }
 

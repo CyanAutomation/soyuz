@@ -62,4 +62,32 @@ describe("HTTP helpers", () => {
       code: "REQUEST_TOO_LARGE",
     });
   });
+
+  it("[HTTP-BODY-02] stops reading an oversized streamed body at the configured limit", async () => {
+    let pulls = 0;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(new Uint8Array(64 * 1024));
+        if (pulls === 3) controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }, { highWaterMark: 0 });
+    const request = new Request("https://soyuz.test", {
+      method: "POST",
+      headers: { "content-length": "1" },
+      body,
+      duplex: "half",
+    } as RequestInit);
+
+    await expect(parseJsonBody(request, "request-id")).rejects.toMatchObject({
+      status: 413,
+      code: "REQUEST_TOO_LARGE",
+    });
+    expect(cancelled).toBe(true);
+    expect(pulls).toBe(2);
+  });
 });

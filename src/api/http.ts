@@ -1,6 +1,6 @@
 import { isUuid } from "../lib/uuid";
 
-const MAX_JSON_BODY_BYTES = 96 * 1024;
+export const MAX_JSON_BODY_BYTES = 96 * 1024;
 
 export interface ApiErrorOptions {
   details?: unknown;
@@ -33,6 +33,16 @@ export function errorResponse(
   return jsonResponse(status, { error });
 }
 
+export function rateLimitedResponse(requestId: string): Response {
+  return jsonResponse(429, {
+    error: {
+      code: "RATE_LIMITED",
+      message: "Too many requests. Try again later.",
+      requestId,
+    },
+  }, { "retry-after": "60" });
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -48,12 +58,68 @@ export class ApiError extends Error {
   }
 }
 
-export async function parseJsonBody(request: Request, requestId: string): Promise<unknown> {
-  const buffer = await request.arrayBuffer();
-  if (buffer.byteLength > MAX_JSON_BODY_BYTES) {
-    throw new ApiError(413, "REQUEST_TOO_LARGE", "Request body exceeds the 96 KB limit");
+export async function readRequestBodyBytes(request: Request, maxBytes = MAX_JSON_BODY_BYTES): Promise<Uint8Array> {
+  const declaredLength = request.headers.get("content-length");
+  if (declaredLength && /^\d+$/.test(declaredLength) && Number(declaredLength) > maxBytes) {
+    const oversizedReader = request.body?.getReader();
+    if (oversizedReader) {
+      try {
+        await oversizedReader.cancel().catch(() => undefined);
+      } finally {
+        oversizedReader.releaseLock();
+      }
+    }
+    throw requestTooLargeError(maxBytes);
   }
-  const text = new TextDecoder().decode(buffer);
+
+  const reader = request.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  if (reader) {
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (size + value.byteLength > maxBytes) {
+          await reader.cancel().catch(() => undefined);
+          throw requestTooLargeError(maxBytes);
+        }
+        chunks.push(value);
+        size += value.byteLength;
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+function requestTooLargeError(maxBytes: number): ApiError {
+  const message = maxBytes === MAX_JSON_BODY_BYTES
+    ? "Request body exceeds the 96 KB limit"
+    : `Request body exceeds the ${maxBytes} byte limit`;
+  return new ApiError(413, "REQUEST_TOO_LARGE", message);
+}
+
+export async function requestWithBoundedBody(request: Request, maxBytes = MAX_JSON_BODY_BYTES): Promise<Request> {
+  if (request.method !== "POST" || request.body === null) return request;
+  const bytes = await readRequestBodyBytes(request, maxBytes);
+  const headers = new Headers(request.headers);
+  headers.delete("content-length");
+  const body = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(body).set(bytes);
+  return new Request(request, { headers, body });
+}
+
+export async function parseJsonBody(request: Request, requestId: string): Promise<unknown> {
+  const bytes = await readRequestBodyBytes(request);
+  const text = new TextDecoder().decode(bytes);
   try {
     return JSON.parse(text) as unknown;
   } catch {
