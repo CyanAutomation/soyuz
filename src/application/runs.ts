@@ -1,4 +1,4 @@
-import { IdempotencyKeySchema, RunRequestSchema, type RunRequest } from "../contracts/run-request";
+import { IdempotencyKeySchema, isHttpsRepositoryUrl, RunRequestSchema, type RunRequest } from "../contracts/run-request";
 import { CONTRACT_VERSION, type QueuedRun } from "../contracts/queue-message";
 import { RUN_STATUSES, canTransition, isTerminalStatus, type RunStatus } from "../domain/run-state-machine";
 import {
@@ -141,6 +141,14 @@ export async function retryRun(
     throw new RunApplicationError(409, "RUN_NOT_RETRYABLE", "Only terminal runs can be retried", { runId: sourceRunId, status: source.status });
   }
   const request = parseRequest(source);
+  if (!isHttpsRepositoryUrl(request.repoUrl)) {
+    throw new RunApplicationError(
+      409,
+      "RUN_REPOSITORY_URL_UNSUPPORTED",
+      "This run cannot be retried because its repository URL does not use HTTPS. Submit a new run with an HTTPS repository URL.",
+      { runId: sourceRunId },
+    );
+  }
   return createRun(
     env,
     { ...request, idempotencyKey: bodyKey.toLowerCase() },

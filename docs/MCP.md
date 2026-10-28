@@ -18,6 +18,8 @@ POST /mcp
 
 The endpoint uses stateless Streamable HTTP through Cloudflare Agents SDK `agents@0.26.0` and `createMcpHandler()` with `@modelcontextprotocol/server@2.0.0`. It supports the SDK's current 2026-07-28 protocol and stateless clients using the published 2025 MCP protocol. It does not use a separate SSE-only transport or Durable Objects for MCP session state. The implementation follows the [Cloudflare Agents stateless MCP guide](https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers/).
 
+POST bodies are limited to 96 KiB for both bearer-token and OAuth clients. Larger requests are rejected with HTTP 413 before JSON-RPC validation; OAuth requests are bounded before scope inspection as well.
+
 ## Authentication and security boundary
 
 Requirement IDs: `MCP-AUTH-01`.

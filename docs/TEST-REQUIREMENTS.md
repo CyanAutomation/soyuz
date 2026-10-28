@@ -103,6 +103,15 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `OAUTH-CONSENT-ESCAPE-01` | Dynamic consent metadata and form values are HTML-escaped before rendering. | [Deployment: OAuth consent security](DEPLOYMENT.md#oauth-consent-security) |
 | `OAUTH-CONSENT-COPY-01` | Consent explains dashboard access in user-facing language without exposing internal scope identifiers. | [Deployment: OAuth consent security](DEPLOYMENT.md#oauth-consent-security) |
 | `HTTP-BODY-01` | JSON body size is measured in bytes and capped at 96 KiB. | [Transport contract: errors](CONTRACT.md#errors) |
+| `HTTP-BODY-02` | Oversized JSON bodies are cancelled as soon as streamed bytes exceed 96 KiB, even when Content-Length is inaccurate. | [Transport contract: errors](CONTRACT.md#errors) |
+| `MCP-BODY-01` | OAuth-authenticated MCP requests above 96 KiB are rejected before write-scope inspection buffers the message. | [MCP interface: endpoint and transport](MCP.md#endpoint-and-transport) |
+| `MCP-BODY-02` | Bearer-authenticated MCP requests are capped at 96 KiB by the stateless MCP transport. | [MCP interface: endpoint and transport](MCP.md#endpoint-and-transport) |
+| `RUN-REPO-HTTPS-01` | REST and MCP run submissions accept HTTPS repository URLs and reject other URL schemes. | [Transport contract: run request](CONTRACT.md#run-request) |
+| `RUN-RETRY-HTTPS-01` | A terminal legacy run with a non-HTTPS repository URL cannot be requeued through retry. | [Transport contract: run request](CONTRACT.md#run-request) |
+| `OAUTH-RATE-LIMIT-01` | Public OAuth client registration is capped at 10 requests per connecting IP per minute. | [Architecture: ownership boundary](ARCHITECTURE.md#ownership-boundary) |
+| `OAUTH-RATE-LIMIT-IP-01` | OAuth registration fails closed without a connecting IP and never shares a fallback rate-limit bucket. | [Architecture: ownership boundary](ARCHITECTURE.md#ownership-boundary) |
+| `OPENUI-RATE-LIMIT-01` | Analysis generation is capped at 5 requests per allowlisted GitHub user per minute. | [Architecture: ownership boundary](ARCHITECTURE.md#ownership-boundary) |
+| `RATE-LIMIT-FAIL-CLOSED-01` | OAuth registration and analysis generation return unavailable rather than bypassing throttling if their rate limiter fails. | [Architecture: ownership boundary](ARCHITECTURE.md#ownership-boundary) |
 | `ERRORS-01` | Invalid run requests return a stable 422 error response. | [Transport contract: errors](CONTRACT.md#errors) |
 
 ## Internal helper invariants

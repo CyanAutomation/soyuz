@@ -23,6 +23,8 @@ function testEnv(options: { queueFailure?: boolean } = {}) {
   const bindings: Env = {
     DB: runtimeEnv.DB,
     RUN_QUEUE: { send } as unknown as Env["RUN_QUEUE"],
+    OAUTH_REGISTRATION_LIMITER: { limit: async () => ({ success: true }) } as Env["OAUTH_REGISTRATION_LIMITER"],
+    OPENUI_GENERATION_LIMITER: { limit: async () => ({ success: true }) } as Env["OPENUI_GENERATION_LIMITER"],
     CLIENT_API_TOKEN: CLIENT_TOKEN,
     WORKER_API_TOKEN: WORKER_TOKEN,
   };
@@ -36,6 +38,20 @@ function request(path: string, body: unknown, token = CLIENT_TOKEN, headers: Rec
     body: JSON.stringify(body),
   });
 }
+
+describe("MCP request body limits", () => {
+  it("[MCP-BODY-02] returns 413 for a bearer-authenticated MCP body above 96 KiB", async () => {
+    const { bindings } = testEnv();
+    const response = await handleRequest(request("/mcp", {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "ping",
+      params: { padding: "x".repeat(100 * 1024) },
+    }), bindings);
+
+    expect(response.status).toBe(413);
+  });
+});
 
 async function rpc(
   env: Env,

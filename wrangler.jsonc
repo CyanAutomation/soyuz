@@ -19,6 +19,18 @@
       "id": "bbaeb9b98b8746818193a5eac9e69f88"
     }
   ],
+  "ratelimits": [
+    {
+      "name": "OAUTH_REGISTRATION_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 10, "period": 60 }
+    },
+    {
+      "name": "OPENUI_GENERATION_LIMITER",
+      "namespace_id": "1002",
+      "simple": { "limit": 5, "period": 60 }
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
