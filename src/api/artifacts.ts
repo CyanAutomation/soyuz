@@ -4,17 +4,26 @@ import { isUuid } from "../lib/uuid";
 import { errorResponse, successResponse } from "./http";
 import { MAX_ARTIFACTS_PER_RUN, publicArtifact, type ArtifactRow } from "./artifact-model";
 
+const MAX_CACHED_ARTIFACT_BYTES = 1_000_000;
+const MAX_ARTIFACT_CACHE_TTL_SECONDS = 60 * 60;
+
+function artifactResponseCache(): Cache {
+  // Cloudflare exposes this default cache in addition to the standard CacheStorage interface.
+  return (caches as CacheStorage & { readonly default: Cache }).default;
+}
+
 export async function handleClientArtifacts(
   request: Request,
   env: Env,
   url: URL,
   requestId: string,
+  context: ExecutionContext,
 ): Promise<Response | null> {
   const route = clientArtifactRoute(request, env, url, requestId);
   if (route.kind === "skip") return null;
   if (route.kind === "error") return route.response;
   if (route.kind === "list") return listClientArtifacts(env, route.runId, requestId);
-  return readClientArtifact(env, route.runId, route.artifactId, requestId);
+  return readClientArtifact(env, route.runId, route.artifactId, requestId, context);
 }
 
 type ClientArtifactRoute =
@@ -74,7 +83,13 @@ async function listClientArtifacts(env: Env, runId: string, requestId: string): 
   }
 }
 
-async function readClientArtifact(env: Env, runId: string, artifactId: string, requestId: string): Promise<Response> {
+async function readClientArtifact(
+  env: Env,
+  runId: string,
+  artifactId: string,
+  requestId: string,
+  context: ExecutionContext,
+): Promise<Response> {
   let row: ArtifactRow | null;
   try {
     if (!(await isRunRetained(env.DB, runId))) {
@@ -90,6 +105,15 @@ async function readClientArtifact(env: Env, runId: string, artifactId: string, r
     return errorResponse(requestId, 410, "ARTIFACT_EXPIRED", "Artifact has expired.");
   }
 
+  const headers = artifactDownloadHeaders(row);
+  const cacheKey = artifactCacheKey(row.object_key);
+  try {
+    const cached = await artifactResponseCache().match(cacheKey);
+    if (cached) return new Response(cached.body, { status: 200, headers });
+  } catch {
+    // Cache failures must not make otherwise available artifacts unreadable.
+  }
+
   let object: R2ObjectBody | null;
   try {
     object = await readArtifactObject(env, row);
@@ -98,7 +122,21 @@ async function readClientArtifact(env: Env, runId: string, artifactId: string, r
   }
   if (!object) return errorResponse(requestId, 404, "ARTIFACT_CONTENT_NOT_FOUND", "Artifact content was not found");
 
-  return new Response(object.body, { status: 200, headers: artifactDownloadHeaders(row) });
+  const response = new Response(object.body, { status: 200, headers });
+  const ttl = Math.min(
+    MAX_ARTIFACT_CACHE_TTL_SECONDS,
+    Math.floor((Date.parse(row.expires_at) - Date.now()) / 1_000),
+  );
+  if (row.size_bytes <= MAX_CACHED_ARTIFACT_BYTES && ttl > 0) {
+    const cacheable = response.clone();
+    cacheable.headers.set("cache-control", `public, max-age=${ttl}`);
+    context.waitUntil(artifactResponseCache().put(cacheKey, cacheable).catch(() => undefined));
+  }
+  return response;
+}
+
+function artifactCacheKey(objectKey: string): Request {
+  return new Request(`https://soyuz-artifact-cache.internal/${objectKey.split("/").map(encodeURIComponent).join("/")}`);
 }
 
 async function findReadyArtifact(env: Env, runId: string, artifactId: string): Promise<ArtifactRow | null> {
