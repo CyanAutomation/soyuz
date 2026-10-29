@@ -178,6 +178,7 @@ async function callBinary(
   env: Env,
   path: string,
   options: { method?: string; body?: string; token?: string; headers?: Record<string, string> } = {},
+  context?: ExecutionContext,
 ): Promise<{ response: Response; body: unknown }> {
   const headers = new Headers(options.headers);
   if (options.token) headers.set("authorization", `Bearer ${options.token}`);
@@ -185,7 +186,7 @@ async function callBinary(
     method: options.method ?? "GET",
     headers,
     body: options.body,
-  }), env);
+  }), env, context);
   const contentType = response.headers.get("content-type") ?? "";
   return { response, body: contentType.includes("application/json") ? await response.json() : await response.text() };
 }
@@ -483,6 +484,25 @@ describe("Soyuz Worker API", () => {
     expect(response.headers.get("x-frame-options")).toBe("DENY");
     expect(response.headers.get("referrer-policy")).toBe("no-referrer");
     expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("[DASHBOARD-CACHE-01] gives stable dashboard assets a short browser cache lifetime", async () => {
+    const { bindings } = testEnv();
+    bindings.ASSETS = { fetch: async () => new Response("javascript", { headers: { "content-type": "text/javascript" } }) } as unknown as Env["ASSETS"];
+
+    const response = await handleRequest(new Request("https://soyuz.test/dashboard/app.js"), bindings);
+    expect(response.headers.get("cache-control")).toBe("public, max-age=300, must-revalidate");
+  });
+
+  it("[DASHBOARD-CACHE-02] does not apply the asset cache policy to partial responses", async () => {
+    const { bindings } = testEnv();
+    bindings.ASSETS = { fetch: async () => new Response("partial", {
+      status: 206,
+      headers: { "content-type": "text/javascript" },
+    }) } as unknown as Env["ASSETS"];
+
+    const response = await handleRequest(new Request("https://soyuz.test/dashboard/app.js"), bindings);
+    expect(response.headers.get("cache-control")).toBeNull();
   });
 
   it("[OAUTH-05] returns the authenticated GitHub login from the protected dashboard identity endpoint", async () => {
@@ -1737,12 +1757,32 @@ describe("Soyuz Worker API", () => {
     const list = await call(bindings, `/v1/runs/${runId}/artifacts`, { token: CLIENT_TOKEN });
     expect(list.response.status).toBe(200);
     expect(list.body.data.artifacts).toEqual([expect.objectContaining({ id: artifactId, name: artifactName })]);
-    const download = await callBinary(bindings, `/v1/runs/${runId}/artifacts/${artifactId}`, { token: CLIENT_TOKEN });
+    const cacheWrites: Promise<unknown>[] = [];
+    const context = {
+      waitUntil(promise: Promise<unknown>) { cacheWrites.push(promise); },
+      passThroughOnException() {},
+    } as ExecutionContext;
+    const download = await callBinary(bindings, `/v1/runs/${runId}/artifacts/${artifactId}`, { token: CLIENT_TOKEN }, context);
+    await Promise.all(cacheWrites);
     expect(download.response.status).toBe(200);
+    expect(download.response.headers.get("cache-control")).toBe("private, no-store");
     expect(download.response.headers.get("content-disposition")).toBe(
       "attachment; filename=\"summary___filename__r_sum_.txt\"; filename*=UTF-8''summary%22%3B%20filename%3D%22r%C3%A9sum%C3%A9.txt",
     );
     expect(download.body).toBe("run summary\n");
+
+    const unauthorizedAfterCacheFill = await callBinary(bindings, `/v1/runs/${runId}/artifacts/${artifactId}`);
+    expect(unauthorizedAfterCacheFill.response.status).toBe(401);
+    const repeatDownload = await callBinary(bindings, `/v1/runs/${runId}/artifacts/${artifactId}`, { token: CLIENT_TOKEN }, context);
+    expect(repeatDownload.response.status).toBe(200);
+    expect(repeatDownload.response.headers.get("cache-control")).toBe("private, no-store");
+    expect(repeatDownload.body).toBe("run summary\n");
+    expect(r2.get).toHaveBeenCalledTimes(1);
+
+    await bindings.DB.prepare("UPDATE run_artifacts SET expires_at = ? WHERE id = ?")
+      .bind("2000-01-01T00:00:00.000Z", artifactId).run();
+    const expired = await callBinary(bindings, `/v1/runs/${runId}/artifacts/${artifactId}`, { token: CLIENT_TOKEN }, context);
+    expect(expired.response.status).toBe(410);
   });
 
   it("[ARTIFACTS-IDEMPOTENCY-01] accepts an exact artifact retry and rejects different bytes under the same ID", async () => {
