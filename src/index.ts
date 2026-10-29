@@ -32,7 +32,7 @@ export async function handleRequest(request: Request, env: Env, context?: Execut
     case "worker-api":
       return handleWorkerRequest(request, env, url, requestId);
     case "client-api":
-      return handleClientRequest(request, env, url, requestId);
+      return handleClientRequest(request, env, url, requestId, executionContext);
     default:
       return errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
   }
@@ -128,7 +128,12 @@ async function handleDashboardAssets(request: Request, env: Env, requestId: stri
   headers.set("referrer-policy", "no-referrer");
   headers.set("permissions-policy", "camera=(), microphone=(), geolocation=()");
   headers.set("cross-origin-resource-policy", "same-origin");
-  if ((headers.get("content-type") ?? "").includes("text/html")) headers.set("cache-control", "no-store");
+  if ((headers.get("content-type") ?? "").includes("text/html")) {
+    headers.set("cache-control", "no-store");
+  } else if (response.ok) {
+    // Asset filenames are stable across deployments, so keep browser/CDN freshness bounded.
+    headers.set("cache-control", "public, max-age=300, must-revalidate");
+  }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
@@ -211,7 +216,13 @@ async function handleWorkerRequest(request: Request, env: Env, url: URL, request
   return response ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
 }
 
-async function handleClientRequest(request: Request, env: Env, url: URL, requestId: string): Promise<Response> {
+async function handleClientRequest(
+  request: Request,
+  env: Env,
+  url: URL,
+  requestId: string,
+  context: ExecutionContext,
+): Promise<Response> {
   const kasekiTokenConfigured = isBearerTokenConfigured(env.KASEKI_SUBMISSION_API_TOKEN);
   if (kasekiTokenConfigured && env.KASEKI_SUBMISSION_API_TOKEN === env.CLIENT_API_TOKEN) {
     return errorResponse(requestId, 503, "AUTHENTICATION_UNAVAILABLE", "Kaseki submission authentication must use a credential distinct from the general client API key.");
@@ -244,7 +255,7 @@ async function handleClientRequest(request: Request, env: Env, url: URL, request
   if (!authenticated) {
     return errorResponse(requestId, 401, "UNAUTHORIZED", "Client API key is missing or invalid. Check that you are using the current client key.");
   }
-  const artifactResponse = await handleClientArtifacts(request, env, url, requestId);
+  const artifactResponse = await handleClientArtifacts(request, env, url, requestId, context);
   if (artifactResponse) return artifactResponse;
   const response = await handleClientRuns(request, env, url, requestId, origin);
   return response ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");

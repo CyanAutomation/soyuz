@@ -97,7 +97,7 @@ export async function handleDashboardApiRequest(
     return handleOpenUIGenerationRequest(request, env, requestId);
   }
   if (request.method !== "GET") return errorResponse(requestId, 405, "METHOD_NOT_ALLOWED", "The dashboard is read-only except for AI analysis generation.");
-  return routeDashboardApiRequest(request, env, url, segments, requestId, access.context);
+  return routeDashboardApiRequest(request, env, url, segments, requestId, access.context, context);
 }
 
 async function routeDashboardApiRequest(
@@ -107,6 +107,7 @@ async function routeDashboardApiRequest(
   segments: string[],
   requestId: string,
   context: OAuthResourceContext<OAuthProps>,
+  executionContext: ExecutionContext,
 ): Promise<Response> {
   if (segments.length === 1 && segments[0] === "me") {
     return successResponse(requestId, { githubLogin: context.props.githubLogin });
@@ -124,10 +125,10 @@ async function routeDashboardApiRequest(
       return readDashboardRun(env, runId, requestId);
     case 3:
       if (segments[2] === "events") return readDashboardEvents(env, url, runId, requestId);
-      if (segments[2] === "artifacts") return readDashboardArtifacts(request, env, url, segments, runId, requestId);
+      if (segments[2] === "artifacts") return readDashboardArtifacts(request, env, url, segments, runId, requestId, executionContext);
       break;
     case 4:
-      if (segments[2] === "artifacts") return readDashboardArtifacts(request, env, url, segments, runId, requestId);
+      if (segments[2] === "artifacts") return readDashboardArtifacts(request, env, url, segments, runId, requestId, executionContext);
       break;
   }
   return errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
@@ -140,9 +141,10 @@ async function readDashboardArtifacts(
   segments: string[],
   runId: string,
   requestId: string,
+  executionContext: ExecutionContext,
 ): Promise<Response> {
   const artifactPath = `/v1/runs/${runId}/artifacts${segments[3] ? `/${encodeURIComponent(segments[3])}` : ""}`;
-  return await handleClientArtifacts(request, env, new URL(`${artifactPath}${url.search}`, url.origin), requestId)
+  return await handleClientArtifacts(request, env, new URL(`${artifactPath}${url.search}`, url.origin), requestId, executionContext)
     ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
 }
 
