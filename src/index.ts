@@ -130,7 +130,7 @@ async function handleDashboardAssets(request: Request, env: Env, requestId: stri
   headers.set("cross-origin-resource-policy", "same-origin");
   if ((headers.get("content-type") ?? "").includes("text/html")) {
     headers.set("cache-control", "no-store");
-  } else if (response.ok) {
+  } else if (response.status === 200) {
     // Asset filenames are stable across deployments, so keep browser/CDN freshness bounded.
     headers.set("cache-control", "public, max-age=300, must-revalidate");
   }
