@@ -494,6 +494,17 @@ describe("Soyuz Worker API", () => {
     expect(response.headers.get("cache-control")).toBe("public, max-age=300, must-revalidate");
   });
 
+  it("[DASHBOARD-CACHE-02] does not apply the asset cache policy to partial responses", async () => {
+    const { bindings } = testEnv();
+    bindings.ASSETS = { fetch: async () => new Response("partial", {
+      status: 206,
+      headers: { "content-type": "text/javascript" },
+    }) } as unknown as Env["ASSETS"];
+
+    const response = await handleRequest(new Request("https://soyuz.test/dashboard/app.js"), bindings);
+    expect(response.headers.get("cache-control")).toBeNull();
+  });
+
   it("[OAUTH-05] returns the authenticated GitHub login from the protected dashboard identity endpoint", async () => {
     const { bindings } = testEnv({ oauth: true });
     const credentials = await createOAuthCredentials(bindings);
