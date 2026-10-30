@@ -23,7 +23,7 @@
     "@cloudflare/workers-oauth-provider": "^1.2.3",
     "@modelcontextprotocol/server": "^2.0.0",
     "@openuidev/lang-core": "^1.0.1",
-    "agents": "^0.28.1",
+    "agents": "^0.30.1",
     "zod": "^4.6.7"
   },
   "overrides": {
