@@ -22,6 +22,31 @@ interface OAuthRegistration { client_id: string }
 interface OAuthTokenResponse { access_token: string }
 
 type AnalysisMode = "generate" | "edit";
+type JevProfileId = keyof typeof JEV_PROFILE_VIEWS;
+interface JevProfileView {
+  title: string;
+  answers: readonly { key: string; title: string; type: "noul" | "choice" | "score"; labels?: Record<string, string> }[];
+}
+
+const JEV_PROFILE_VIEWS = {
+  run_operations_triage_v1: {
+    title: "Run operations triage",
+    answers: [
+      { key: "needs_followup", title: "Needs followup", type: "noul" },
+      { key: "likely_area", title: "Likely area", type: "choice", labels: { execution: "Kaseki execution", control_plane: "Soyuz control plane", unknown: "Unknown" } },
+      { key: "severity", title: "Severity", type: "score" },
+    ],
+  },
+  kaseki_output_review_v1: {
+    title: "Kaseki output review",
+    answers: [
+      { key: "summary_specificity", title: "Summary specificity", type: "noul" },
+      { key: "outcome_alignment", title: "Outcome alignment", type: "choice", labels: { consistent: "Consistent", unclear: "Unclear", inconsistent: "Inconsistent" } },
+      { key: "evidence_strength", title: "Evidence strength", type: "score" },
+    ],
+  },
+} as const satisfies Record<string, JevProfileView>;
+
 const oauthKeys = ["state", "verifier", "clientId", "redirectUri"] as const;
 const notice = requiredElement<HTMLElement>("#analysis-notice");
 const dataNotice = requiredElement<HTMLElement>("#analysis-data-notice");
@@ -32,14 +57,26 @@ const question = requiredElement<HTMLTextAreaElement>("#analysis-question");
 const generateButton = requiredElement<HTMLButtonElement>("#analysis-generate");
 const refineButton = requiredElement<HTMLButtonElement>("#analysis-refine");
 const output = requiredElement<HTMLElement>("#analysis-output");
+const jevControls = requiredElement<HTMLElement>("#analysis-jev-controls");
+const jevForm = requiredElement<HTMLFormElement>("#analysis-jev-form");
+const jevProfile = requiredElement<HTMLSelectElement>("#analysis-jev-profile");
+const jevRunId = requiredElement<HTMLInputElement>("#analysis-jev-run-id");
+const jevButton = requiredElement<HTMLButtonElement>("#analysis-jev-run");
+const jevNotice = requiredElement<HTMLElement>("#analysis-jev-notice");
+const jevOutput = requiredElement<HTMLElement>("#analysis-jev-output");
 
 let accessToken: string | null = null;
 let oauthClientId: string | null = null;
 let runtime: SoyuzOpenUIRuntime | null = null;
 let renderer: OpenUIDOMRenderer | null = null;
 let stopRuntimeSubscription: (() => void) | null = null;
+let jevRuntime: SoyuzOpenUIRuntime | null = null;
+let jevRenderer: OpenUIDOMRenderer | null = null;
+let stopJevRuntimeSubscription: (() => void) | null = null;
 let currentProgram = "";
 let isGenerating = false;
+let isRunningJev = false;
+let hasRunJev = false;
 
 renderAuthUi(connectButton, accountLabel, "signed-out");
 void finishSignIn();
@@ -55,6 +92,13 @@ form.addEventListener("submit", (event) => {
   const mode: AnalysisMode = submitter instanceof HTMLButtonElement && submitter.value === "edit" ? "edit" : "generate";
   void generateAnalysis(mode);
 });
+
+jevForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void runJevAssessment();
+});
+jevProfile.addEventListener("change", clearJevAssessment);
+jevRunId.addEventListener("input", clearJevAssessment);
 
 window.addEventListener("pagehide", () => disposeRuntime());
 
@@ -132,6 +176,7 @@ async function finishSignIn(): Promise<void> {
     history.replaceState(null, "", "/dashboard/analysis/");
     renderAuthUi(connectButton, accountLabel, "signed-in", identity.githubLogin);
     form.hidden = false;
+    jevControls.hidden = false;
     activateRuntime();
     setNotice("Ask a question to generate a read-only interface from Soyuz run data.", "info");
   } catch {
@@ -151,6 +196,7 @@ async function signOut(): Promise<void> {
   oauthClientId = null;
   renderAuthUi(connectButton, accountLabel, "signing-out");
   form.hidden = true;
+  jevControls.hidden = true;
   disposeRuntime();
   clearAnalysisOutput();
   setNotice("Signing out…", "info");
@@ -166,6 +212,7 @@ function clearLocalSession(message: string, tone: "info" | "success" | "warning"
   accessToken = null;
   oauthClientId = null;
   form.hidden = true;
+  jevControls.hidden = true;
   renderAuthUi(connectButton, accountLabel, "signed-out");
   disposeRuntime();
   clearAnalysisOutput();
@@ -184,15 +231,29 @@ function activateRuntime(): void {
     maxComponents: OPENUI_MAX_COMPONENTS,
   });
   stopRuntimeSubscription = runtime.subscribe(renderRuntime);
+  jevRuntime = createSoyuzOpenUIRuntime(accessToken, fetch, () => {
+    clearLocalSession("Your sign-in has expired or access has changed. Sign in again to continue.", "danger");
+  });
+  jevRenderer = new OpenUIDOMRenderer(jevOutput, soyuzOpenUILibrary, soyuzComponentRenderers, {
+    maxDepth: OPENUI_MAX_DEPTH,
+    maxComponents: OPENUI_MAX_COMPONENTS,
+  });
+  stopJevRuntimeSubscription = jevRuntime.subscribe(renderJevRuntime);
 }
 
 function disposeRuntime(): void {
   stopRuntimeSubscription?.();
   stopRuntimeSubscription = null;
+  stopJevRuntimeSubscription?.();
+  stopJevRuntimeSubscription = null;
   renderer?.dispose();
   renderer = null;
   runtime?.dispose();
   runtime = null;
+  jevRenderer?.dispose();
+  jevRenderer = null;
+  jevRuntime?.dispose();
+  jevRuntime = null;
 }
 
 function renderRuntime(): void {
@@ -211,6 +272,107 @@ function renderRuntime(): void {
   } else {
     setDataNotice("", "empty");
   }
+}
+
+function renderJevRuntime(): void {
+  if (!jevRuntime || !jevRenderer || !hasRunJev) return;
+  const root = jevRuntime.getRoot();
+  if (root) jevRenderer.render(root, {
+    store: jevRuntime.store,
+    queryManager: jevRuntime.queryManager,
+    dispatchAction: () => undefined,
+  });
+  const snapshot = jevRuntime.queryManager.getSnapshot();
+  if (snapshot.__openui_errors.length > 0) {
+    hasRunJev = false;
+    isRunningJev = false;
+    jevButton.disabled = false;
+    jevProfile.disabled = false;
+    jevRunId.disabled = false;
+    setJevNotice("JEV could not validate a response for this run. No action was taken.", "warning");
+  } else if (jevRuntime.queryManager.isAnyLoading()) {
+    setJevNotice("JEV is assessing the selected run. Please wait…", "info");
+  } else {
+    hasRunJev = false;
+    isRunningJev = false;
+    jevButton.disabled = false;
+    jevProfile.disabled = false;
+    jevRunId.disabled = false;
+    setJevNotice("Advisory result received. Review the run record and confirm any consequential decision yourself.", "success");
+  }
+}
+
+async function runJevAssessment(): Promise<void> {
+  if (!accessToken || !jevRuntime || !jevRenderer || isRunningJev) return;
+  const runId = jevRunId.value.trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId)) {
+    setJevNotice("Enter a retained run UUID or select a run in the generated table.", "warning");
+    jevRunId.focus();
+    return;
+  }
+  const profileId = jevProfile.value;
+  if (!isJevProfileId(profileId)) {
+    setJevNotice("Select a supported JEV profile.", "warning");
+    return;
+  }
+
+  const program = createJevDecisionProgram(profileId, runId.toLowerCase());
+  const validated = validateGeneratedProgram(program, { allowJev: true });
+  if (!validated.ok || !validated.result) {
+    setJevNotice("The JEV view could not be prepared. No provider request was sent.", "warning");
+    return;
+  }
+
+  isRunningJev = true;
+  hasRunJev = true;
+  jevButton.disabled = true;
+  jevProfile.disabled = true;
+  jevRunId.disabled = true;
+  jevOutput.hidden = false;
+  jevOutput.replaceChildren();
+  setJevNotice("Sending the approved run projection to OpenRouter for advisory analysis…", "info");
+  jevRuntime.setProgram(validated.result);
+  renderJevRuntime();
+}
+
+function createJevDecisionProgram(profileId: JevProfileId, runId: string): string {
+  const profile = JEV_PROFILE_VIEWS[profileId];
+  const components = [`Heading(${JSON.stringify(profile.title)})`, 'Text("Advisory decision support. Verify the recorded run before taking consequential action.", "warning")'];
+  for (const field of profile.answers) {
+    const title = field.title;
+    const answer = `decision.answers.${field.key}`;
+    components.push(`DecisionSummary(${JSON.stringify(title)}, ${answer})`);
+    if (field.type === "score") {
+      components.push(`ScoreScale(${JSON.stringify(`${title} score`)}, ${answer}.score, ${answer}.legend, ${answer}.probabilities)`);
+    } else {
+      const labels = field.type === "choice"
+        ? field.labels ?? {}
+        : { false: "False", true: "True" };
+      components.push(`ChoiceProbabilities(${JSON.stringify(`${title} probabilities`)}, ${answer}.probabilities, ${JSON.stringify(labels)})`);
+    }
+    components.push(`ConfidenceDisplay(${JSON.stringify(`${title} confidence`)}, ${answer}.confidence)`);
+  }
+  const query = `decision = Query("jev_decisions", { profileId: ${JSON.stringify(profileId)}, runId: ${JSON.stringify(runId)} }, { model: "", answers: {} })`;
+  return `${query}\nroot = Stack([${components.join(", ")}])`;
+}
+
+function isJevProfileId(value: string): value is JevProfileId {
+  return Object.hasOwn(JEV_PROFILE_VIEWS, value);
+}
+
+function setJevNotice(message: string, tone: "info" | "success" | "warning"): void {
+  jevNotice.hidden = message.length === 0;
+  jevNotice.className = `notice notice--${tone}`;
+  jevNotice.textContent = message;
+}
+
+function clearJevAssessment(): void {
+  if (isRunningJev) return;
+  hasRunJev = false;
+  jevRenderer?.clear();
+  jevOutput.replaceChildren();
+  jevOutput.hidden = true;
+  setJevNotice("", "info");
 }
 
 async function generateAnalysis(mode: AnalysisMode): Promise<void> {
@@ -364,7 +526,13 @@ function dispatchAction(action: OpenUIAction): void {
       break;
     case "select_run": {
       const runId = validated.params.runId;
-      if (typeof runId === "string" && isLoadedRun(runId)) runtime.store.set("$selectedRunId", runId);
+      if (typeof runId === "string" && isLoadedRun(runId)) {
+        runtime.store.set("$selectedRunId", runId);
+        if (!isRunningJev) {
+          jevRunId.value = runId;
+          clearJevAssessment();
+        }
+      }
       break;
     }
     case "navigate_dashboard": {
@@ -409,6 +577,15 @@ function clearAnalysisOutput(): void {
   question.value = "";
   refineButton.hidden = true;
   renderer?.clear();
+  jevRenderer?.clear();
+  jevRunId.value = "";
+  jevOutput.replaceChildren();
+  jevOutput.hidden = true;
+  jevNotice.hidden = true;
+  isRunningJev = false;
+  hasRunJev = false;
+  jevProfile.disabled = false;
+  jevRunId.disabled = false;
   setDataNotice("", "empty");
 }
 

@@ -8,6 +8,7 @@ export default defineConfig({
       "tests/uuidv7.test.ts",
       "tests/openui.test.ts",
       "tests/openui-generation.test.ts",
+      "tests/jev.test.ts",
     ],
   },
 });

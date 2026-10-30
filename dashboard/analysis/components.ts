@@ -168,6 +168,71 @@ export const soyuzComponentRenderers: Record<string, NativeComponentRenderer> = 
     empty.hidden = events.length > 0;
     return element;
   },
+  DecisionSummary: (existing, _node, props) => {
+    const element = reuse(existing, "article", "card analysis-jev-summary");
+    const title = ensureChild(element, "h3", "analysis-jev__title");
+    const summary = ensureChild(element, "p", "analysis-jev-summary__value");
+    title.textContent = stringValue(props.title, 160);
+    const answer = props.answer as Record<string, unknown>;
+    if (answer.type === "noul" && typeof answer.noul === "number") {
+      summary.textContent = `True: ${formatProbability(answer.noul)} · False: ${formatProbability(1 - answer.noul)}`;
+    } else if (answer.type === "choice" && typeof answer.choice === "string") {
+      summary.textContent = `Selected: ${stringValue(answer.choice, 100)}`;
+    } else if (answer.type === "score" && typeof answer.score === "number") {
+      summary.textContent = `Score: ${formatScore(answer.score)}`;
+    } else {
+      summary.textContent = "No validated answer is available.";
+    }
+    return element;
+  },
+  ChoiceProbabilities: (existing, _node, props) => {
+    const element = reuse(existing, "section", "card analysis-jev-probabilities");
+    const title = ensureChild(element, "h3", "analysis-jev__title");
+    title.textContent = stringValue(props.title, 160);
+    const list = ensureChild(element, "ul", "analysis-jev-probabilities__list") as HTMLUListElement;
+    const probabilities = recordValue(props.probabilities);
+    const labels = recordValue(props.labels);
+    renderProbabilityItems(list, probabilities, labels);
+    return element;
+  },
+  ScoreScale: (existing, _node, props) => {
+    const element = reuse(existing, "section", "card analysis-jev-score");
+    const title = ensureChild(element, "h3", "analysis-jev__title");
+    title.textContent = stringValue(props.title, 160);
+    const score = typeof props.score === "number" ? props.score : 0;
+    const legend = recordValue(props.legend);
+    const probabilities = recordValue(props.probabilities);
+    const maximum = Math.max(0, Object.keys(legend).length - 1);
+    const scoreText = ensureChild(element, "p", "analysis-jev-score__value");
+    scoreText.textContent = `Score ${formatScore(score)} of ${maximum}`;
+    const scale = ensureChild(element, "progress", "analysis-jev-score__scale") as HTMLProgressElement;
+    scale.max = maximum || 1;
+    scale.value = Math.min(maximum, score);
+    scale.setAttribute("aria-label", `${scoreText.textContent}; scale from 0 to ${maximum}`);
+    const list = ensureChild(element, "ul", "analysis-jev-probabilities__list") as HTMLUListElement;
+    const labels = Object.fromEntries(Object.entries(legend).map(([key, value]) => [key, value]));
+    renderProbabilityItems(list, probabilities, labels);
+    return element;
+  },
+  ConfidenceDisplay: (existing, _node, props) => {
+    const element = reuse(existing, "section", "analysis-jev-confidence");
+    const title = ensureChild(element, "span", "analysis-jev-confidence__title");
+    const value = ensureChild(element, "span", "analysis-jev-confidence__value");
+    const meter = ensureChild(element, "progress", "analysis-jev-confidence__meter") as HTMLProgressElement;
+    title.textContent = stringValue(props.title, 160);
+    if (typeof props.confidence === "number") {
+      value.textContent = formatProbability(props.confidence);
+      meter.max = 1;
+      meter.value = props.confidence;
+      meter.setAttribute("aria-label", `${title.textContent}: ${value.textContent}`);
+      meter.hidden = false;
+    } else {
+      value.textContent = "Not provided";
+      meter.hidden = true;
+      meter.removeAttribute("aria-label");
+    }
+    return element;
+  },
   Notice: (existing, _node, props) => {
     const tone = enumValue(props.tone, ["info", "empty", "warning", "danger"], "info");
     const element = reuse(existing, "p", `notice notice--${tone}`);
@@ -433,6 +498,42 @@ function stringValue(value: unknown, limit: number): string {
 function formatMetric(value: unknown): string {
   if (typeof value === "number" && Number.isFinite(value)) return new Intl.NumberFormat().format(value);
   return typeof value === "string" ? value.slice(0, 100) : "Unavailable";
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function renderProbabilityItems(
+  list: HTMLUListElement,
+  probabilities: Record<string, unknown>,
+  labels: Record<string, unknown>,
+): void {
+  list.replaceChildren();
+  for (const [key, rawValue] of Object.entries(probabilities).slice(0, 12)) {
+    if (typeof rawValue !== "number" || !Number.isFinite(rawValue) || rawValue < 0 || rawValue > 1) continue;
+    const item = document.createElement("li");
+    item.className = "analysis-jev-probabilities__item";
+    const label = document.createElement("span");
+    label.textContent = stringValue(labels[key] ?? key, 200);
+    const bar = document.createElement("progress");
+    bar.max = 1;
+    bar.value = rawValue;
+    bar.setAttribute("aria-label", `${label.textContent}: ${formatProbability(rawValue)}`);
+    const value = document.createElement("span");
+    value.className = "analysis-jev-probabilities__value";
+    value.textContent = formatProbability(rawValue);
+    item.append(label, bar, value);
+    list.append(item);
+  }
+}
+
+function formatProbability(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
+function formatScore(value: number): string {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value);
 }
 
 function enumValue<T extends string>(value: unknown, values: readonly T[], fallback: T): T {

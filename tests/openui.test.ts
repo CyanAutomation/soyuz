@@ -13,10 +13,16 @@ const validProgram = [
   'root = Stack([Heading("Recent runs"), MetricCard("Runs", @Count(runs.runs)), MetricCard("Success", @SuccessPercentage(runs.runs)), MetricCard("Average duration", @AverageDurationMs(runs.runs)), StatusChart(@StatusDistribution(runs.runs)), RunTable(runs.runs)])',
 ].join("\n");
 
+const jevProgram = [
+  'decision = Query("jev_decisions", { profileId: "kaseki_output_review_v1", runId: "00000000-0000-4000-8000-000000000001" }, { model: "", answers: {} })',
+  'root = Stack([DecisionSummary("Summary specificity", decision.answers.summary_specificity), ChoiceProbabilities("Outcome alignment", decision.answers.outcome_alignment.probabilities, { consistent: "Consistent", unclear: "Unclear", inconsistent: "Inconsistent" }), ScoreScale("Evidence strength", decision.answers.evidence_strength.score, decision.answers.evidence_strength.legend, decision.answers.evidence_strength.probabilities), ConfidenceDisplay("Evidence confidence", decision.answers.evidence_strength.confidence)])',
+].join("\n");
+
 describe("Soyuz OpenUI Core integration", () => {
   it("[OPENUI-CORE-01] registers the supported library and generates its prompt from the same component definitions", () => {
     expect(Object.keys(soyuzOpenUILibrary.components)).toEqual([
-      "Stack", "Heading", "Text", "MetricCard", "RunTable", "StatusChart", "EventTimeline", "Notice", "ActionButton",
+      "Stack", "Heading", "Text", "MetricCard", "RunTable", "StatusChart", "EventTimeline",
+      "DecisionSummary", "ChoiceProbabilities", "ScoreScale", "ConfidenceDisplay", "Notice", "ActionButton",
     ]);
     const prompt = generateSoyuzSystemPrompt();
     expect(prompt).toContain("RunTable");
@@ -34,6 +40,13 @@ describe("Soyuz OpenUI Core integration", () => {
     expect(completed.root?.typeName).toBe("Stack");
     expect(completed.queryStatements).toHaveLength(1);
     expect(validateGeneratedProgram(validProgram).ok).toBe(true);
+  });
+
+  it("[JEV-OPENUI-01] keeps JEV calls out of generated programs and validates the fixed app-owned decision view", () => {
+    expect(validateGeneratedProgram(jevProgram).ok).toBe(false);
+    expect(validateGeneratedProgram(jevProgram, { allowJev: true }).ok).toBe(true);
+    expect(validateGeneratedProgram('root = Stack([DecisionSummary("Fabricated", { type: "noul", noul: 0.95, probabilities: { false: 0.05, true: 0.95 }, confidence: null })])', { allowJev: true }).ok).toBe(false);
+    expect(generateSoyuzSystemPrompt()).not.toContain("jev_decisions");
   });
 
   it("[OPENUI-CORE-01] rejects unknown tools, fabricated run data, invalid props, and unresolved references", () => {
@@ -144,6 +157,40 @@ describe("Soyuz OpenUI Core integration", () => {
     runtime.dispose();
   });
 
+  it("[JEV-OPENUI-02] sends fixed-profile JEV queries only after the app installs the decision view", async () => {
+    const requests: Array<{ path: string; method: string; body: string | null; authorization: string | null }> = [];
+    const fetcher: typeof fetch = vi.fn(async (input, init) => {
+      requests.push({
+        path: String(input),
+        method: String(init?.method ?? "GET"),
+        body: typeof init?.body === "string" ? init.body : null,
+        authorization: new Headers(init?.headers).get("authorization"),
+      });
+      return new Response(JSON.stringify({ data: {
+        model: "typesafe/jev-test",
+        answers: {
+          summary_specificity: { type: "noul", noul: 0.8, probabilities: { false: 0.2, true: 0.8 }, confidence: null },
+          outcome_alignment: { type: "choice", choice: "consistent", probabilities: { consistent: 0.8, unclear: 0.1, inconsistent: 0.1 }, confidence: 0.75 },
+          evidence_strength: { type: "score", score: 1.4, legend: { "0": "Insufficient", "1": "Some concrete detail", "2": "Clear and specific" }, probabilities: { "0": 0.1, "1": 0.4, "2": 0.5 }, confidence: 0.8 },
+        },
+      } }), { headers: { "content-type": "application/json" } });
+    });
+    const parsed = validateGeneratedProgram(jevProgram, { allowJev: true });
+    expect(parsed.ok).toBe(true);
+    const runtime = createSoyuzOpenUIRuntime("analysis-token", fetcher);
+    runtime.setProgram(parsed.result!);
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    await vi.waitFor(() => expect(runtime.queryManager.getResult("decision")).toMatchObject({ model: "typesafe/jev-test" }));
+    expect(requests[0]).toMatchObject({ path: "/dashboard/api/analysis/decisions", method: "POST", authorization: "Bearer analysis-token" });
+    expect(JSON.parse(requests[0].body ?? "{}")).toEqual({ profileId: "kaseki_output_review_v1", runId: "00000000-0000-4000-8000-000000000001" });
+    const children = runtime.getRoot()?.props.children as Array<{ typeName: string; props: Record<string, unknown> }>;
+    expect(children.map((child) => child.typeName)).toEqual([
+      "DecisionSummary", "ChoiceProbabilities", "ScoreScale", "ConfidenceDisplay",
+    ]);
+    expect(children[0].props.answer).toMatchObject({ type: "noul", noul: 0.8 });
+    runtime.dispose();
+  });
+
 });
 
 describe("vanilla OpenUI DOM renderer", () => {
@@ -175,6 +222,46 @@ describe("vanilla OpenUI DOM renderer", () => {
     renderer.render(runtime.getRoot()!, { store: runtime.store, queryManager: runtime.queryManager, dispatchAction: () => undefined });
     expect(container.querySelector("h2")).toBe(heading);
     expect(container.querySelector("h2")?.textContent).toBe("Updated heading");
+    renderer.dispose();
+    runtime.dispose();
+  });
+
+  it("[JEV-RENDER-01] presents validated probabilities, score scales, and confidence with accessible text", async () => {
+    const { document, window } = parseHTML("<html><body><div id='output'></div></body></html>");
+    vi.stubGlobal("document", document);
+    vi.stubGlobal("window", window);
+    vi.stubGlobal("AbortController", window.AbortController);
+    const container = document.querySelector<HTMLElement>("#output")!;
+    const fetcher: typeof fetch = vi.fn(async () => new Response(JSON.stringify({ data: {
+      model: "typesafe/jev-test",
+      answers: {
+        summary_specificity: { type: "noul", noul: 0.8, probabilities: { false: 0.2, true: 0.8 }, confidence: null },
+        outcome_alignment: { type: "choice", choice: "consistent", probabilities: { consistent: 0.8, unclear: 0.1, inconsistent: 0.1 }, confidence: 0.75 },
+        evidence_strength: {
+          type: "score", score: 1.4,
+          legend: { "0": "Insufficient", "1": "Some concrete detail", "2": "Clear and specific" },
+          probabilities: { "0": 0.1, "1": 0.4, "2": 0.5 }, confidence: 0.8,
+        },
+      },
+    } }), { headers: { "content-type": "application/json" } }));
+    const runtime = createSoyuzOpenUIRuntime("analysis-token", fetcher);
+    const renderer = new OpenUIDOMRenderer(container, soyuzOpenUILibrary, soyuzComponentRenderers, { maxDepth: 8, maxComponents: 100 });
+    const parsed = validateGeneratedProgram(jevProgram, { allowJev: true });
+    expect(parsed.ok).toBe(true);
+    runtime.setProgram(parsed.result!);
+    await vi.waitFor(() => expect(runtime.queryManager.getResult("decision")).toMatchObject({ model: "typesafe/jev-test" }));
+    renderer.render(runtime.getRoot()!, { store: runtime.store, queryManager: runtime.queryManager, dispatchAction: () => undefined });
+
+    expect(container.querySelector(".analysis-jev-summary__value")?.textContent).toContain("True: 80% · False: 20%");
+    const choiceBars = container.querySelectorAll(".analysis-jev-probabilities__item progress");
+    expect(choiceBars[0].getAttribute("aria-label")).toBe("Consistent: 80%");
+    const score = container.querySelector(".analysis-jev-score__scale") as HTMLProgressElement;
+    expect(score.value).toBe(1.4);
+    expect(score.getAttribute("aria-label")).toContain("scale from 0 to 2");
+    const confidence = container.querySelector(".analysis-jev-confidence__meter") as HTMLProgressElement;
+    expect(confidence.value).toBe(0.8);
+    expect(confidence.getAttribute("aria-label")).toBe("Evidence confidence: 80%");
+
     renderer.dispose();
     runtime.dispose();
   });

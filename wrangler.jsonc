@@ -11,7 +11,8 @@
   },
   "vars": {
     "SOYUZ_PUBLIC_URL": "https://soyuz.scheimann.workers.dev",
-    "SOYUZ_OAUTH_ALLOWED_GITHUB_IDS": "68898852"
+    "SOYUZ_OAUTH_ALLOWED_GITHUB_IDS": "68898852",
+    "JEV_MODEL": "~typesafe/jev-latest"
   },
   "kv_namespaces": [
     {
@@ -28,6 +29,11 @@
     {
       "name": "OPENUI_GENERATION_LIMITER",
       "namespace_id": "1002",
+      "simple": { "limit": 5, "period": 60 }
+    },
+    {
+      "name": "JEV_DECISION_LIMITER",
+      "namespace_id": "1003",
       "simple": { "limit": 5, "period": 60 }
     }
   ],
