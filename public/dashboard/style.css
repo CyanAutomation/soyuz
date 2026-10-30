@@ -148,6 +148,23 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -.04em; }
 .analysis-form textarea { width: 100%; min-height: 6rem; padding: var(--space-3); border: 1px solid var(--color-border-strong); border-radius: var(--radius-control); background: var(--color-surface); color: var(--color-text); font: inherit; resize: vertical; }
 .analysis-form__actions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 .analysis-output { display: grid; gap: var(--space-4); margin-top: var(--space-5); }
+.analysis-jev-controls { display: grid; gap: var(--space-3); margin-top: var(--space-5); }
+.analysis-jev-controls h2, .analysis-jev-controls p { margin: 0; }
+.analysis-jev-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(12rem, 1fr) auto; align-items: end; gap: var(--space-3); }
+.analysis-jev-form label { font-weight: 700; }
+.analysis-jev-form select, .analysis-jev-form input { min-height: 2.5rem; padding: .4rem var(--space-2); border: 1px solid var(--color-border-strong); border-radius: var(--radius-control); background: var(--color-surface); color: var(--color-text); font: inherit; }
+.analysis-jev-output { display: grid; gap: var(--space-3); }
+.analysis-jev__title { margin: 0 0 var(--space-2); font-size: .95rem; }
+.analysis-jev-summary__value, .analysis-jev-score__value { margin: 0; font-variant-numeric: tabular-nums; }
+.analysis-jev-probabilities__list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.analysis-jev-probabilities__item { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(5rem, 2fr) 3.5rem; align-items: center; gap: var(--space-3); }
+.analysis-jev-probabilities__item > span { overflow-wrap: anywhere; }
+.analysis-jev-probabilities__value { text-align: right; font-variant-numeric: tabular-nums; }
+.analysis-jev-probabilities__item progress, .analysis-jev-confidence__meter, .analysis-jev-score__scale { width: 100%; min-height: .8rem; accent-color: var(--color-primary); }
+.analysis-jev-confidence { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(5rem, 2fr) 3.5rem; align-items: center; gap: var(--space-3); }
+.analysis-jev-confidence__value { text-align: right; font-variant-numeric: tabular-nums; }
+.analysis-jev-score { display: grid; gap: var(--space-2); }
+.analysis-jev-score__scale { margin: var(--space-1) 0; }
 .openui-stack { display: flex; min-width: 0; gap: var(--space-4); }
 .openui-stack--vertical { flex-direction: column; }
 .openui-stack--horizontal { flex-direction: row; flex-wrap: wrap; align-items: stretch; }
@@ -211,6 +228,7 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -.04em; }
   .run-controls .meta { margin-left: 0; }
   .openui-stack--horizontal { flex-direction: column; }
   .analysis-run-table { overflow-x: auto; }
+  .analysis-jev-form { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 480px) {
