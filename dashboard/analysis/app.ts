@@ -17,6 +17,7 @@ import {
 } from "../../openui/library";
 import { createSoyuzOpenUIRuntime, validateGeneratedProgram, type SoyuzOpenUIRuntime } from "../../openui/runtime";
 import { soyuzComponentRenderers } from "./components";
+import { suggestedJevProfile } from "./jev-selection";
 
 interface OAuthRegistration { client_id: string }
 interface OAuthTokenResponse { access_token: string }
@@ -45,6 +46,15 @@ const JEV_PROFILE_VIEWS = {
       { key: "evidence_strength", title: "Evidence strength", type: "score" },
     ],
   },
+  kaseki_output_review_v2: {
+    title: "Kaseki output and outcome review",
+    answers: [
+      { key: "summary_specificity", title: "Summary specificity", type: "noul" },
+      { key: "outcome_alignment", title: "Outcome alignment", type: "choice", labels: { consistent: "Consistent", unclear: "Unclear", inconsistent: "Inconsistent" } },
+      { key: "evidence_strength", title: "Evidence strength", type: "score" },
+      { key: "recorded_outcome", title: "Recorded outcome score", type: "score" },
+    ],
+  },
 } as const satisfies Record<string, JevProfileView>;
 
 const oauthKeys = ["state", "verifier", "clientId", "redirectUri"] as const;
@@ -64,6 +74,9 @@ const jevRunId = requiredElement<HTMLInputElement>("#analysis-jev-run-id");
 const jevButton = requiredElement<HTMLButtonElement>("#analysis-jev-run");
 const jevNotice = requiredElement<HTMLElement>("#analysis-jev-notice");
 const jevOutput = requiredElement<HTMLElement>("#analysis-jev-output");
+const jevFeedback = requiredElement<HTMLElement>("#analysis-jev-feedback");
+const jevFeedbackNotice = requiredElement<HTMLElement>("#analysis-jev-feedback-notice");
+const jevFeedbackButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-jev-rating]")];
 
 let accessToken: string | null = null;
 let oauthClientId: string | null = null;
@@ -99,6 +112,10 @@ jevForm.addEventListener("submit", (event) => {
 });
 jevProfile.addEventListener("change", clearJevAssessment);
 jevRunId.addEventListener("input", clearJevAssessment);
+for (const button of jevFeedbackButtons) button.addEventListener("click", () => {
+  const rating = button.dataset.jevRating;
+  if (rating === "helpful" || rating === "not_helpful") void submitJevFeedback(rating);
+});
 
 window.addEventListener("pagehide", () => disposeRuntime());
 
@@ -290,6 +307,7 @@ function renderJevRuntime(): void {
     jevProfile.disabled = false;
     jevRunId.disabled = false;
     setJevNotice("JEV could not validate a response for this run. No action was taken.", "warning");
+    jevFeedback.hidden = true;
   } else if (jevRuntime.queryManager.isAnyLoading()) {
     setJevNotice("JEV is assessing the selected run. Please wait…", "info");
   } else {
@@ -299,6 +317,7 @@ function renderJevRuntime(): void {
     jevProfile.disabled = false;
     jevRunId.disabled = false;
     setJevNotice("Advisory result received. Review the run record and confirm any consequential decision yourself.", "success");
+    jevFeedback.hidden = false;
   }
 }
 
@@ -330,6 +349,9 @@ async function runJevAssessment(): Promise<void> {
   jevRunId.disabled = true;
   jevOutput.hidden = false;
   jevOutput.replaceChildren();
+  jevFeedback.hidden = true;
+  jevFeedbackNotice.textContent = "";
+  for (const button of jevFeedbackButtons) button.disabled = false;
   setJevNotice("Sending the approved run projection to OpenRouter for advisory analysis…", "info");
   jevRuntime.setProgram(validated.result);
   renderJevRuntime();
@@ -354,6 +376,29 @@ function createJevDecisionProgram(profileId: JevProfileId, runId: string): strin
   }
   const query = `decision = Query("jev_decisions", { profileId: ${JSON.stringify(profileId)}, runId: ${JSON.stringify(runId)} }, { model: "", answers: {} })`;
   return `${query}\nroot = Stack([${components.join(", ")}])`;
+}
+
+async function submitJevFeedback(rating: "helpful" | "not_helpful"): Promise<void> {
+  if (!accessToken || !jevProfile.value || !jevRunId.value || jevFeedbackButtons.every((button) => button.disabled)) return;
+  for (const button of jevFeedbackButtons) button.disabled = true;
+  try {
+    await fetchJson<{ data: { saved: boolean } }>("/dashboard/api/analysis/feedback", {
+      method: "POST",
+      headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        profileId: jevProfile.value,
+        runId: jevRunId.value.trim().toLowerCase(),
+        rating,
+      }),
+      cache: "no-store",
+    });
+    jevFeedbackNotice.textContent = "Thanks. Your rating is recorded without saving JEV's answer.";
+  } catch (error) {
+    for (const button of jevFeedbackButtons) button.disabled = false;
+    jevFeedbackNotice.textContent = error instanceof HttpError && (error.status === 401 || error.status === 403)
+      ? "Sign in again to record feedback."
+      : "Feedback could not be saved. Please try again.";
+  }
 }
 
 function isJevProfileId(value: string): value is JevProfileId {
@@ -530,6 +575,9 @@ function dispatchAction(action: OpenUIAction): void {
         runtime.store.set("$selectedRunId", runId);
         if (!isRunningJev) {
           jevRunId.value = runId;
+          const selectedRun = findLoadedRun(runId);
+          const suggestedProfile = selectedRun ? suggestedJevProfile(selectedRun) : null;
+          if (suggestedProfile) jevProfile.value = suggestedProfile;
           clearJevAssessment();
         }
       }
@@ -544,14 +592,24 @@ function dispatchAction(action: OpenUIAction): void {
 }
 
 function isLoadedRun(runId: string): boolean {
-  if (!runtime) return false;
+  return findLoadedRun(runId) !== null;
+}
+
+function findLoadedRun(runId: string): { status?: unknown; operationalHealth?: unknown } | null {
+  if (!runtime) return null;
   const snapshot = runtime.queryManager.getSnapshot();
-  return Object.values(snapshot).some((value) => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  for (const value of Object.values(snapshot)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
     const runs = (value as { runs?: unknown }).runs;
-    if (Array.isArray(runs) && runs.some((run) => run && typeof run === "object" && (run as { runId?: unknown }).runId === runId)) return true;
-    return (value as { runId?: unknown }).runId === runId && typeof (value as { status?: unknown }).status === "string";
-  });
+    if (Array.isArray(runs)) {
+      const selected = runs.find((run) => run && typeof run === "object" && (run as { runId?: unknown }).runId === runId);
+      if (selected && typeof selected === "object") return selected as { status?: unknown; operationalHealth?: unknown };
+    }
+    if ((value as { runId?: unknown }).runId === runId && typeof (value as { status?: unknown }).status === "string") {
+      return value as { status?: unknown; operationalHealth?: unknown };
+    }
+  }
+  return null;
 }
 
 async function apiJson<T>(path: string): Promise<T> {
@@ -581,6 +639,8 @@ function clearAnalysisOutput(): void {
   jevRunId.value = "";
   jevOutput.replaceChildren();
   jevOutput.hidden = true;
+  jevFeedback.hidden = true;
+  jevFeedbackNotice.textContent = "";
   jevNotice.hidden = true;
   isRunningJev = false;
   hasRunJev = false;

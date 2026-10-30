@@ -154,6 +154,9 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -.04em; }
 .analysis-jev-form label { font-weight: 700; }
 .analysis-jev-form select, .analysis-jev-form input { min-height: 2.5rem; padding: .4rem var(--space-2); border: 1px solid var(--color-border-strong); border-radius: var(--radius-control); background: var(--color-surface); color: var(--color-text); font: inherit; }
 .analysis-jev-output { display: grid; gap: var(--space-3); }
+.analysis-jev-feedback { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-4); }
+.analysis-jev-feedback p { margin: 0 var(--space-2) 0 0; }
+.analysis-jev-feedback .meta { flex-basis: 100%; }
 .analysis-jev__title { margin: 0 0 var(--space-2); font-size: .95rem; }
 .analysis-jev-summary__value, .analysis-jev-score__value { margin: 0; font-variant-numeric: tabular-nums; }
 .analysis-jev-probabilities__list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
