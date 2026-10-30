@@ -106,7 +106,7 @@ describe("reusable JEV decision adapter", () => {
     expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).questions).toEqual(questions);
   });
 
-  it("[JEV-ADAPTER-02] treats an explicit null confidence as unavailable", async () => {
+  it("[JEV-ADAPTER-06] treats an explicit null confidence as unavailable", async () => {
     const fetcher = vi.fn(async () => response({
       ...validResponse,
       answers: {
