@@ -42,6 +42,8 @@ npm run cf:types
 npm run deploy
 ```
 
+The analysis page's JEV decision endpoint also uses the server-side `OPENROUTER_API_KEY` secret. Keep the existing Worker secret configured; deployments that do not already have it can add it with `npx wrangler secret put OPENROUTER_API_KEY`. `JEV_MODEL` is a Worker variable with a checked-in default of `~typesafe/jev-latest`.
+
 `npm run db:migrate:remote` changes production D1 and requires D1 Edit access. Run it only with separate authorization from the Worker deployment. CI/CD never runs production migrations.
 
 Set `SOYUZ_PUBLIC_URL` to the canonical HTTPS origin, such as `https://soyuz.example.com`, and `SOYUZ_OAUTH_ALLOWED_GITHUB_IDS` to a comma-separated allowlist of numeric GitHub user IDs as Worker variables or secrets. Configure the GitHub OAuth App callback URL to `${SOYUZ_PUBLIC_URL}/oauth/callback`. The dashboard API and OAuth access tokens remain unavailable unless the `OAUTH_KV` binding, callback origin, OAuth credentials, and non-empty allowlist are configured.

@@ -23,7 +23,7 @@ export interface ProgramValidation {
   reason?: string;
 }
 
-export function validateGeneratedProgram(source: string): ProgramValidation {
+export function validateGeneratedProgram(source: string, options: { allowJev?: boolean } = {}): ProgramValidation {
   if (source.length === 0 || source.length > OPENUI_MAX_PROGRAM_CHARS) return { ok: false, reason: "The generated interface exceeded the supported size." };
   let result: ParseResult;
   try {
@@ -45,17 +45,22 @@ export function validateGeneratedProgram(source: string): ProgramValidation {
   if (!validateStateDeclarations(result.stateDeclarations)) return { ok: false, reason: "The generated state is invalid or too large." };
 
   const queryNames = new Set(result.queryStatements.map((query) => query.statementId));
-  const componentError = validateComponentDataSources(result.root, queryNames);
-  if (componentError) return { ok: false, reason: componentError };
-
   const store = createStore();
   try {
     store.initialize({ ...defaultDashboardState(), ...result.stateDeclarations }, {});
     const context = evaluationContext(store, { getResult: () => undefined });
+    const queryTools = new Map<string, SoyuzToolName>();
     for (const query of result.queryStatements) {
       try {
         const toolName = query.toolAST ? evaluate(query.toolAST, context.ctx) : null;
         if (!isSoyuzToolName(toolName)) return { ok: false, reason: "The generated interface requested an unsupported data query." };
+        if (toolName === "jev_decisions" && !options.allowJev) {
+          return { ok: false, reason: "JEV decisions may only be requested from the explicit analysis control." };
+        }
+        if (toolName === "jev_decisions" && ((query.deps?.length ?? 0) > 0 || query.refreshAST)) {
+          return { ok: false, reason: "JEV decisions cannot run from state-dependent or refreshing queries." };
+        }
+        queryTools.set(query.statementId, toolName);
         const rawArgs = query.argsAST ? evaluate(query.argsAST, context.ctx) : {};
         if (!validateToolArgs(toolName, rawArgs)) return { ok: false, reason: "A generated data query had invalid arguments." };
         const defaults = query.defaultsAST ? evaluate(query.defaultsAST, context.ctx) : undefined;
@@ -70,6 +75,9 @@ export function validateGeneratedProgram(source: string): ProgramValidation {
         return { ok: false, reason: "A generated query could not be evaluated safely." };
       }
     }
+    const jevQueryNames = new Set([...queryTools.entries()].filter(([, name]) => name === "jev_decisions").map(([statementId]) => statementId));
+    const componentError = validateComponentDataSources(result.root, queryNames, jevQueryNames);
+    if (componentError) return { ok: false, reason: componentError };
     return { ok: true, result };
   } catch {
     return { ok: false, reason: "The generated interface could not be evaluated safely." };
@@ -78,7 +86,7 @@ export function validateGeneratedProgram(source: string): ProgramValidation {
   }
 }
 
-function validateComponentDataSources(root: ElementNode, queryNames: Set<string>): string | null {
+function validateComponentDataSources(root: ElementNode, queryNames: Set<string>, jevQueryNames: Set<string>): string | null {
   const stack: Array<{ node: ElementNode; depth: number }> = [{ node: root, depth: 1 }];
   let count = 0;
   while (stack.length > 0) {
@@ -93,6 +101,21 @@ function validateComponentDataSources(root: ElementNode, queryNames: Set<string>
     }
     if (node.typeName === "EventTimeline" && !containsQueryRef(node.props.events, queryNames)) {
       return "Event timelines must display data returned by an approved event query.";
+    }
+    if (node.typeName === "DecisionSummary" && !containsQueryRef(node.props.answer, jevQueryNames)) {
+      return "Decision summaries must display an answer returned by an approved JEV query.";
+    }
+    if (node.typeName === "ChoiceProbabilities" && !containsQueryRef(node.props.probabilities, jevQueryNames)) {
+      return "Decision probabilities must come from an approved JEV query.";
+    }
+    if (node.typeName === "ScoreScale"
+      && (!containsQueryRef(node.props.score, jevQueryNames)
+        || !containsQueryRef(node.props.legend, jevQueryNames)
+        || !containsQueryRef(node.props.probabilities, jevQueryNames))) {
+      return "Decision scores and their scale must come from an approved JEV query.";
+    }
+    if (node.typeName === "ConfidenceDisplay" && !containsQueryRef(node.props.confidence, jevQueryNames)) {
+      return "Decision confidence must come from an approved JEV query.";
     }
     if (node.typeName === "MetricCard" && !isUnavailableLiteral(node.props.value) && !containsQueryRef(node.props.value, queryNames)) {
       return "Metric cards must derive values from an approved query or function.";
@@ -156,6 +179,8 @@ function validateQueryDefaults(toolName: SoyuzToolName, value: unknown): boolean
       return isPlainRecord(value) && Array.isArray(value.events) && value.events.length === 0 && value.nextAfter === 0 && value.hasMore === false;
     case "get_run_artifacts":
       return isPlainRecord(value) && Array.isArray(value.artifacts) && value.artifacts.length === 0;
+    case "jev_decisions":
+      return isPlainRecord(value) && value.model === "" && isPlainRecord(value.answers) && Object.keys(value.answers).length === 0;
   }
 }
 
@@ -312,12 +337,14 @@ async function executeDashboardTool(
   onUnauthorized: () => void,
 ): Promise<unknown> {
   if (!isSoyuzToolName(rawName)) throw new Error("Tool is not available.");
-  if (rawName !== "list_runs" && rawArgs.runId === "") return emptyToolResult(rawName);
+  if (["get_run", "get_run_events", "get_run_artifacts"].includes(rawName) && rawArgs.runId === "") return emptyToolResult(rawName);
   const args = { ...rawArgs };
   if (rawName === "list_runs" && args.status === "all") delete args.status;
 
   const query = new URLSearchParams();
   let path: string;
+  let method: "GET" | "POST" = "GET";
+  let body: string | undefined;
   switch (rawName) {
     case "list_runs": {
       const parsed = toolInputSchemas.list_runs.safeParse(args);
@@ -348,11 +375,23 @@ async function executeDashboardTool(
       path = `/dashboard/api/runs/${encodeURIComponent(parsed.data.runId)}/artifacts`;
       break;
     }
+    case "jev_decisions": {
+      const parsed = toolInputSchemas.jev_decisions.safeParse(args);
+      if (!parsed.success) throw new Error("Tool arguments are invalid.");
+      path = "/dashboard/api/analysis/decisions";
+      method = "POST";
+      body = JSON.stringify(parsed.data);
+      break;
+    }
   }
 
   const response = await fetcher(path, {
-    method: "GET",
-    headers: { authorization: `Bearer ${accessToken}` },
+    method,
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      ...(body ? { "content-type": "application/json" } : {}),
+    },
+    ...(body ? { body } : {}),
     cache: "no-store",
   });
   if (!response.ok) {
@@ -372,5 +411,6 @@ function emptyToolResult(toolName: SoyuzToolName): unknown {
     case "get_run": return null;
     case "get_run_events": return { events: [], nextAfter: 0, hasMore: false };
     case "get_run_artifacts": return { artifacts: [] };
+    case "jev_decisions": return { model: "", answers: {} };
   }
 }
