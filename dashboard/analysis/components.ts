@@ -129,9 +129,9 @@ export const soyuzComponentRenderers: Record<string, NativeComponentRenderer> = 
     return element;
   },
   EventTimeline: (existing, _node, props) => {
-    const element = reuse(existing, "section", "card analysis-event-timeline");
-    const title = ensureChild(element, "h3", "analysis-event-timeline__title");
-    title.textContent = stringValue(props.title, 120) || "Run event history";
+    const element = reuse(existing, "details", "card analysis-event-timeline");
+    const title = ensureChild(element, "summary", "analysis-event-timeline__title");
+    const eventTitle = stringValue(props.title, 120) || "Run event history";
     let list = element.querySelector<HTMLOListElement>("ol");
     if (!list) {
       list = document.createElement("ol");
@@ -139,19 +139,26 @@ export const soyuzComponentRenderers: Record<string, NativeComponentRenderer> = 
       element.append(list);
     }
     const events = Array.isArray(props.events) ? props.events.filter(isRunEvent) : [];
+    title.textContent = events.length ? `${eventTitle} · ${events.length} ${events.length === 1 ? "event" : "events"}` : eventTitle;
     reconcileItems(list, events, (event) => event.eventId, () => {
       const item = document.createElement("li");
       item.className = "analysis-event-timeline__item";
       item.dataset.itemKey = "";
       const heading = document.createElement("strong");
       const time = document.createElement("time");
-      const details = document.createElement("p");
+      const details = document.createElement("details");
+      details.className = "analysis-event-timeline__payload";
+      const summary = document.createElement("summary");
+      summary.textContent = "Event details";
+      const payload = document.createElement("p");
+      details.append(summary, payload);
       item.append(heading, time, details);
       return item;
     }, (item, event) => {
       const heading = item.querySelector("strong");
       const time = item.querySelector("time");
-      const details = item.querySelector("p");
+      const details = item.querySelector<HTMLDetailsElement>(".analysis-event-timeline__payload");
+      const payloadNode = details?.querySelector("p");
       if (heading) heading.textContent = [event.type, event.stage, event.step].filter(Boolean).join(" · ");
       if (time) {
         time.dateTime = event.timestamp;
@@ -159,7 +166,7 @@ export const soyuzComponentRenderers: Record<string, NativeComponentRenderer> = 
       }
       if (details) {
         const payload = Object.entries(event.payload).slice(0, 12).map(([key, value]) => `${key}: ${String(value)}`).join(" · ");
-        details.textContent = payload;
+        if (payloadNode) payloadNode.textContent = payload;
         details.hidden = payload.length === 0;
       }
     });
