@@ -67,6 +67,7 @@ const question = requiredElement<HTMLTextAreaElement>("#analysis-question");
 const generateButton = requiredElement<HTMLButtonElement>("#analysis-generate");
 const refineButton = requiredElement<HTMLButtonElement>("#analysis-refine");
 const output = requiredElement<HTMLElement>("#analysis-output");
+const jevDisclosure = requiredElement<HTMLDetailsElement>("#analysis-jev-disclosure");
 const jevControls = requiredElement<HTMLElement>("#analysis-jev-controls");
 const jevForm = requiredElement<HTMLFormElement>("#analysis-jev-form");
 const jevProfile = requiredElement<HTMLSelectElement>("#analysis-jev-profile");
@@ -193,6 +194,7 @@ async function finishSignIn(): Promise<void> {
     history.replaceState(null, "", "/dashboard/analysis/");
     renderAuthUi(connectButton, accountLabel, "signed-in", identity.githubLogin);
     form.hidden = false;
+    jevDisclosure.hidden = false;
     jevControls.hidden = false;
     activateRuntime();
     setNotice("Ask a question to generate a read-only interface from Soyuz run data.", "info");
@@ -213,6 +215,7 @@ async function signOut(): Promise<void> {
   oauthClientId = null;
   renderAuthUi(connectButton, accountLabel, "signing-out");
   form.hidden = true;
+  jevDisclosure.hidden = true;
   jevControls.hidden = true;
   disposeRuntime();
   clearAnalysisOutput();
@@ -229,6 +232,7 @@ function clearLocalSession(message: string, tone: "info" | "success" | "warning"
   accessToken = null;
   oauthClientId = null;
   form.hidden = true;
+  jevDisclosure.hidden = true;
   jevControls.hidden = true;
   renderAuthUi(connectButton, accountLabel, "signed-out");
   disposeRuntime();

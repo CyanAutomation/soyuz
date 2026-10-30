@@ -194,11 +194,16 @@ describe("dashboard application flows", () => {
     expect(nodeAt(nodes, "#runs").children).toHaveLength(1);
     expect(flattenText(nodeAt(nodes, "#runs"))).toContain("example/project");
     expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Soyuz run · soyuz-213");
-    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Technical ID");
-    expect(flattenText(nodeAt(nodes, "#runs"))).toContain(runId);
     expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Status: Running");
-    expect(flattenText(nodeAt(nodes, "#runs"))).toContain(`Created ${new Date(run.createdAt).toLocaleString()}`);
-    expect(flattenText(nodeAt(nodes, "#runs"))).toContain(`Started ${new Date(run.startedAt).toLocaleString()}`);
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Current stage ·");
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Last check-in ·");
+    const card = findNodeByClass(nodeAt(nodes, "#runs"), "run-card");
+    const metadata = findNodeByClass(card, "run-card__metadata");
+    expect(metadata.open).toBe(false);
+    expect(flattenText(metadata)).toContain("Technical ID");
+    expect(flattenText(metadata)).toContain(runId);
+    expect(flattenText(metadata)).toContain(`Created ${new Date(run.createdAt).toLocaleString()}`);
+    expect(flattenText(metadata)).toContain(`Started ${new Date(run.startedAt).toLocaleString()}`);
 
     const copyIdButton = findNodeByClass(nodeAt(nodes, "#runs"), "run-card__copy-id");
     expect(copyIdButton.textContent).toBe("Copy ID");
@@ -209,7 +214,7 @@ describe("dashboard application flows", () => {
 
   it("[DASHBOARD-RUN-EVENTS-01] loads run details and older event pages when expanded", async () => {
     const { nodes, runId, requests } = await mountDashboard();
-    const details = findNode(nodeAt(nodes, "#runs"), "DETAILS");
+    const details = findNodeBySummary(nodeAt(nodes, "#runs"), "View outcome, activity, and files");
     details.open = true;
     details.listeners.toggle?.();
 
@@ -410,6 +415,17 @@ function findNode(root: FakeNode, tagName: string): FakeNode {
     }
   }
   throw new Error(`Missing ${tagName} node`);
+}
+
+function findNodeBySummary(root: FakeNode, text: string): FakeNode {
+  if (root.tagName === "DETAILS" && root.children.some((child) => child && typeof child === "object" && (child as FakeNode).tagName === "SUMMARY" && (child as FakeNode).textContent === text)) return root;
+  for (const child of root.children) {
+    if (child && typeof child === "object") {
+      try { return findNodeBySummary(child as FakeNode, text); }
+      catch { /* Keep searching this tree. */ }
+    }
+  }
+  throw new Error(`Could not find details with summary ${text}`);
 }
 
 function findNodeByClass(root: FakeNode, className: string): FakeNode {
