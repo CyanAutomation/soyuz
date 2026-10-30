@@ -9,6 +9,7 @@ export default defineConfig({
       "tests/openui.test.ts",
       "tests/openui-generation.test.ts",
       "tests/jev.test.ts",
+      "tests/jev-selection.test.ts",
     ],
   },
 });
