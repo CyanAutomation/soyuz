@@ -79,6 +79,7 @@ async function clearDatabase(): Promise<void> {
     runtimeEnv.DB.prepare("DELETE FROM run_events"),
     runtimeEnv.DB.prepare("DELETE FROM artifact_deletion_queue"),
     runtimeEnv.DB.prepare("DELETE FROM run_idempotency_keys"),
+    runtimeEnv.DB.prepare("DELETE FROM jev_feedback"),
     runtimeEnv.DB.prepare("DELETE FROM runs"),
   ]);
 }

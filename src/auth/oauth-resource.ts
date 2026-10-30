@@ -107,6 +107,17 @@ export async function handleDashboardApiRequest(
     const { handleJevAnalysisRequest } = await import("../jev/analysis");
     return handleJevAnalysisRequest(request, env, requestId);
   }
+  if (request.method === "POST" && segments.length === 2 && segments[0] === "analysis" && segments[1] === "feedback") {
+    let outcome: RateLimitOutcome;
+    try {
+      outcome = await env.JEV_DECISION_LIMITER.limit({ key: access.context.props.githubUserId });
+    } catch {
+      return errorResponse(requestId, 503, "RATE_LIMITER_UNAVAILABLE", "Analysis feedback is temporarily unavailable. Retry shortly.");
+    }
+    if (!outcome.success) return rateLimitedResponse(requestId);
+    const { handleJevFeedbackRequest } = await import("../jev/feedback");
+    return handleJevFeedbackRequest(request, env, access.context.props.githubUserId, requestId);
+  }
   if (request.method !== "GET") return errorResponse(requestId, 405, "METHOD_NOT_ALLOWED", "The dashboard is read-only except for authenticated AI analysis requests.");
   return routeDashboardApiRequest(request, env, url, segments, requestId, access.context, context);
 }

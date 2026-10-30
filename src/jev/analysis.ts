@@ -32,6 +32,9 @@ export async function handleJevAnalysisRequest(
     return errorResponse(requestId, 503, "JEV_UNAVAILABLE", "JEV analysis is not configured. Contact your Soyuz administrator.");
   }
 
+  const startedAt = Date.now();
+  let outcome = "error";
+  let model = env.JEV_MODEL?.trim() || "~typesafe/jev-latest";
   try {
     const result = await readRun(env, parsed.data.runId);
     const state = stateForProfile(parsed.data.profileId, result);
@@ -39,8 +42,12 @@ export async function handleJevAnalysisRequest(
       state: JSON.stringify(state),
       questions: JEV_PROFILES[parsed.data.profileId].questions,
     }, fetcher);
+    outcome = "success";
+    model = decision.model;
     return successResponse(requestId, decision);
   } catch (error) {
+    if (error instanceof JevDecisionError) outcome = error.code.toLowerCase();
+    else if (error instanceof RunApplicationError) outcome = error.code.toLowerCase();
     if (error instanceof RunApplicationError) {
       return errorResponse(requestId, error.status, error.code, error.publicMessage, { details: error.details });
     }
@@ -59,6 +66,14 @@ export async function handleJevAnalysisRequest(
       }
     }
     return errorResponse(requestId, 503, "JEV_CONTEXT_UNAVAILABLE", "Soyuz could not prepare run data for JEV analysis.");
+  } finally {
+    console.info(JSON.stringify({
+      event: "soyuz_jev_decision",
+      profileId: parsed.data.profileId,
+      model,
+      durationMs: Math.max(0, Date.now() - startedAt),
+      outcome,
+    }));
   }
 }
 
@@ -79,7 +94,8 @@ function stateForProfile(profileId: JevProfileId, row: Awaited<ReturnType<typeof
           lastHeartbeatAt: row.last_heartbeat_at,
         },
       };
-    case "kaseki_output_review_v1": {
+    case "kaseki_output_review_v1":
+    case "kaseki_output_review_v2": {
       const result = parseResult(row);
       const summary = typeof result?.summary === "string" ? result.summary.slice(0, 2_000) : null;
       const changedFileCount = typeof result?.changedFileCount === "number"

@@ -14,8 +14,8 @@ const validProgram = [
 ].join("\n");
 
 const jevProgram = [
-  'decision = Query("jev_decisions", { profileId: "kaseki_output_review_v1", runId: "00000000-0000-4000-8000-000000000001" }, { model: "", answers: {} })',
-  'root = Stack([DecisionSummary("Summary specificity", decision.answers.summary_specificity), ChoiceProbabilities("Outcome alignment", decision.answers.outcome_alignment.probabilities, { consistent: "Consistent", unclear: "Unclear", inconsistent: "Inconsistent" }), ScoreScale("Evidence strength", decision.answers.evidence_strength.score, decision.answers.evidence_strength.legend, decision.answers.evidence_strength.probabilities), ConfidenceDisplay("Evidence confidence", decision.answers.evidence_strength.confidence)])',
+  'decision = Query("jev_decisions", { profileId: "kaseki_output_review_v2", runId: "00000000-0000-4000-8000-000000000001" }, { model: "", answers: {} })',
+  'root = Stack([DecisionSummary("Summary specificity", decision.answers.summary_specificity), ChoiceProbabilities("Outcome alignment", decision.answers.outcome_alignment.probabilities, { consistent: "Consistent", unclear: "Unclear", inconsistent: "Inconsistent" }), ScoreScale("Evidence strength", decision.answers.evidence_strength.score, decision.answers.evidence_strength.legend, decision.answers.evidence_strength.probabilities), ConfidenceDisplay("Evidence confidence", decision.answers.evidence_strength.confidence), ScoreScale("Recorded outcome score", decision.answers.recorded_outcome.score, decision.answers.recorded_outcome.legend, decision.answers.recorded_outcome.probabilities), ConfidenceDisplay("Recorded outcome confidence", decision.answers.recorded_outcome.confidence)])',
 ].join("\n");
 
 describe("Soyuz OpenUI Core integration", () => {
@@ -172,6 +172,7 @@ describe("Soyuz OpenUI Core integration", () => {
           summary_specificity: { type: "noul", noul: 0.8, probabilities: { false: 0.2, true: 0.8 }, confidence: null },
           outcome_alignment: { type: "choice", choice: "consistent", probabilities: { consistent: 0.8, unclear: 0.1, inconsistent: 0.1 }, confidence: 0.75 },
           evidence_strength: { type: "score", score: 1.4, legend: { "0": "Insufficient", "1": "Some concrete detail", "2": "Clear and specific" }, probabilities: { "0": 0.1, "1": 0.4, "2": 0.5 }, confidence: 0.8 },
+          recorded_outcome: { type: "score", score: 2, legend: { "0": "Outcome unclear or unsuccessful", "1": "Partial or limited outcome evidence", "2": "Successful and clearly reported outcome" }, probabilities: { "0": 0.05, "1": 0.1, "2": 0.85 }, confidence: 0.8 },
         },
       } }), { headers: { "content-type": "application/json" } });
     });
@@ -182,10 +183,10 @@ describe("Soyuz OpenUI Core integration", () => {
     await vi.waitFor(() => expect(requests).toHaveLength(1));
     await vi.waitFor(() => expect(runtime.queryManager.getResult("decision")).toMatchObject({ model: "typesafe/jev-test" }));
     expect(requests[0]).toMatchObject({ path: "/dashboard/api/analysis/decisions", method: "POST", authorization: "Bearer analysis-token" });
-    expect(JSON.parse(requests[0].body ?? "{}")).toEqual({ profileId: "kaseki_output_review_v1", runId: "00000000-0000-4000-8000-000000000001" });
+    expect(JSON.parse(requests[0].body ?? "{}")).toEqual({ profileId: "kaseki_output_review_v2", runId: "00000000-0000-4000-8000-000000000001" });
     const children = runtime.getRoot()?.props.children as Array<{ typeName: string; props: Record<string, unknown> }>;
     expect(children.map((child) => child.typeName)).toEqual([
-      "DecisionSummary", "ChoiceProbabilities", "ScoreScale", "ConfidenceDisplay",
+      "DecisionSummary", "ChoiceProbabilities", "ScoreScale", "ConfidenceDisplay", "ScoreScale", "ConfidenceDisplay",
     ]);
     expect(children[0].props.answer).toMatchObject({ type: "noul", noul: 0.8 });
     runtime.dispose();
@@ -241,6 +242,11 @@ describe("vanilla OpenUI DOM renderer", () => {
           type: "score", score: 1.4,
           legend: { "0": "Insufficient", "1": "Some concrete detail", "2": "Clear and specific" },
           probabilities: { "0": 0.1, "1": 0.4, "2": 0.5 }, confidence: 0.8,
+        },
+        recorded_outcome: {
+          type: "score", score: 2,
+          legend: { "0": "Outcome unclear or unsuccessful", "1": "Partial or limited outcome evidence", "2": "Successful and clearly reported outcome" },
+          probabilities: { "0": 0.05, "1": 0.1, "2": 0.85 }, confidence: 0.8,
         },
       },
     } }), { headers: { "content-type": "application/json" } }));
