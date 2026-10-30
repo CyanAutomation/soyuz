@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { ToolSpec } from "@openuidev/lang-core";
 import { RUN_STATUSES } from "../src/domain/run-state-machine";
+import { JevDecisionResultSchema } from "../src/jev/contracts";
+import { JevProfileIdSchema } from "../src/jev/profile-ids";
 
 const runId = z.string().uuid();
 const status = z.enum(RUN_STATUSES);
@@ -19,6 +21,7 @@ export const toolInputSchemas = {
     limit: z.number().int().min(1).max(50).optional(),
   }).strict(),
   get_run_artifacts: z.object({ runId }).strict(),
+  jev_decisions: z.object({ profileId: JevProfileIdSchema, runId }).strict(),
 } as const;
 
 const runSummary = z.object({
@@ -64,6 +67,7 @@ export const toolOutputSchemas = {
     hasMore: z.boolean(),
   }),
   get_run_artifacts: z.object({ artifacts: z.array(artifact).max(100) }),
+  jev_decisions: JevDecisionResultSchema,
 } as const;
 
 function jsonSchema(schema: z.ZodType): Record<string, unknown> {
