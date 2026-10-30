@@ -28,7 +28,7 @@ flowchart TD
 
 The REST and MCP adapters call the same run application operations. MCP does not make an internal HTTP request to `/v1`; it uses the same validation, idempotency, D1, Queue, read, event, and cancellation paths directly.
 
-The OpenUI analysis page is a separate optional presentation over the existing dashboard read APIs. Its two authenticated dashboard POSTs generate OpenUI Lang through the chat-completions adapter and request typed JEV answers through the separate decisions adapter. Both use server-side provider credentials and cannot change run state. The JEV adapter is reusable by server callers that provide bounded state and server-owned questions. See [OpenUI run analysis](OPENUI-ANALYSIS.md) for profile data boundaries and the advisory display.
+The OpenUI analysis page is a separate optional presentation over the existing dashboard read APIs. Its authenticated dashboard POSTs generate OpenUI Lang, request typed JEV answers, and record user ratings of those answers. JEV use remains explicit and cannot change run state. The JEV adapter is reusable by server callers that provide bounded state and server-owned questions. See [OpenUI run analysis](OPENUI-ANALYSIS.md) for profile data boundaries and the advisory display.
 
 ## Ownership boundary
 
@@ -36,7 +36,7 @@ Soyuz owns public control-plane authentication, request shape validation (includ
 
 Kaseki owns host capacity, local scheduling, Docker containers, repository access, dependency preparation, Pi execution, safety/admission checks that need execution context, validation, diagnostic artifacts, and GitHub publication. Soyuz does not connect to a Kaseki host to launch work and does not attempt runtime preflight checks.
 
-Cloudflare Rate Limit bindings cap OAuth client registration at 10 requests per connecting IP per minute, OpenUI generation at 5 requests per allowlisted GitHub user per minute, and JEV decisions at 5 requests per allowlisted GitHub user per minute. Analysis endpoints fail closed with 503 if their rate limiter is unavailable. Registration fails closed with 503 if the connecting IP is unavailable rather than sharing a fallback bucket. These limits are enforced locally at Cloudflare locations rather than as a global quota, so they help contain automated abuse and provider costs but do not replace a global billing quota. Kaseki still owns destination and execution-context safety for HTTPS repositories.
+Cloudflare Rate Limit bindings cap OAuth client registration at 10 requests per connecting IP per minute, OpenUI generation at 5 requests per allowlisted GitHub user per minute, and combined JEV decision/feedback requests at 5 per allowlisted GitHub user per minute. Analysis endpoints fail closed with 503 if their rate limiter is unavailable. Registration fails closed with 503 if the connecting IP is unavailable rather than sharing a fallback bucket. These limits are enforced locally at Cloudflare locations rather than as a global quota, so they help contain automated abuse and provider costs but do not replace a global billing quota. Kaseki still owns destination and execution-context safety for HTTPS repositories.
 
 Messages are typed in Soyuz and carry `contractVersion: "1"`. The repositories do not share source code. A Kaseki consumer calls `GET /v1/worker/runs/:id` before start and while running, then reports lifecycle callbacks using the worker token.
 
