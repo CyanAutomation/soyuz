@@ -34,29 +34,32 @@
         <button id="analysis-refine" class="button button--secondary" type="submit" value="edit" hidden>Refine current interface</button>
       </div>
     </form>
-    <section id="analysis-jev-controls" class="analysis-jev-controls card" aria-labelledby="analysis-jev-heading" hidden>
-      <h2 id="analysis-jev-heading">JEV decision support</h2>
-      <p class="muted">JEV sends only the selected run’s approved operational fields or recorded Kaseki result summary to OpenRouter. Its answers are advisory and may incur API charges.</p>
-      <form id="analysis-jev-form" class="analysis-jev-form">
-        <label for="analysis-jev-profile">Decision profile</label>
-        <select id="analysis-jev-profile" name="profileId">
-          <option value="run_operations_triage_v1">Run operations triage</option>
-          <option value="kaseki_output_review_v1">Kaseki output review (v1)</option>
-          <option value="kaseki_output_review_v2">Kaseki output and outcome review</option>
-        </select>
-        <label for="analysis-jev-run-id">Retained run UUID</label>
-        <input id="analysis-jev-run-id" name="runId" type="text" inputmode="text" autocomplete="off" maxlength="36" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" required>
-        <button id="analysis-jev-run" class="button button--secondary" type="submit">Run JEV assessment</button>
-      </form>
-      <p id="analysis-jev-notice" class="notice notice--empty" role="status" aria-live="polite" hidden></p>
-      <section id="analysis-jev-output" class="analysis-jev-output" aria-label="JEV advisory decision results"></section>
-      <section id="analysis-jev-feedback" class="analysis-jev-feedback" aria-label="JEV assessment feedback" hidden>
-        <p>Was this assessment useful?</p>
-        <button class="button button--secondary" type="button" data-jev-rating="helpful">Useful</button>
-        <button class="button button--secondary" type="button" data-jev-rating="not_helpful">Not useful</button>
-        <p id="analysis-jev-feedback-notice" class="meta" role="status" aria-live="polite"></p>
+<details id="analysis-jev-disclosure" class="analysis-jev-disclosure" hidden>
+      <summary>Decision support with JEV</summary>
+      <section id="analysis-jev-controls" class="analysis-jev-controls card" aria-labelledby="analysis-jev-heading" hidden>
+        <h2 id="analysis-jev-heading">JEV assessment</h2>
+        <p class="muted">JEV sends only the selected run’s approved operational fields or recorded Kaseki result summary to OpenRouter. Its answers are advisory and may incur API charges.</p>
+        <form id="analysis-jev-form" class="analysis-jev-form">
+          <label for="analysis-jev-profile">Decision profile</label>
+          <select id="analysis-jev-profile" name="profileId">
+            <option value="run_operations_triage_v1">Run operations triage</option>
+            <option value="kaseki_output_review_v1">Kaseki output review (v1)</option>
+            <option value="kaseki_output_review_v2">Kaseki output and outcome review</option>
+          </select>
+          <label for="analysis-jev-run-id">Retained run UUID</label>
+          <input id="analysis-jev-run-id" name="runId" type="text" inputmode="text" autocomplete="off" maxlength="36" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" required>
+          <button id="analysis-jev-run" class="button button--secondary" type="submit">Run JEV assessment</button>
+        </form>
+        <p id="analysis-jev-notice" class="notice notice--empty" role="status" aria-live="polite" hidden></p>
+        <section id="analysis-jev-output" class="analysis-jev-output" aria-label="JEV advisory decision results"></section>
+        <section id="analysis-jev-feedback" class="analysis-jev-feedback" aria-label="JEV assessment feedback" hidden>
+          <p>Was this assessment useful?</p>
+          <button class="button button--secondary" type="button" data-jev-rating="helpful">Useful</button>
+          <button class="button button--secondary" type="button" data-jev-rating="not_helpful">Not useful</button>
+          <p id="analysis-jev-feedback-notice" class="meta" role="status" aria-live="polite"></p>
+        </section>
       </section>
-    </section>
+    </details>
     <p id="analysis-data-notice" class="notice notice--empty" role="status" aria-live="polite" hidden></p>
     <section id="analysis-output" class="analysis-output" aria-label="Generated run analysis"></section>
   </main>

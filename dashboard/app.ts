@@ -364,32 +364,50 @@ function renderRun(run: DashboardRunSummary): HTMLElement {
       () => { copyIdButton.textContent = "Copy failed"; },
     );
   });
-  identifiers.append(displayId, technicalId, copyIdButton);
+  identifiers.append(displayId);
 
   const facts = createDefinitionList([
-    ["Stage", formatMachineLabel(run.stage)],
     ["Created", formatRunTimestamp(run.createdAt)],
     ["Queued", formatRunTimestamp(run.queuedAt)],
     ["Started", formatRunTimestamp(run.startedAt)],
     ["Completed", formatRunTimestamp(run.completedAt)],
   ], "data-list run-facts");
 
+  const progress = document.createElement("p");
+  progress.className = "run-card__progress";
+  progress.textContent = statusPresentation.active
+    ? [
+      `Current stage · ${formatMachineLabel(run.stage)}`,
+      run.operationalHealth === "suspect_stalled" || !run.lastHeartbeatAt ? "" : `Last check-in · ${formatTimestamp(run.lastHeartbeatAt)}`,
+    ].filter(Boolean).join(" · ")
+    : run.completedAt
+      ? `Finished · ${formatTimestamp(run.completedAt)}`
+      : "Run finished";
+
   const health = document.createElement("p");
-  health.className = run.operationalHealth === "suspect_stalled"
-    ? "notice notice--warning run-card__health"
-    : "meta run-card__health";
-  health.textContent = run.operationalHealth === "suspect_stalled"
-    ? run.lastHeartbeatAt
-      ? `The worker hasn't checked in recently. Last check-in: ${formatTimestamp(run.lastHeartbeatAt)}.`
-      : "The worker hasn't checked in recently. This run may be stalled."
-    : run.lastHeartbeatAt
-      ? `Last worker check-in · ${formatTimestamp(run.lastHeartbeatAt)}`
-      : "No worker check-in has been reported yet.";
-  card.append(cardHeader, identifiers, facts, health);
+  health.className = "notice notice--warning run-card__health";
+  health.textContent = run.lastHeartbeatAt
+    ? `The worker hasn't checked in recently. Last check-in: ${formatTimestamp(run.lastHeartbeatAt)}.`
+    : "The worker hasn't checked in recently. This run may be stalled.";
+  health.hidden = run.operationalHealth !== "suspect_stalled";
+  card.append(cardHeader, identifiers, progress, health);
+
+  const metadata = document.createElement("details");
+  metadata.className = "run-card__metadata";
+  const metadataSummary = document.createElement("summary");
+  metadataSummary.textContent = "Run metadata · technical ID and timestamps";
+  const metadataContent = document.createElement("div");
+  metadataContent.className = "details-content";
+  const metadataIdentifiers = document.createElement("div");
+  metadataIdentifiers.className = "run-card__identifiers";
+  metadataIdentifiers.append(technicalId, copyIdButton);
+  metadataContent.append(metadataIdentifiers, facts);
+  metadata.append(metadataSummary, metadataContent);
+  card.append(metadata);
 
   const details = document.createElement("details");
   const summary = document.createElement("summary");
-  summary.textContent = "View summary, activity, and files";
+  summary.textContent = "View outcome, activity, and files";
   const content = document.createElement("div");
   content.className = "details-content";
   details.append(summary, content);

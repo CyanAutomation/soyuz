@@ -312,6 +312,7 @@ export function generateSoyuzSystemPrompt(editMode = false): string {
         "Keep queries bounded: at most 30 runs, 50 events per page, and 4 query statements. Use $selectedRunId for the selected row's details and events.",
         "If a value is unavailable, show that explicitly with Notice or a null metric. Do not infer token costs, stage durations, or other fields Soyuz does not record.",
         "Prefer direct query references such as runs.runs for data components. Use @StatusDistribution, @SuccessPercentage, @AverageDurationMs, or @DurationMs for derived values.",
+        "For overview or comparison questions, put a concise answer and key metrics first, then the status chart or run table. Include event history only when the user asks for it, after the summary, and only for a selected run.",
         "RunTable includes operational health, measured duration when both timestamps exist, and the recorded failure class. Set healthFilter to suspect_stalled when the user asks for stalled runs.",
         "Use Text for brief section descriptions; do not put data claims or metric values into static text.",
         "Keep the root named root and make the complete program a small set of named statements. Return OpenUI Lang source only, with no Markdown fences.",

@@ -29,6 +29,7 @@ describe("Soyuz OpenUI Core integration", () => {
     expect(prompt).toContain("StatusDistribution");
     expect(prompt).toContain("list_runs");
     expect(prompt).toContain("Never fabricate run information");
+    expect(prompt).toContain("Include event history only when the user asks for it");
     expect(prompt).toContain("Do not emit Mutation statements");
   });
 
@@ -267,6 +268,41 @@ describe("vanilla OpenUI DOM renderer", () => {
     const confidence = container.querySelector(".analysis-jev-confidence__meter") as HTMLProgressElement;
     expect(confidence.value).toBe(0.8);
     expect(confidence.getAttribute("aria-label")).toBe("Evidence confidence: 80%");
+
+    renderer.dispose();
+    runtime.dispose();
+  });
+
+  it("[OPENUI-RENDER-02] collapses event history and payload details until requested", async () => {
+    const { document, window } = parseHTML("<html><body><div id='output'></div></body></html>");
+    vi.stubGlobal("document", document);
+    vi.stubGlobal("window", window);
+    vi.stubGlobal("AbortController", window.AbortController);
+    const container = document.querySelector<HTMLElement>("#output")!;
+    const fetcher: typeof fetch = vi.fn(async () => new Response(JSON.stringify({ data: { events: [{
+      sequence: 1, eventId: "event-1", type: "run.failed", stage: "execution", step: null,
+      timestamp: "2026-10-01T10:00:00.000Z", payload: { failureClass: "timeout" },
+    }], nextAfter: 1, hasMore: false } }), { headers: { "content-type": "application/json" } }));
+    const program = [
+      '$selectedRunId = "00000000-0000-4000-8000-000000000001"',
+      'events = Query("get_run_events", { runId: $selectedRunId, limit: 50 }, { events: [], nextAfter: 0, hasMore: false })',
+      'root = Stack([EventTimeline(events.events)])',
+    ].join("\n");
+    const parsed = validateGeneratedProgram(program);
+    expect(parsed.ok).toBe(true);
+    const runtime = createSoyuzOpenUIRuntime("analysis-token", fetcher);
+    const renderer = new OpenUIDOMRenderer(container, soyuzOpenUILibrary, soyuzComponentRenderers, { maxDepth: 8, maxComponents: 100 });
+    runtime.setProgram(parsed.result!);
+    await vi.waitFor(() => expect(runtime.queryManager.isAnyLoading()).toBe(false));
+    renderer.render(runtime.getRoot()!, { store: runtime.store, queryManager: runtime.queryManager, dispatchAction: () => undefined });
+
+    const timeline = container.querySelector("details.analysis-event-timeline") as HTMLDetailsElement;
+    const payload = container.querySelector("details.analysis-event-timeline__payload") as HTMLDetailsElement;
+    expect(timeline.hasAttribute("open")).toBe(false);
+    expect(timeline.querySelector("summary")?.textContent).toContain("1 event");
+    expect(payload.hasAttribute("open")).toBe(false);
+    expect(payload.querySelector("summary")?.textContent).toBe("Event details");
+    expect(payload.textContent).toContain("failureClass: timeout");
 
     renderer.dispose();
     runtime.dispose();
