@@ -7,6 +7,7 @@ import {
 import { fetchJson, HttpError } from "../api.js";
 import { revokeAccessToken } from "../auth-api.js";
 import { renderAuthUi } from "../auth-ui.js";
+import { createSnackBarController } from "../snackbar.js";
 import { OpenUIDOMRenderer, isElementNode, type OpenUIAction } from "../../openui/dom-renderer";
 import {
   OPENUI_MAX_COMPONENTS,
@@ -77,6 +78,7 @@ const jevNotice = requiredElement<HTMLElement>("#analysis-jev-notice");
 const jevOutput = requiredElement<HTMLElement>("#analysis-jev-output");
 const jevFeedback = requiredElement<HTMLElement>("#analysis-jev-feedback");
 const jevFeedbackNotice = requiredElement<HTMLElement>("#analysis-jev-feedback-notice");
+const snackbar = createSnackBarController(requiredElement<HTMLElement>("#snackbar"));
 const jevFeedbackButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-jev-rating]")];
 
 let accessToken: string | null = null;
@@ -396,7 +398,8 @@ async function submitJevFeedback(rating: "helpful" | "not_helpful"): Promise<voi
       }),
       cache: "no-store",
     });
-    jevFeedbackNotice.textContent = "Thanks. Your rating is recorded without saving JEV's answer.";
+    jevFeedbackNotice.textContent = "";
+    snackbar.show("Rating recorded; JEV's answer was not saved.", "success");
   } catch (error) {
     for (const button of jevFeedbackButtons) button.disabled = false;
     jevFeedbackNotice.textContent = error instanceof HttpError && (error.status === 401 || error.status === 403)
