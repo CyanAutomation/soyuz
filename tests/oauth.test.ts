@@ -13,7 +13,7 @@ import {
 import { vi } from "vitest";
 
 describe("Soyuz OAuth policy", () => {
-  it("requires an explicit numeric GitHub user ID allowlist", () => {
+  it("[OAUTH-01] requires an explicit numeric GitHub user ID allowlist", () => {
     expect([...allowedGithubUserIds("123, 456")]).toEqual(["123", "456"]);
     expect([...allowedGithubUserIds(undefined)]).toEqual([]);
     expect([...allowedGithubUserIds("123,not-an-id")]).toEqual([]);
@@ -22,7 +22,7 @@ describe("Soyuz OAuth policy", () => {
     expect(isAllowedGithubUser(789, "123, 456")).toBe(false);
   });
 
-  it("accepts only a canonical HTTPS origin for OAuth callbacks", () => {
+  it("[OAUTH-ORIGIN-01] accepts only a canonical HTTPS origin for OAuth callbacks", () => {
     expect(canonicalPublicOrigin("https://soyuz.example.test")).toBe("https://soyuz.example.test");
     expect(canonicalPublicOrigin("https://soyuz.example.test/")).toBe("https://soyuz.example.test");
     expect(canonicalPublicOrigin("http://soyuz.example.test")).toBeNull();
@@ -30,7 +30,7 @@ describe("Soyuz OAuth policy", () => {
     expect(canonicalPublicOrigin("https://user:pass@soyuz.example.test")).toBeNull();
   });
 
-  it("identifies MCP tool requests that require write scope, including batches", async () => {
+  it("[OAUTH-02] identifies MCP tool requests that require write scope, including batches", async () => {
     const write = new Request("https://soyuz.example.test/mcp", {
       method: "POST",
       headers: { "content-type": "application/json" },
