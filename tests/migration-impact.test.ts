@@ -33,10 +33,13 @@ describe("D1 migration impact reporting", () => {
     expect(summary).toContain("docs/DEPLOYMENT.md");
   });
 
-  it("[DEPLOY-MIGRATION-IMPACT-01] reports clearly when no numbered SQL migrations changed", () => {
-    expect(formatMigrationImpactSummary(["src/db.ts", "migrations/notes.md"])).toContain(
-      "No numbered SQL migrations changed in this pull request.",
-    );
+  it("[DEPLOY-MIGRATION-IMPACT-01] distinguishes no numbered migration changes from a migration update", () => {
+    const summary = formatMigrationImpactSummary(["src/db.ts", "migrations/notes.md"]);
+
+    expect(summary).toContain("# D1 migration impact");
+    expect(summary).toMatch(/no numbered SQL migrations changed/i);
+    expect(summary).toMatch(/preflight.*migration history/i);
+    expect(summary).not.toContain("migrations/notes.md");
   });
 
   it("[DEPLOY-MIGRATION-IMPACT-01] identifies edits and deletions while allowing new migration files", () => {
@@ -53,26 +56,26 @@ describe("D1 migration impact reporting", () => {
     ]);
   });
 
-  it("[DEPLOY-MIGRATION-IMPACT-01] explains that edits and deletions of existing migrations block the PR", () => {
+  it("[DEPLOY-MIGRATION-IMPACT-01] identifies immutable-file edits and tells the author how to resolve them", () => {
     const summary = formatMigrationImpactSummary(
       ["migrations/0002_run_liveness.sql", "migrations/0006_new_feature.sql"],
       ["migrations/0002_run_liveness.sql"],
     );
 
-    expect(summary).toContain("Existing numbered migrations are immutable");
+    expect(summary).toMatch(/existing numbered migrations are immutable/i);
     expect(summary).toContain("migrations/0002_run_liveness.sql");
-    expect(summary).toContain("add a new numbered migration");
-    expect(summary).toContain("until production D1 history includes the new migrations");
+    expect(summary).toMatch(/restore these files and add a new numbered migration/i);
   });
 
-  it("[DEPLOY-MIGRATION-IMPACT-01] does not promise a migration preflight for existing-file-only changes", () => {
+  it("[DEPLOY-MIGRATION-IMPACT-01] explains that existing-file-only changes require correction before merge", () => {
     const summary = formatMigrationImpactSummary(
       ["migrations/0002_run_liveness.sql"],
       ["migrations/0002_run_liveness.sql"],
     );
 
-    expect(summary).toContain("No new migrations were added");
-    expect(summary).toContain("must be corrected before merge");
-    expect(summary).not.toContain("will stop at the Production D1 migration preflight");
+    expect(summary).toMatch(/no new migrations were added/i);
+    expect(summary).toMatch(/existing SQL files/i);
+    expect(summary).toMatch(/must be corrected before merge/i);
+    expect(summary).not.toMatch(/will stop at the production D1 migration preflight/i);
   });
 });
