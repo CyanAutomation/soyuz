@@ -1,6 +1,7 @@
 import { fetchJson, HttpError } from "./api.js";
 import { revokeAccessToken } from "./auth-api.js";
 import { renderAuthUi } from "./auth-ui.js";
+import { createSnackBarController } from "./snackbar.js";
 import {
   formatEventLabel,
   formatEventPayloadValue,
@@ -87,6 +88,7 @@ const refreshButton = requiredElement<HTMLButtonElement>("#refresh");
 const statusFilter = requiredElement<HTMLSelectElement>("#status-filter");
 const loadMoreButton = requiredElement<HTMLButtonElement>("#load-more");
 const updatedLabel = requiredElement<HTMLElement>("#updated");
+const snackbar = createSnackBarController(requiredElement<HTMLElement>("#snackbar"));
 const oauthKeys = ["state", "verifier", "clientId", "redirectUri"] as const;
 const RUN_REFRESH_INTERVAL_MS = 30_000;
 let accessToken: string | null = null;
@@ -360,7 +362,7 @@ function renderRun(run: DashboardRunSummary): HTMLElement {
       return;
     }
     void clipboard.writeText(run.runId).then(
-      () => { copyIdButton.textContent = "Copied"; },
+      () => { snackbar.show("Technical run ID copied.", "success"); },
       () => { copyIdButton.textContent = "Copy failed"; },
     );
   });
@@ -627,6 +629,7 @@ async function downloadArtifact(runId: string, artifact: DashboardArtifact): Pro
     link.download = artifact.name;
     link.click();
     URL.revokeObjectURL(objectUrl);
+    snackbar.show("File download started.", "success");
   } catch {
     if (token === accessToken) setNotice("We couldn't download that file. It may have expired; please refresh and try again.", "danger");
   }

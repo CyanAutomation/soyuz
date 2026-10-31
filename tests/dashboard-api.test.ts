@@ -209,7 +209,12 @@ describe("dashboard application flows", () => {
     expect(copyIdButton.textContent).toBe("Copy ID");
     copyIdButton.click();
     await vi.waitFor(() => expect(writeClipboard).toHaveBeenCalledWith(runId));
-    expect(copyIdButton.textContent).toBe("Copied");
+    await vi.waitFor(() => expect(nodeAt(nodes, "#snackbar")).toMatchObject({
+      hidden: false,
+      textContent: "Technical run ID copied.",
+      className: "snackbar snackbar--success",
+    }));
+    expect(copyIdButton.textContent).toBe("Copy ID");
   });
 
   it("[DASHBOARD-RUN-EVENTS-01] loads run details and older event pages when expanded", async () => {
@@ -272,6 +277,7 @@ async function mountDashboard() {
     ["#status-filter", createNode()],
     ["#load-more", createNode()],
     ["#updated", createNode()],
+    ["#snackbar", createNode()],
   ]);
   const sessionValues = new Map([
     ["soyuz.dashboard.state", "state-value"],
