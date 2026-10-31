@@ -139,7 +139,7 @@ function readMockRequest(input: string | URL | Request, init: RequestInit): Mock
 }
 
 describe("production Soyuz smoke check", () => {
-  it("validates CLI arguments and returns the corresponding exit code", async () => {
+  it("[DEPLOY-SMOKE-CLI-01] validates CLI arguments and returns the corresponding exit code", async () => {
     const writeError = vi.fn();
     const run = vi.fn(async () => ({ status: "preflight_passed" }));
 
@@ -154,7 +154,7 @@ describe("production Soyuz smoke check", () => {
     expect(writeError).toHaveBeenCalledWith("Usage: node scripts/soyuz-production-smoke.ts [--run]");
   });
 
-  it("reports bounded and unexpected CLI failures with a failing exit code", async () => {
+  it("[DEPLOY-SMOKE-CLI-01] reports bounded and unexpected CLI failures with a failing exit code", async () => {
     const writeError = vi.fn();
 
     await expect(runSmokeCli([], {

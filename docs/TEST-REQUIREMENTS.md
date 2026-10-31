@@ -32,6 +32,7 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `OAUTH-07` | Dashboard run-list summaries include operational health and last-heartbeat fields. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
 | `OAUTH-01` | Dashboard data is available only to an allowlisted GitHub user. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints); [deployment: OAuth configuration](DEPLOYMENT.md#one-time-cloudflare-bootstrap) |
 | `OAUTH-02` | Dashboard endpoints are read-only except the allowlisted OpenUI generation, JEV decision, and JEV feedback POSTs, which require an authenticated `soyuz:read` token; OAuth write scope is required for MCP mutations. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints); [MCP authentication](MCP.md#authentication-and-security-boundary); [OpenUI run analysis](OPENUI-ANALYSIS.md) |
+| `OAUTH-ORIGIN-01` | The configured public OAuth origin is accepted only as a canonical HTTPS origin without a path or embedded credentials. | [Deployment: OAuth configuration](DEPLOYMENT.md) |
 | `OAUTH-03` | Consent content is escaped, non-cacheable, non-framable, and approval is bound to the same-origin browser request. | [Deployment: OAuth consent security](DEPLOYMENT.md#oauth-consent-security) |
 | `OAUTH-04` | Dashboard run details and event pages expose sanitized data to the allowlisted user. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |
 | `OPENUI-CORE-01` | The registered component library generates its prompt, and Core parsing rejects unsupported components, tools, invalid props, unresolved references, and fabricated run-data literals. | [OpenUI run analysis](OPENUI-ANALYSIS.md#component-and-tool-registration) |
@@ -147,6 +148,7 @@ These tests protect implementation helpers and direct callers, but they do not r
 | `OAUTH-REVOKE-FORM-01` | Dashboard revocation submits the access token and public client ID to the provider endpoint. |
 | `UUID-VALIDATION-01` | The shared UUID validator accepts RFC UUID versions 1 through 8 with the RFC variant and rejects malformed values. | [Transport contract: run request](CONTRACT.md#run-request) |
 | `DEPLOY-MIGRATION-IMPACT-01` | The pull request migration report identifies numbered changes and distinguishes new migrations, immutable-file edits, and no-change cases. | [Deployment: GitHub Actions deployment](DEPLOYMENT.md#github-actions-deployment) |
+| `DEPLOY-SMOKE-CLI-01` | The production smoke CLI rejects invalid arguments, returns an exit code for the result, and reports failures without exposing unexpected upstream details. | [Authorized live acceptance check](DEPLOYMENT.md#authorized-live-acceptance-check) |
 | `DASHBOARD-API-ENVELOPE-01` | The dashboard fetch helper unwraps a successful API `data` envelope. |
 | `DASHBOARD-API-ERROR-01` | Non-success dashboard responses preserve their HTTP error and do not decode an error body as JSON. |
 | `OAUTH-CONSENT-COOKIE-01` | A malformed cookie entry naming the consent binding is not duplicated. |
