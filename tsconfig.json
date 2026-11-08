@@ -20,6 +20,8 @@
     "tests/migration-impact.test.ts",
     "tests/soyuz-production-smoke.test.ts",
     "tests/migration-history.test.ts",
-    "tests/verify-production-database.test.ts"
+    "tests/verify-production-database.test.ts",
+    "tests/run-list.test.ts",
+    "tests/dashboard-ui.test.ts"
   ]
 }

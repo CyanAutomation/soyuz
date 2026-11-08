@@ -8,6 +8,7 @@ import { fetchJson, HttpError } from "../api.js";
 import { revokeAccessToken } from "../auth-api.js";
 import { renderAuthUi } from "../auth-ui.js";
 import { createSnackBarController } from "../snackbar.js";
+import { setButtonBusy, setNotice as renderNotice } from "../ui/components.js";
 import { OpenUIDOMRenderer, isElementNode, type OpenUIAction } from "../../openui/dom-renderer";
 import {
   OPENUI_MAX_COMPONENTS,
@@ -309,7 +310,7 @@ function renderJevRuntime(): void {
   if (snapshot.__openui_errors.length > 0) {
     hasRunJev = false;
     isRunningJev = false;
-    jevButton.disabled = false;
+    setButtonBusy(jevButton, false);
     jevProfile.disabled = false;
     jevRunId.disabled = false;
     setJevNotice("JEV could not validate a response for this run. No action was taken.", "warning");
@@ -319,7 +320,7 @@ function renderJevRuntime(): void {
   } else {
     hasRunJev = false;
     isRunningJev = false;
-    jevButton.disabled = false;
+    setButtonBusy(jevButton, false);
     jevProfile.disabled = false;
     jevRunId.disabled = false;
     setJevNotice("Advisory result received. Review the run record and confirm any consequential decision yourself.", "success");
@@ -350,7 +351,7 @@ async function runJevAssessment(): Promise<void> {
 
   isRunningJev = true;
   hasRunJev = true;
-  jevButton.disabled = true;
+  setButtonBusy(jevButton, true, "Assessing run…");
   jevProfile.disabled = true;
   jevRunId.disabled = true;
   jevOutput.hidden = false;
@@ -387,6 +388,8 @@ function createJevDecisionProgram(profileId: JevProfileId, runId: string): strin
 async function submitJevFeedback(rating: "helpful" | "not_helpful"): Promise<void> {
   if (!accessToken || !jevProfile.value || !jevRunId.value || jevFeedbackButtons.every((button) => button.disabled)) return;
   for (const button of jevFeedbackButtons) button.disabled = true;
+  const activeButton = jevFeedbackButtons.find((button) => button.dataset.jevRating === rating);
+  if (activeButton) setButtonBusy(activeButton, true, "Saving rating…");
   try {
     await fetchJson<{ data: { saved: boolean } }>("/dashboard/api/analysis/feedback", {
       method: "POST",
@@ -398,10 +401,14 @@ async function submitJevFeedback(rating: "helpful" | "not_helpful"): Promise<voi
       }),
       cache: "no-store",
     });
+    if (activeButton) {
+      setButtonBusy(activeButton, false);
+      activeButton.disabled = true;
+    }
     jevFeedbackNotice.textContent = "";
     snackbar.show("Rating recorded; JEV's answer was not saved.", "success");
   } catch (error) {
-    for (const button of jevFeedbackButtons) button.disabled = false;
+    for (const button of jevFeedbackButtons) setButtonBusy(button, false);
     jevFeedbackNotice.textContent = error instanceof HttpError && (error.status === 401 || error.status === 403)
       ? "Sign in again to record feedback."
       : "Feedback could not be saved. Please try again.";
@@ -413,9 +420,7 @@ function isJevProfileId(value: string): value is JevProfileId {
 }
 
 function setJevNotice(message: string, tone: "info" | "success" | "warning"): void {
-  jevNotice.hidden = message.length === 0;
-  jevNotice.className = `notice notice--${tone}`;
-  jevNotice.textContent = message;
+  renderNotice(jevNotice, message, tone);
 }
 
 function clearJevAssessment(): void {
@@ -440,8 +445,13 @@ async function generateAnalysis(mode: AnalysisMode): Promise<void> {
     return;
   }
   isGenerating = true;
-  generateButton.disabled = true;
-  refineButton.disabled = true;
+  if (mode === "edit") {
+    generateButton.disabled = true;
+    setButtonBusy(refineButton, true, "Refining interface…");
+  } else {
+    setButtonBusy(generateButton, true, "Generating interface…");
+    refineButton.disabled = true;
+  }
   setNotice(mode === "edit" ? "Refining the current interface…" : "Generating an interface…", "info");
   try {
     const patch = await streamGeneration(prompt, mode, mode === "edit" ? currentProgram : undefined);
@@ -462,8 +472,8 @@ async function generateAnalysis(mode: AnalysisMode): Promise<void> {
     }
   } finally {
     isGenerating = false;
-    generateButton.disabled = false;
-    refineButton.disabled = false;
+    setButtonBusy(generateButton, false);
+    setButtonBusy(refineButton, false);
   }
 }
 
@@ -627,19 +637,18 @@ async function apiJson<T>(path: string): Promise<T> {
 }
 
 function setNotice(message: string, tone: "info" | "success" | "warning" | "danger"): void {
-  notice.className = `notice notice--${tone}`;
-  notice.textContent = message;
+  renderNotice(notice, message, tone);
 }
 
 function setDataNotice(message: string, tone: "info" | "empty" | "warning"): void {
-  dataNotice.hidden = message.length === 0;
-  dataNotice.className = `notice notice--${tone}`;
-  dataNotice.textContent = message;
+  renderNotice(dataNotice, message, tone);
 }
 
 function clearAnalysisOutput(): void {
   currentProgram = "";
   question.value = "";
+  setButtonBusy(generateButton, false);
+  setButtonBusy(refineButton, false);
   refineButton.hidden = true;
   renderer?.clear();
   jevRenderer?.clear();
@@ -649,6 +658,7 @@ function clearAnalysisOutput(): void {
   jevFeedback.hidden = true;
   jevFeedbackNotice.textContent = "";
   jevNotice.hidden = true;
+  setButtonBusy(jevButton, false);
   isRunningJev = false;
   hasRunJev = false;
   jevProfile.disabled = false;
