@@ -10,6 +10,8 @@ export default defineConfig({
       "tests/openui-generation.test.ts",
       "tests/jev.test.ts",
       "tests/jev-selection.test.ts",
+      "tests/run-list.test.ts",
+      "tests/dashboard-ui.test.ts",
     ],
   },
 });

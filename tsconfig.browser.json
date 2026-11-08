@@ -14,7 +14,9 @@
     "dashboard/**/*.ts",
     "openui/**/*.ts",
     "tests/dashboard-api.test.ts",
-    "tests/openui.test.ts"
+    "tests/openui.test.ts",
+    "tests/run-list.test.ts",
+    "tests/dashboard-ui.test.ts"
   ],
   "exclude": []
 }
