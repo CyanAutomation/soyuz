@@ -27,8 +27,9 @@ interface FakeNode {
   setAttribute(name: string, value: string): void;
   removeAttribute(name: string): void;
   children: unknown[];
-  listeners: Record<string, (event?: Event) => void>;
+  listeners: Record<string, Array<(event?: Event) => void>>;
   addEventListener(event: string, callback: (event?: Event) => void): void;
+  dispatch(event: string, detail?: Event): void;
   append(...children: unknown[]): void;
   replaceChildren(...children: unknown[]): void;
   click(): void;
@@ -46,6 +47,19 @@ interface RecordedRequest {
 }
 
 describe("dashboard API responses", () => {
+  it("[DASHBOARD-TEST-DOM-01] dispatches every listener registered for the same event", () => {
+    const node = createNode("BUTTON");
+    const firstListener = vi.fn();
+    const secondListener = vi.fn();
+
+    node.addEventListener("click", firstListener);
+    node.addEventListener("click", secondListener);
+    node.click();
+
+    expect(firstListener).toHaveBeenCalledOnce();
+    expect(secondListener).toHaveBeenCalledOnce();
+  });
+
   it("[DASHBOARD-RUN-LIST-01] encodes status and pagination cursors in run-list requests", () => {
     expect(buildRunListPath()).toBe("/dashboard/api/runs?limit=30");
     expect(buildRunListPath({ status: "running" })).toBe("/dashboard/api/runs?limit=30&status=running");
@@ -176,7 +190,7 @@ describe("dashboard application flows", () => {
 
     expect(nodeAt(nodes, "#account")).toMatchObject({ hidden: false, textContent: "Signed in as @current-user" });
     expect(nodeAt(nodes, "#runs").children).toHaveLength(1);
-    nodeAt(nodes, "#connect").listeners.click?.();
+    nodeAt(nodes, "#connect").dispatch("click");
 
     await vi.waitFor(() => expect(nodeAt(nodes, "#notice").textContent).toContain("couldn't confirm that your token was revoked"));
     expect(nodeAt(nodes, "#connect")).toMatchObject({ textContent: "Sign in with GitHub", disabled: false });
@@ -224,7 +238,7 @@ describe("dashboard application flows", () => {
     const { nodes, runId, requests } = await mountDashboard();
     const details = findNodeBySummary(nodeAt(nodes, "#runs"), "View outcome, activity, and files");
     details.open = true;
-    details.listeners.toggle?.();
+    details.dispatch("toggle");
 
     await vi.waitFor(() => expect(requests.some(({ path }) => path === `/dashboard/api/runs/${runId}/events?limit=100`)).toBe(true));
     await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("https://github.com/example/project/pull/7"));
@@ -257,22 +271,22 @@ describe("dashboard application flows", () => {
     await vi.waitFor(() => expect(requests.filter(({ path }) => path === "/dashboard/api/runs?limit=30")).toHaveLength(2));
     await vi.waitFor(() => expect(nodeAt(nodes, "#load-more").disabled).toBe(false));
 
-    nodeAt(nodes, "#load-more").listeners.click?.();
+    nodeAt(nodes, "#load-more").dispatch("click");
     await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=30&cursor=cursor%2B%2F1")).toBe(true));
     await vi.waitFor(() => expect(nodeAt(nodes, "#runs").children).toHaveLength(2));
     await vi.waitFor(() => expect(nodeAt(nodes, "#load-more").hidden).toBe(true));
 
     nodeAt(nodes, "#run-search").value = "other-project";
-    nodeAt(nodes, "#run-search").listeners.input?.();
+    nodeAt(nodes, "#run-search").dispatch("input");
     expect(nodeAt(nodes, "#runs").children).toHaveLength(1);
     expect(flattenText(nodeAt(nodes, "#runs"))).toContain("example/other-project");
     expect(nodeAt(nodes, "#run-count").textContent).toBe("Showing 1 of 2 loaded runs");
 
     nodeAt(nodes, "#run-search").value = "";
-    nodeAt(nodes, "#run-search").listeners.input?.();
+    nodeAt(nodes, "#run-search").dispatch("input");
 
     nodeAt(nodes, "#status-filter").value = "running";
-    nodeAt(nodes, "#status-filter").listeners.change?.();
+    nodeAt(nodes, "#status-filter").dispatch("change");
     await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=30&status=running")).toBe(true));
     await vi.waitFor(() => expect(nodeAt(nodes, "#runs").children).toHaveLength(1));
   });
@@ -425,11 +439,16 @@ function createNode(tagName = "DIV"): FakeNode {
     removeAttribute(name: string) { delete node.attributes[name]; },
     attributes: {} as Record<string, string>,
     children: [] as unknown[],
-    listeners: {} as Record<string, (event?: Event) => void>,
-    addEventListener(event: string, callback: (event?: Event) => void) { this.listeners[event] = callback; },
+    listeners: {} as Record<string, Array<(event?: Event) => void>>,
+    addEventListener(event: string, callback: (event?: Event) => void) {
+      (this.listeners[event] ??= []).push(callback);
+    },
+    dispatch(event: string, detail?: Event) {
+      for (const callback of [...(this.listeners[event] ?? [])]) callback(detail);
+    },
     append(...children: unknown[]) { this.children.push(...children); },
     replaceChildren(...children: unknown[]) { this.children = [...children]; },
-    click() { this.listeners.click?.(); },
+    click() { this.dispatch("click"); },
   };
   return node;
 }
