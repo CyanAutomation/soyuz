@@ -13,6 +13,7 @@
     "typecheck": "wrangler types && tsc --noEmit && tsc -p tsconfig.browser.json && tsc -p tsconfig.node.json",
     "test": "vitest run",
     "test:kaseki": "vitest run tests/kaseki-protocol.test.ts",
+    "test:cross-worker": "node --test scripts/senku-cross-worker.test.ts",
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "cf:types": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply soyuz-runs --local",

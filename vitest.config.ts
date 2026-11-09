@@ -11,9 +11,15 @@ export default defineConfig({
       wrangler: { configPath: "./wrangler.jsonc" },
       miniflare: {
         kvNamespaces: ["OAUTH_KV"],
+          serviceBindings: {
+            SENKU: async () => new Response(JSON.stringify({
+              error: { code: "PROVIDER_UNAVAILABLE", message: "Senku is not part of this test fixture." },
+            }), { status: 503, headers: { "content-type": "application/json" } }),
+          },
         bindings: {
           CLIENT_API_TOKEN: "client-test-token-value-long-enough",
           WORKER_API_TOKEN: "worker-test-token-value-long-enough",
+            SENKU_SOYUZ_API_TOKEN: "senku-soyuz-test-token-value-long-enough",
           TEST_MIGRATIONS: await readD1Migrations(path.join(projectRoot, "migrations")),
         },
       },
