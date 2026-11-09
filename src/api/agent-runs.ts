@@ -184,7 +184,7 @@ function agentRunListItem(row: RunRow): Record<string, unknown> {
 
 function agentRunDetail(row: RunRow): Record<string, unknown> {
   const result = parseResult(row);
-  const summary = typeof result?.summary === "string" ? result.summary : null;
+  const summary = typeof result?.summary === "string" ? result.summary.slice(0, 2_000) : null;
   const publishedUrl = typeof result?.publishedUrl === "string" ? safeUrlForDisplay(result.publishedUrl) : null;
   const changedFileCount = typeof result?.changedFileCount === "number" ? result.changedFileCount : null;
   return {

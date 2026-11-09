@@ -149,6 +149,13 @@ function handleUtcpDiscovery(request: Request, env: Env, requestId: string): Res
 }
 
 async function handleAgentRequest(request: Request, env: Env, url: URL, requestId: string): Promise<Response> {
+  const workerTokenCollision = isBearerTokenConfigured(env.WORKER_API_TOKEN)
+    && env.WORKER_API_TOKEN === env.CLIENT_API_TOKEN;
+  const kasekiTokenCollision = isBearerTokenConfigured(env.KASEKI_SUBMISSION_API_TOKEN)
+    && env.KASEKI_SUBMISSION_API_TOKEN === env.CLIENT_API_TOKEN;
+  if (workerTokenCollision || kasekiTokenCollision) {
+    return errorResponse(requestId, 503, "AUTHENTICATION_UNAVAILABLE", "Client, worker, and Kaseki submission authentication must use distinct credentials.");
+  }
   if (!isBearerTokenConfigured(env.CLIENT_API_TOKEN)) {
     return errorResponse(requestId, 503, "AUTHENTICATION_UNAVAILABLE", "Client API-key authentication is not configured. Contact the service administrator.");
   }

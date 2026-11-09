@@ -96,7 +96,7 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `LIFECYCLE-RACE-01` | Competing terminal outcomes commit only one terminal event. | [Architecture: run lifecycle](ARCHITECTURE.md#run-lifecycle) |
 | `UTCP-DISCOVERY-01` | `/utcp` returns a valid UTCP 1.0.0 manual with exactly five tools, configured absolute URLs, JSON schemas, HTTP mappings, and no credentials. | [UTCP discovery](UTCP.md#discovery-and-urls) |
 | `UTCP-INTEROP-01` | The official TypeScript client discovers the manual and invokes a read and a state-changing tool over its HTTP plugin. | [UTCP TypeScript client example](UTCP.md#tested-typescript-client-example) |
-| `UTCP-AUTH-01` | Agent routes require the client bearer credential and reject missing, invalid, worker, Kaseki, and OAuth credentials; `/mcp` is unavailable. | [UTCP authentication](UTCP.md#authentication) |
+| `UTCP-AUTH-01` | Agent routes require the client bearer credential, reject missing, invalid, worker, Kaseki, and OAuth credentials, report current client-token collisions as unavailable, and leave `/mcp` unavailable. | [UTCP authentication](UTCP.md#authentication) |
 | `UTCP-CREATE-01` | Agent creation uses shared admission, defaults publication to `none`, and preserves explicit publication settings. | [UTCP tool inventory](UTCP.md#tool-inventory) |
 | `UTCP-IDEMPOTENCY-01` | Equivalent create requests replay, conflicting key reuse fails, and uncertain Queue retries preserve the existing admission response contract. | [UTCP run lifecycle and idempotency](UTCP.md#run-lifecycle-and-idempotency) |
 | `UTCP-READ-01` | Agent run reads are bounded, cursor-paginated, sanitized, and restricted to retained history. | [UTCP data boundary](UTCP.md#data-boundary) |
