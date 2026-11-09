@@ -1,15 +1,15 @@
 import { hasBearerToken, isBearerTokenConfigured } from "./auth/bearer";
-import { authorizeMcpClient } from "./auth/mcp-client";
-import { getSoyuzOAuthProvider, isOAuthConfigured } from "./auth/oauth";
+import { getSoyuzOAuthProvider } from "./auth/oauth";
+import { handleAgentRuns } from "./api/agent-runs";
 import { handleClientRuns } from "./api/runs";
 import { handleClientArtifacts, purgeExpiredArtifacts } from "./api/artifacts";
 import { handleWorkerArtifacts } from "./api/worker-artifacts";
-import { ApiError, errorResponse, jsonResponse, rateLimitedResponse, requestIdFor, requestWithBoundedBody } from "./api/http";
+import { errorResponse, jsonResponse, rateLimitedResponse, requestIdFor } from "./api/http";
 import { handleWorkerCallbacks } from "./api/workers";
 import { purgeExpiredRunRequests, purgeOldRuns } from "./api/retention";
 import type { Env } from "./env";
 import { DEFAULT_RUN_ORIGIN, type RunOrigin } from "./application/runs";
-import { createSoyuzMcpHandler } from "./mcp/server";
+import { createUtcpManual } from "./utcp/manual";
 import { reconcileAdmissions, reconcileStalledRuns } from "./queue/reconcile";
 
 export async function handleRequest(request: Request, env: Env, context?: ExecutionContext): Promise<Response> {
@@ -19,8 +19,10 @@ export async function handleRequest(request: Request, env: Env, context?: Execut
   switch (requestRoute(url.pathname, request.method)) {
     case "health":
       return handleHealth(requestId, env);
-    case "mcp":
-      return handleMcpRequest(request, env, requestId, executionContext);
+    case "utcp":
+      return handleUtcpDiscovery(request, env, requestId);
+    case "agent-api":
+      return handleAgentRequest(request, env, url, requestId);
     case "dashboard-redirect":
       return Response.redirect(new URL("/dashboard/", url), 308);
     case "dashboard-api":
@@ -38,11 +40,12 @@ export async function handleRequest(request: Request, env: Env, context?: Execut
   }
 }
 
-type RequestRoute = "health" | "mcp" | "dashboard-redirect" | "dashboard-api" | "dashboard-assets" | "oauth" | "worker-api" | "client-api" | "not-found";
+type RequestRoute = "health" | "utcp" | "agent-api" | "dashboard-redirect" | "dashboard-api" | "dashboard-assets" | "oauth" | "worker-api" | "client-api" | "not-found";
 
 function requestRoute(pathname: string, method: string): RequestRoute {
   if (isHealthRoute(pathname, method)) return "health";
-  if (isMcpRoute(pathname)) return "mcp";
+  if (pathname === "/utcp" && method === "GET") return "utcp";
+  if (isAgentApiRoute(pathname)) return "agent-api";
   if (pathname === "/dashboard") return "dashboard-redirect";
   if (isDashboardApiRoute(pathname)) return "dashboard-api";
   if (isDashboardAssetRoute(pathname)) return "dashboard-assets";
@@ -56,8 +59,8 @@ function isHealthRoute(pathname: string, method: string): boolean {
   return pathname === "/health" && method === "GET";
 }
 
-function isMcpRoute(pathname: string): boolean {
-  return pathname === "/mcp" || pathname.startsWith("/mcp/");
+function isAgentApiRoute(pathname: string): boolean {
+  return pathname === "/v1/agent/runs" || pathname.startsWith("/v1/agent/runs/");
 }
 
 function isDashboardApiRoute(pathname: string): boolean {
@@ -137,26 +140,38 @@ async function handleDashboardAssets(request: Request, env: Env, requestId: stri
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-async function handleMcpRequest(
-  request: Request,
-  env: Env,
-  requestId: string,
-  context: ExecutionContext,
-): Promise<Response> {
-  if (isOAuthConfigured(env) && !(await hasBearerToken(request, env.CLIENT_API_TOKEN, {
-    previousToken: env.CLIENT_API_TOKEN_PREVIOUS,
-    previousTokenExpiresAt: env.CLIENT_API_TOKEN_PREVIOUS_EXPIRES_AT,
-  }))) {
-    return getSoyuzOAuthProvider(env)!.fetch(request, env, context);
+function handleUtcpDiscovery(request: Request, env: Env, requestId: string): Response {
+  const manual = createUtcpManual(env);
+  if (!manual) {
+    return errorResponse(requestId, 503, "UTCP_DISCOVERY_UNAVAILABLE", "Soyuz UTCP discovery is not configured with a valid public origin.");
   }
-  const authFailure = await authorizeMcpClient(request, env, requestId);
-  if (authFailure) return authFailure;
-  try {
-    return createSoyuzMcpHandler(env).fetch(await requestWithBoundedBody(request));
-  } catch (error) {
-    if (error instanceof ApiError) return error.toResponse(requestId);
-    throw error;
+  return jsonResponse(200, manual);
+}
+
+async function handleAgentRequest(request: Request, env: Env, url: URL, requestId: string): Promise<Response> {
+  if (!isBearerTokenConfigured(env.CLIENT_API_TOKEN)) {
+    return errorResponse(requestId, 503, "AUTHENTICATION_UNAVAILABLE", "Client API-key authentication is not configured. Contact the service administrator.");
   }
+
+  const [isClientToken, isWorkerToken, isKasekiToken] = await Promise.all([
+    hasBearerToken(request, env.CLIENT_API_TOKEN, {
+      previousToken: env.CLIENT_API_TOKEN_PREVIOUS,
+      previousTokenExpiresAt: env.CLIENT_API_TOKEN_PREVIOUS_EXPIRES_AT,
+    }),
+    hasBearerToken(request, env.WORKER_API_TOKEN, {
+      previousToken: env.WORKER_API_TOKEN_PREVIOUS,
+      previousTokenExpiresAt: env.WORKER_API_TOKEN_PREVIOUS_EXPIRES_AT,
+    }),
+    hasBearerToken(request, env.KASEKI_SUBMISSION_API_TOKEN, {
+      previousToken: env.KASEKI_SUBMISSION_API_TOKEN_PREVIOUS,
+      previousTokenExpiresAt: env.KASEKI_SUBMISSION_API_TOKEN_PREVIOUS_EXPIRES_AT,
+    }),
+  ]);
+  if (!isClientToken || isWorkerToken || isKasekiToken) {
+    return errorResponse(requestId, 401, "UNAUTHORIZED", "Client API key is missing or invalid. Check that you are using the current client key.");
+  }
+  return await handleAgentRuns(request, env, url, requestId)
+    ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
 }
 
 async function handleDashboardApi(

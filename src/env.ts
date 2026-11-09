@@ -24,6 +24,8 @@ export interface Env {
   ASSETS?: Fetcher;
   OAUTH_KV?: KVNamespace;
   OAUTH_PROVIDER?: OAuthHelpers;
+  /** Must be "development" to publish an explicitly configured loopback UTCP origin. */
+  SOYUZ_ENVIRONMENT?: "development" | "production";
   SOYUZ_PUBLIC_URL?: string;
   GITHUB_OAUTH_CLIENT_ID?: string;
   GITHUB_OAUTH_CLIENT_SECRET?: string;
