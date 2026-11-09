@@ -77,6 +77,8 @@ Client and worker keys are static bearer secrets; Soyuz does not assign them an 
 
 The dashboard continues to use its GitHub OAuth login, user-ID allowlist, sessions, and read-only analysis access. Cloudflare Access migration remains a separate future workstream.
 
+The dashboard's shared design tokens, page headers, toolbars, cards, badges, and DOM helpers are documented in the [dashboard UI foundation](docs/DASHBOARD-UI.md).
+
 ## Provisioning Cloudflare resources
 
 Create a D1 database and Queue, then copy the D1 database ID into `wrangler.jsonc`:

@@ -1,0 +1,87 @@
+/* Shared dashboard design tokens. Keep application-specific accents in Soyuz. */
+:root {
+  color-scheme: light dark;
+
+  --color-page: #f5f7fa;
+  --color-surface: #fff;
+  --color-surface-muted: #f0f3f7;
+  --color-text: #17202a;
+  --color-muted: #53657a;
+  --color-border: #dde4ed;
+  --color-border-strong: #9baabd;
+  --color-primary: #1b4e8a;
+  --color-primary-hover: #123d70;
+  --color-primary-soft: #e8f1fc;
+  --color-primary-ink: #143f70;
+  --color-neutral-soft: #edf2f7;
+  --color-neutral-ink: #35495e;
+  --color-warning-soft: #fff0e5;
+  --color-warning-ink: #713400;
+  --color-success-soft: #e8f5ed;
+  --color-success-ink: #1d6540;
+  --color-danger-soft: #ffebeb;
+  --color-danger-ink: #8b2525;
+  --color-focus: #78a9e0;
+  --color-on-primary: #fff;
+  --color-info-border: #c9d9ed;
+  --color-success-border: #b8d8c4;
+  --color-warning-border: #f0c79f;
+  --color-danger-border: #e7baba;
+  --color-toast: #17202a;
+  --color-toast-text: #fff;
+  --color-toast-success: #174b32;
+  --color-toast-warning: #713400;
+  --color-toast-danger: #702020;
+
+  --space-1: .25rem;
+  --space-2: .5rem;
+  --space-3: .75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+
+  --radius-control: .6rem;
+  --radius-card: .85rem;
+  --radius-large: 1rem;
+  --radius-pill: 999px;
+  --shadow-card: 0 2px 8px rgb(23 32 42 / 5%);
+  --shadow-dialog: 0 12px 36px rgb(23 32 42 / 7%);
+
+  --font-family-ui: system-ui, sans-serif;
+  --font-size-body: 16px;
+  --line-height-body: 1.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-page: #111820;
+    --color-surface: #1b2530;
+    --color-surface-muted: #253241;
+    --color-text: #f0f4f8;
+    --color-muted: #b0bdca;
+    --color-border: #344454;
+    --color-border-strong: #637588;
+    --color-primary: #8ab9f0;
+    --color-primary-hover: #a6cafa;
+    --color-primary-soft: #20364d;
+    --color-primary-ink: #c6ddfa;
+    --color-neutral-soft: #2b3a49;
+    --color-neutral-ink: #d4deea;
+    --color-warning-soft: #4a321e;
+    --color-warning-ink: #ffd2a3;
+    --color-success-soft: #1e3b2b;
+    --color-success-ink: #afe0be;
+    --color-danger-soft: #442729;
+    --color-danger-ink: #ffb9bc;
+    --color-focus: #93c4ff;
+    --color-on-primary: #111820;
+    --color-info-border: #36516b;
+    --color-success-border: #3d674b;
+    --color-warning-border: #77542f;
+    --color-danger-border: #754247;
+    --shadow-card: 0 2px 8px rgb(0 0 0 / 18%);
+    --shadow-dialog: 0 12px 36px rgb(0 0 0 / 30%);
+  }
+}
