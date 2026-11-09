@@ -9,6 +9,8 @@ flowchart TD
     Analysis -->|bounded approved GET queries| DashboardApi[Dashboard read API]
     Analysis -->|read-scope authenticated POST| Generation[Analysis generation adapter]
     Generation -->|optional OpenAI-compatible streaming| Provider[Configured model provider]
+    Analysis -->|bounded profile request over Service Binding| Senku[Senku decision service]
+    Senku -->|fixed JEV provider request| Provider
     AI[UTCP clients] -->|GET /utcp| Manual[UTCP discovery manual]
     AI -->|native HTTPS, client bearer token| AgentApi[Sanitized agent HTTP API]
     REST --> App[Shared run application operations]
@@ -29,7 +31,7 @@ flowchart TD
 
 The REST and agent HTTP adapters call the same run application operations. UTCP discovery describes those native HTTP endpoints; tool invocations do not pass through a protocol server or internal forwarding layer. The agent adapter applies its own restricted input contract and sanitized output projections while sharing validation, idempotency, D1, Queue, read, event, and cancellation paths.
 
-The OpenUI analysis page is a separate optional presentation over the existing dashboard read APIs. Its authenticated dashboard POSTs generate OpenUI Lang, request typed JEV answers, and record user ratings of those answers. JEV use remains explicit and cannot change run state. The JEV adapter is reusable by server callers that provide bounded state and server-owned questions. See [OpenUI run analysis](OPENUI-ANALYSIS.md) for profile data boundaries and the advisory display.
+The OpenUI analysis page is a separate optional presentation over the existing dashboard read APIs. Its authenticated dashboard POSTs generate OpenUI Lang, request typed JEV answers from Senku through a Service Binding, and record user ratings of those answers. JEV use remains explicit and cannot change run state. Soyuz builds bounded profile input; Senku owns questions and provider inference. See [OpenUI run analysis](OPENUI-ANALYSIS.md) and [Senku integration](SENKU-INTEGRATION.md) for data boundaries and rollout.
 
 ## Ownership boundary
 

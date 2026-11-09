@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { ToolSpec } from "@openuidev/lang-core";
 import { RUN_STATUSES } from "../src/domain/run-state-machine";
-import { JevDecisionResultSchema } from "../src/jev/contracts";
+import { JevDecisionResultSchema } from "../src/jev/response-contracts";
 import { JevProfileIdSchema } from "../src/jev/profile-ids";
 
 const runId = z.string().uuid();

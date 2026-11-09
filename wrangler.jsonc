@@ -12,9 +12,14 @@
   "vars": {
     "SOYUZ_ENVIRONMENT": "production",
     "SOYUZ_PUBLIC_URL": "https://soyuz.scheimann.workers.dev",
-    "SOYUZ_OAUTH_ALLOWED_GITHUB_IDS": "68898852",
-    "JEV_MODEL": "~typesafe/jev-latest"
+    "SOYUZ_OAUTH_ALLOWED_GITHUB_IDS": "68898852"
   },
+  "services": [
+    {
+      "binding": "SENKU",
+      "service": "senku"
+    }
+  ],
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",
@@ -58,6 +63,6 @@
     "crons": ["*/1 * * * *", "0 3 * * *"]
   },
   "secrets": {
-    "required": ["CLIENT_API_TOKEN", "WORKER_API_TOKEN"]
+    "required": ["CLIENT_API_TOKEN", "WORKER_API_TOKEN", "SENKU_SOYUZ_API_TOKEN"]
   }
 }

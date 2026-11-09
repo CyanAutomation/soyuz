@@ -6,6 +6,7 @@ export interface Env {
   OAUTH_REGISTRATION_LIMITER: RateLimit;
   OPENUI_GENERATION_LIMITER: RateLimit;
   JEV_DECISION_LIMITER: RateLimit;
+  SENKU: Fetcher;
   CLIENT_API_TOKEN: string;
   /** Optional one-time previous client key during a bounded rotation. */
   CLIENT_API_TOKEN_PREVIOUS?: string;
@@ -38,8 +39,6 @@ export interface Env {
   OPENUI_MODEL?: string;
   /** Explicit opt-in deterministic local fixture mode; keep disabled in production. */
   OPENUI_DEMO_MODE?: string;
-  /** Server-side OpenRouter credential for the separate JEV decisions endpoint. */
-  OPENROUTER_API_KEY?: string;
-  /** Model routed through OpenRouter's decisions endpoint. */
-  JEV_MODEL?: string;
+  /** Machine identity for Soyuz-to-Senku decision requests. Store as a Worker secret. */
+  SENKU_SOYUZ_API_TOKEN?: string;
 }

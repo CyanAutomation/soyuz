@@ -1,164 +1,232 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
-import { JevDecisionError, runJevDecision, type JevQuestions } from "../src/jev/decision";
+import { buildSenkuInput } from "../src/jev/analysis";
+import { JEV_PROFILE_CONTRACTS, type JevProfileId } from "../src/jev/profiles";
+import { requestSenkuDecision, SenkuDecisionError, SENKU_REQUEST_TIMEOUT_MS } from "../src/jev/senku-client";
 
-const triageQuestions = {
-  is_urgent: {
-    type: "noul",
-    instructions: "Does this require immediate human attention?",
-    criteria: { true: "Clearly time-sensitive or dangerous", false: "Routine or already resolved" },
-  },
-  department: {
-    type: "choice",
-    instructions: "Which area most likely owns this issue?",
-    criteria: {
-      execution: "Kaseki execution or repository task",
-      control_plane: "Soyuz API, queue, or stored run state",
-      unknown: "The available record is insufficient",
-    },
-  },
-  severity: {
-    type: "score",
-    instructions: "Rate the operational severity.",
-    criteria: ["Routine", "Needs review", "Urgent"],
-  },
-} as const satisfies JevQuestions;
+const TOKEN = "senku-soyuz-test-token-value-long-enough";
+const TRIAGE_INPUT = { run: {
+  status: "failed",
+  stage: "validation",
+  operationalHealth: "suspect_stalled",
+  failureClass: "provider_failure",
+  createdAt: "2026-11-08T12:00:00.000Z",
+  queuedAt: "2026-11-08T12:00:01.000Z",
+  startedAt: "2026-11-08T12:00:02.000Z",
+  completedAt: "2026-11-08T12:00:03.000Z",
+  lastHeartbeatAt: "2026-11-08T12:00:02.500Z",
+} };
 
-const validResponse = {
-  model: "typesafe/jev-1.13-test",
-  answers: {
-    is_urgent: { type: "noul", noul: 0.95 },
-    department: {
-      type: "choice",
-      choice: "execution",
-      probabilities: { execution: 0.85, control_plane: 0.1, unknown: 0.05 },
-      confidence: 0.78,
-    },
-    severity: {
-      type: "score",
-      score: 1.05,
-      legend: { "0": "Routine", "1": "Needs review", "2": "Urgent" },
-      probabilities: { "0": 0.05, "1": 0.9, "2": 0.05 },
-      confidence: 0.93,
-    },
-  },
+const OUTPUT_REVIEW_INPUT = {
+  canonicalRun: { status: "completed", failureClass: null, exitCode: 0, changedFileCount: 3 },
+  summary: "Recorded bounded summary.",
 };
 
-function testEnv(overrides: Partial<Env> = {}): Env {
+function validAnswers(profileId: JevProfileId): Record<string, unknown> {
+  switch (profileId) {
+    case "run_operations_triage_v1":
+      return {
+        needs_followup: { type: "noul", noul: 0.8, probabilities: { false: 0.2, true: 0.8 }, confidence: null },
+        likely_area: {
+          type: "choice", choice: "execution",
+          probabilities: { execution: 0.8, control_plane: 0.1, unknown: 0.1 }, confidence: null,
+        },
+        severity: {
+          type: "score", score: 1,
+          legend: { "0": "Routine", "1": "Needs review", "2": "Urgent" },
+          probabilities: { "0": 0.1, "1": 0.8, "2": 0.1 }, confidence: null,
+        },
+      };
+    case "kaseki_output_review_v1":
+    case "kaseki_output_review_v2": {
+      const answers: Record<string, unknown> = {
+        summary_specificity: { type: "noul", noul: 0.9, probabilities: { false: 0.1, true: 0.9 }, confidence: null },
+        outcome_alignment: {
+          type: "choice", choice: "consistent",
+          probabilities: { consistent: 0.8, unclear: 0.1, inconsistent: 0.1 }, confidence: null,
+        },
+        evidence_strength: {
+          type: "score", score: 1,
+          legend: { "0": "Insufficient", "1": "Some concrete detail", "2": "Clear and specific" },
+          probabilities: { "0": 0.1, "1": 0.8, "2": 0.1 }, confidence: null,
+        },
+      };
+      if (profileId === "kaseki_output_review_v2") {
+        answers.recorded_outcome = {
+          type: "score", score: 2,
+          legend: {
+            "0": "Outcome unclear or unsuccessful",
+            "1": "Partial or limited outcome evidence",
+            "2": "Successful and clearly reported outcome",
+          },
+          probabilities: { "0": 0.05, "1": 0.1, "2": 0.85 }, confidence: 0.85,
+        };
+      }
+      return answers;
+    }
+  }
+}
+
+function senkuResponse(profileId: JevProfileId, overrides: Record<string, unknown> = {}): Response {
+  const answers = validAnswers(profileId);
+  const payload = {
+    schemaVersion: "1",
+    requestId: "dec-00000000-0000-4000-8000-000000000001",
+    status: "completed",
+    profileId,
+    profileVersion: JEV_PROFILE_CONTRACTS[profileId].version,
+    provider: "jev",
+    model: "typesafe/jev-test",
+    answers,
+    result: answers,
+    durationMs: 9,
+    attemptCount: 1,
+    usage: { input_tokens: 120, output_tokens: 80, cost: 0.002 },
+    ...overrides,
+  };
+  return new Response(JSON.stringify(payload), { headers: { "content-type": "application/json" } });
+}
+
+function environment(overrides: Partial<Env> = {}): Env {
   return {
-    OPENROUTER_API_KEY: "openrouter-test-key-long-enough",
-    JEV_MODEL: "~typesafe/jev-latest",
+    SENKU_SOYUZ_API_TOKEN: TOKEN,
+    SENKU: { fetch: async () => senkuResponse("run_operations_triage_v1") } as unknown as Fetcher,
     ...overrides,
   } as Env;
 }
 
-function response(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
+describe("Soyuz to Senku decision client", () => {
+  it("preserves nullable output evidence, accepts exit code -1, and bounds recorded summaries", () => {
+    const summary = "😀".repeat(2_001);
+    const row = {
+      status: "completed",
+      failure_class: null,
+      exit_code: -1,
+      result_json: JSON.stringify({ summary, changedFileCount: 1_000_001, publishedUrl: "https://private.example.invalid" }),
+    } as Parameters<typeof buildSenkuInput>[1];
 
-describe("reusable JEV decision adapter", () => {
-  it("[JEV-ADAPTER-01] sends server-supplied typed questions and returns normalized answers", async () => {
-    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => response(validResponse));
-
-    const result = await runJevDecision(testEnv(), {
-      state: JSON.stringify({ status: "failed", outcomeSummary: "The build failed during validation." }),
-      questions: triageQuestions,
-    }, fetcher as typeof fetch);
-
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    const [url, init] = fetcher.mock.calls[0];
-    expect(String(url)).toBe("https://openrouter.ai/api/alpha/decisions");
-    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer openrouter-test-key-long-enough");
-    expect(JSON.parse(String(init?.body))).toEqual({
-      model: "~typesafe/jev-latest",
-      state: JSON.stringify({ status: "failed", outcomeSummary: "The build failed during validation." }),
-      questions: triageQuestions,
+    expect(buildSenkuInput("kaseki_output_review_v2", row)).toEqual({
+      canonicalRun: { status: "completed", failureClass: null, exitCode: -1, changedFileCount: null },
+      summary: "😀".repeat(2_000),
     });
-    expect(result.model).toBe("typesafe/jev-1.13-test");
-    expect(result.answers.is_urgent).toMatchObject({ type: "noul", noul: 0.95, confidence: null });
-    expect((result.answers.is_urgent as { probabilities: Record<string, number> }).probabilities.true).toBe(0.95);
-    expect((result.answers.department as { confidence: number | null }).confidence).toBe(0.78);
-    expect((result.answers.severity as { score: number }).score).toBe(1.05);
   });
 
-  it("[JEV-ADAPTER-02] is reusable with a different question profile", async () => {
-    const questions = {
-      summary_clear: {
-        type: "noul",
-        instructions: "Is the recorded summary clear?",
-        criteria: { true: "States a concrete result", false: "Vague or absent" },
-      },
-    } as const satisfies JevQuestions;
-    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => response({
+  it("sends the versioned profile envelope and machine token through one binding call", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => senkuResponse("run_operations_triage_v1"));
+    const binding = { fetch: fetchMock } as unknown as Fetcher;
+    const result = await requestSenkuDecision(environment(), "run_operations_triage_v1", TRIAGE_INPUT, binding);
+
+    expect(binding.fetch).toHaveBeenCalledTimes(1);
+    const request = fetchMock.mock.calls[0]![0] as Request;
+    expect(request.url).toBe("https://senku.internal/v1/profiles/run_operations_triage_v1/evaluate");
+    expect(request.method).toBe("POST");
+    expect(request.headers.get("authorization")).toBe("Bearer " + TOKEN);
+    expect(JSON.parse(await request.clone().text())).toEqual({ schemaVersion: "1", input: TRIAGE_INPUT });
+    expect(result).toMatchObject({
       model: "typesafe/jev-test",
-      answers: { summary_clear: { type: "noul", noul: 0.72 } },
-    }));
-
-    const result = await runJevDecision(testEnv(), {
-      state: JSON.stringify({ summary: "Updated three files and passed validation." }),
-      questions,
-    }, fetcher as typeof fetch);
-
-    expect(result.answers.summary_clear).toMatchObject({ type: "noul", noul: 0.72 });
-    expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).questions).toEqual(questions);
+      requestId: "dec-00000000-0000-4000-8000-000000000001",
+      attemptCount: 1,
+      usage: { input_tokens: 120, output_tokens: 80 },
+    });
+    expect(result.answers).toHaveProperty("needs_followup");
   });
 
-  it("[JEV-ADAPTER-06] treats an explicit null confidence as unavailable", async () => {
-    const fetcher = vi.fn(async () => response({
-      ...validResponse,
-      answers: {
-        ...validResponse.answers,
-        department: { ...validResponse.answers.department, confidence: null },
-      },
-    }));
-    const result = await runJevDecision(testEnv(), { state: "bounded state", questions: triageQuestions }, fetcher as typeof fetch);
-    expect(result.answers.department).toMatchObject({ type: "choice", confidence: null });
+  it("uses the existing Soyuz output-review profile IDs and accepts nullable evidence and confidence", async () => {
+    for (const profileId of ["kaseki_output_review_v1", "kaseki_output_review_v2"] as const) {
+      const fetchMock = vi.fn(async (_input: RequestInfo | URL) => senkuResponse(profileId));
+      const binding = { fetch: fetchMock } as unknown as Fetcher;
+      const result = await requestSenkuDecision(environment(), profileId, OUTPUT_REVIEW_INPUT, binding);
+      const request = fetchMock.mock.calls[0]![0] as Request;
+      const body = JSON.parse(await request.clone().text()) as Record<string, unknown>;
+      expect(request.url).toContain("/v1/profiles/" + profileId + "/evaluate");
+      expect(body).toEqual({ schemaVersion: "1", input: OUTPUT_REVIEW_INPUT });
+      expect(result.answers).toHaveProperty("outcome_alignment");
+      expect(Object.keys(result.answers)).toHaveLength(profileId === "kaseki_output_review_v1" ? 3 : 4);
+    }
   });
 
   it.each([
-    ["missing answer", { ...validResponse, answers: { ...validResponse.answers, severity: undefined } }],
-    ["unexpected answer", { ...validResponse, answers: { ...validResponse.answers, extra: { type: "noul", noul: 0.5 } } }],
-    ["wrong answer type", { ...validResponse, answers: { ...validResponse.answers, is_urgent: { type: "choice", choice: "true" } } }],
-    ["out-of-range probability", { ...validResponse, answers: { ...validResponse.answers, is_urgent: { type: "noul", noul: 1.1 } } }],
-    ["unknown choice", { ...validResponse, answers: { ...validResponse.answers, department: { ...validResponse.answers.department, choice: "sales" } } }],
-    ["probabilities do not sum to one", { ...validResponse, answers: { ...validResponse.answers, department: { ...validResponse.answers.department, probabilities: { execution: 0.8, control_plane: 0.1, unknown: 0.05 } } } }],
-    ["score exceeds its scale", { ...validResponse, answers: { ...validResponse.answers, severity: { ...validResponse.answers.severity, score: 2.1 } } }],
-    ["legend differs from the requested scale", { ...validResponse, answers: { ...validResponse.answers, severity: { ...validResponse.answers.severity, legend: { "0": "Low", "1": "Medium", "2": "High" } } } }],
-  ])("[JEV-ADAPTER-03] rejects malformed provider answers: %s", async (_label, body) => {
-    const fetcher = vi.fn(async () => response(body));
-    await expect(runJevDecision(testEnv(), { state: "bounded state", questions: triageQuestions }, fetcher as typeof fetch))
-      .rejects.toMatchObject({ code: "INVALID_PROVIDER_RESPONSE" });
+    [503, "NOT_CONFIGURED", "NOT_CONFIGURED"],
+    [504, "PROVIDER_TIMEOUT", "PROVIDER_TIMEOUT"],
+    [502, "PROVIDER_UNAVAILABLE", "PROVIDER_UNAVAILABLE"],
+    [502, "INVALID_PROVIDER_RESPONSE", "INVALID_RESPONSE"],
+    [400, "INVALID_REQUEST", "INVALID_REQUEST"],
+  ])("maps Senku %i %s without exposing the response body", async (status, remoteCode, expectedCode) => {
+    const binding = {
+      fetch: vi.fn(async () => new Response(JSON.stringify({
+        error: { code: remoteCode, message: "private raw error", requestId: "dec-00000000-0000-4000-8000-000000000002" },
+      }), { status, headers: { "content-type": "application/json" } })),
+    } as unknown as Fetcher;
+
+    let caught: unknown;
+    try {
+      await requestSenkuDecision(environment(), "run_operations_triage_v1", TRIAGE_INPUT, binding);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(SenkuDecisionError);
+    expect(caught).toMatchObject({ code: expectedCode });
+    expect((caught as Error).message).not.toContain("private raw error");
+    expect(binding.fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("[JEV-ADAPTER-04] rejects unsafe request definitions before contacting OpenRouter", async () => {
-    const fetcher = vi.fn();
-    await expect(runJevDecision(testEnv(), {
-      state: " ".repeat(3),
-      questions: triageQuestions,
-    }, fetcher as typeof fetch)).rejects.toBeInstanceOf(JevDecisionError);
-    await expect(runJevDecision(testEnv(), {
-      state: "x".repeat(20_001),
-      questions: triageQuestions,
-    }, fetcher as typeof fetch)).rejects.toMatchObject({ code: "INVALID_REQUEST" });
-    expect(fetcher).not.toHaveBeenCalled();
+  it.each([
+    ["wrong schema", { schemaVersion: "2" }],
+    ["wrong profile", { profileId: "kaseki_output_review_v1" }],
+    ["wrong profile version", { profileVersion: "9" }],
+    ["missing answer", { answers: {} }],
+    ["unexpected answer", { answers: { ...validAnswers("run_operations_triage_v1"), extra: { type: "noul" } } }],
+    ["invalid answer", { answers: { ...validAnswers("run_operations_triage_v1"), needs_followup: { type: "noul", noul: 1.1 } } }],
+    ["wrong result", { result: {} }],
+    ["invalid attempt count", { attemptCount: 2 }],
+    ["invalid usage", { usage: { input_tokens: -1 } }],
+  ])("rejects malformed Senku response: %s", async (_name, overrides) => {
+    const binding = { fetch: vi.fn(async () => senkuResponse("run_operations_triage_v1", overrides)) } as unknown as Fetcher;
+    await expect(requestSenkuDecision(environment(), "run_operations_triage_v1", TRIAGE_INPUT, binding))
+      .rejects.toMatchObject({ code: "INVALID_RESPONSE" });
   });
 
-  it("[JEV-ADAPTER-05] handles missing credentials and provider failures without returning provider details", async () => {
-    const missingKey = vi.fn();
-    await expect(runJevDecision(testEnv({ OPENROUTER_API_KEY: undefined }), {
-      state: "bounded state",
-      questions: triageQuestions,
-    }, missingKey as typeof fetch)).rejects.toMatchObject({ code: "NOT_CONFIGURED" });
-    expect(missingKey).not.toHaveBeenCalled();
+  it("handles invalid JSON and oversized responses", async () => {
+    const invalidJson = { fetch: vi.fn(async () => new Response("{", { headers: { "content-type": "application/json" } })) } as unknown as Fetcher;
+    await expect(requestSenkuDecision(environment(), "run_operations_triage_v1", TRIAGE_INPUT, invalidJson))
+      .rejects.toMatchObject({ code: "INVALID_RESPONSE" });
 
-    const providerSecret = "sensitive upstream body";
-    const upstreamFailure = vi.fn(async () => new Response(providerSecret, { status: 429 }));
-    await expect(runJevDecision(testEnv(), {
-      state: "bounded state",
-      questions: triageQuestions,
-    }, upstreamFailure as typeof fetch)).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    const oversized = { fetch: vi.fn(async () => new Response(" ".repeat(64 * 1024 + 1), { headers: { "content-type": "application/json" } })) } as unknown as Fetcher;
+    await expect(requestSenkuDecision(environment(), "run_operations_triage_v1", TRIAGE_INPUT, oversized))
+      .rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+  });
+
+  it("fails safely for a missing binding, missing token, service outage, and timeout", async () => {
+    await expect(requestSenkuDecision(environment({ SENKU: undefined }), "run_operations_triage_v1", TRIAGE_INPUT))
+      .rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    await expect(requestSenkuDecision(environment({ SENKU_SOYUZ_API_TOKEN: undefined }), "run_operations_triage_v1", TRIAGE_INPUT))
+      .rejects.toMatchObject({ code: "NOT_CONFIGURED" });
+
+    const unavailable = { fetch: vi.fn(async () => { throw new Error("private binding error"); }) } as unknown as Fetcher;
+    await expect(requestSenkuDecision(environment(), "run_operations_triage_v1", TRIAGE_INPUT, unavailable))
+      .rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    expect(unavailable.fetch).toHaveBeenCalledTimes(1);
+
+    const timeout = {
+      fetch: vi.fn((request: Request) => new Promise<Response>((_resolve, reject) => {
+        request.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      })),
+    } as unknown as Fetcher;
+    await expect(requestSenkuDecision(environment(), "run_operations_triage_v1", TRIAGE_INPUT, timeout, 5))
+      .rejects.toMatchObject({ code: "PROVIDER_TIMEOUT" });
+    expect(SENKU_REQUEST_TIMEOUT_MS).toBeGreaterThan(30_000);
+  });
+
+  it("classifies a timeout while reading the Senku response body", async () => {
+    const timeout = {
+      fetch: vi.fn((request: Request) => Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          request.signal.addEventListener("abort", () => controller.error(new Error("aborted")), { once: true });
+        },
+      }), { headers: { "content-type": "application/json" } }))),
+    } as unknown as Fetcher;
+
+    await expect(requestSenkuDecision(environment(), "run_operations_triage_v1", TRIAGE_INPUT, timeout, 5))
+      .rejects.toMatchObject({ code: "PROVIDER_TIMEOUT" });
   });
 });
