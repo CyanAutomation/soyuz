@@ -8,7 +8,7 @@ import {
 } from "@openuidev/lang-core";
 import { z } from "zod";
 import { RUN_STATUSES } from "../src/domain/run-state-machine";
-import { JevAnswerSchema } from "../src/jev/contracts";
+import { JevAnswerSchema } from "../src/jev/response-contracts";
 import { soyuzOpenUITools } from "./tools";
 
 const runStatus = z.enum(RUN_STATUSES);

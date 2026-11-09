@@ -24,6 +24,7 @@ function testEnv() {
     OAUTH_REGISTRATION_LIMITER: { limit: async () => ({ success: true }) } as Env["OAUTH_REGISTRATION_LIMITER"],
     OPENUI_GENERATION_LIMITER: { limit: async () => ({ success: true }) } as Env["OPENUI_GENERATION_LIMITER"],
     JEV_DECISION_LIMITER: { limit: async () => ({ success: true }) } as Env["JEV_DECISION_LIMITER"],
+    SENKU: (runtimeEnv as unknown as Env).SENKU,
     CLIENT_API_TOKEN: CLIENT_TOKEN,
     KASEKI_SUBMISSION_API_TOKEN: KASEKI_TOKEN,
     KASEKI_SUBMISSION_IDENTITY: "kaseki-test-host",
