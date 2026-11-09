@@ -232,7 +232,13 @@ describe("Soyuz UTCP discovery and agent API", () => {
     const clientAndWorkerCollision = await call({ ...bindings, CLIENT_API_TOKEN: WORKER_TOKEN }, "/v1/agent/runs", {
       method: "POST", token: WORKER_TOKEN, body: validRequest(),
     });
-    expect(clientAndWorkerCollision.response.status).toBe(401);
+    expect(clientAndWorkerCollision.response.status).toBe(503);
+    expect(clientAndWorkerCollision.body.error.code).toBe("AUTHENTICATION_UNAVAILABLE");
+    const clientAndKasekiCollision = await call({ ...bindings, CLIENT_API_TOKEN: KASEKI_TOKEN }, "/v1/agent/runs", {
+      method: "POST", token: KASEKI_TOKEN, body: validRequest(),
+    });
+    expect(clientAndKasekiCollision.response.status).toBe(503);
+    expect(clientAndKasekiCollision.body.error.code).toBe("AUTHENTICATION_UNAVAILABLE");
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -342,6 +348,13 @@ describe("Soyuz UTCP discovery and agent API", () => {
     expect(detailData).not.toHaveProperty("request");
     expect(detailData).not.toHaveProperty("failureMessage");
     expect((await call(bindings, "/v1/agent/runs/not-a-uuid", { token: CLIENT_TOKEN })).response.status).toBe(404);
+
+    await bindings.DB.prepare("UPDATE runs SET result_json = ? WHERE id = ?")
+      .bind(JSON.stringify({ summary: "s".repeat(2_500) }), created[0].runId)
+      .run();
+    const longDetail = await call(bindings, `/v1/agent/runs/${created[0].runId}`, { token: CLIENT_TOKEN });
+    expect(longDetail.response.status).toBe(200);
+    expect(AgentGetRunOutputSchema.parse(longDetail.body).data.outcomeSummary).toHaveLength(2_000);
   });
 
   it("[UTCP-EVENTS-01] returns bounded operational event metadata and supports sequence pagination", async () => {

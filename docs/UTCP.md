@@ -41,7 +41,7 @@ Tool invocations require `Authorization: Bearer <CLIENT_API_TOKEN>`. The UTCP ma
 
 This is only a placeholder; the manual never includes an actual token. The official client namespaces that variable to the manual name `soyuz_CLIENT_API_TOKEN`. Provision the value to the client from its own secret store. Do not put a token in the manual URL, tool arguments, source control, or logs.
 
-The five agent HTTP routes accept the current client credential and the existing bounded client-token rotation overlap. They reject missing or invalid credentials, worker credentials, Kaseki submission credentials, and dashboard OAuth tokens. They cannot call `/v1/worker/**`. The dashboard keeps its existing GitHub OAuth provider, allowlist, sessions, API authorization, and OpenUI analysis access. A future Cloudflare Access migration remains a separate project.
+The five agent HTTP routes accept the current client credential and the existing bounded client-token rotation overlap. They reject missing or invalid credentials, worker credentials, Kaseki submission credentials, and dashboard OAuth tokens. If the configured current client token collides with the worker or Kaseki submission token, agent routes return 503 because the server cannot safely distinguish those credential roles. They cannot call `/v1/worker/**`. The dashboard keeps its existing GitHub OAuth provider, allowlist, sessions, API authorization, and OpenUI analysis access. A future Cloudflare Access migration remains a separate project.
 
 ## Run lifecycle and idempotency
 
