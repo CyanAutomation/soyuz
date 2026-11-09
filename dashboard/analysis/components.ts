@@ -39,6 +39,9 @@ export const soyuzComponentRenderers: Record<string, NativeComponentRenderer> = 
   RunTable: (existing, node, props, context) => {
     const element = reuse(existing, "section", "card analysis-run-table");
     const title = stringValue(props.title, 120);
+    element.setAttribute("role", "region");
+    element.tabIndex = 0;
+    element.setAttribute("aria-label", title || "Soyuz run results");
     let heading = element.querySelector<HTMLElement>(".analysis-run-table__title");
     if (title) {
       heading = heading ?? document.createElement("h3");

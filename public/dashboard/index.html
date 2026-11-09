@@ -9,34 +9,56 @@
   <script type="module" src="/dashboard/app.js"></script>
 </head>
 <body>
-  <main>
-    <header>
-      <div>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="app-header__identity">
         <p class="eyebrow">Soyuz</p>
         <h1>Recent runs</h1>
         <p class="muted">See the latest 30 runs, their progress, activity, and files. This dashboard is read-only.</p>
-        <nav class="analysis-nav" aria-label="Soyuz dashboards">
-          <a href="/dashboard/analysis/">Run analysis</a>
-        </nav>
       </div>
+      <nav class="dashboard-nav" aria-label="Soyuz dashboards">
+        <a href="/dashboard/" aria-current="page">Recent runs</a>
+        <a href="/dashboard/analysis/">Run analysis</a>
+      </nav>
       <div class="auth-controls">
         <p id="account" class="meta" hidden></p>
         <button id="connect" class="button button--primary" type="button">Sign in with GitHub</button>
       </div>
     </header>
-    <p id="notice" class="notice notice--info" role="status" aria-live="polite">Sign in with GitHub to see your recent runs.</p>
-    <div id="run-controls" class="run-controls" aria-label="Run list controls" hidden>
-      <label for="status-filter">Filter by status
-        <select id="status-filter">
-          <option value="">All statuses</option>
-        </select>
-      </label>
-      <button id="refresh" class="button button--secondary" type="button">Refresh runs</button>
-      <p id="updated" class="meta" aria-live="polite"></p>
-    </div>
-    <section id="runs" aria-label="Recent runs" hidden></section>
-    <button id="load-more" class="button button--secondary load-more" type="button" hidden>Load more runs</button>
-    <div id="snackbar" class="snackbar" role="status" aria-live="polite" aria-atomic="true" hidden></div>
-  </main>
+    <main id="main-content" class="app-main" tabindex="-1">
+      <p id="notice" class="notice notice--info" role="status" aria-live="polite">Sign in with GitHub to see your recent runs.</p>
+      <div id="run-controls" class="run-controls" role="group" aria-label="Run list controls" hidden>
+        <div class="field field--search">
+          <label class="field__label" for="run-search">Search runs</label>
+          <input class="field__control" id="run-search" type="search" autocomplete="off" aria-describedby="run-search-help" placeholder="Repository, ref, run ID">
+          <p class="field__help" id="run-search-help">Search loaded runs by repository, branch or ref, display ID, technical ID, or status.</p>
+        </div>
+        <div class="field field--compact">
+          <label class="field__label" for="run-sort">Sort by</label>
+          <select class="field__control" id="run-sort">
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="repository">Repository</option>
+            <option value="status">Status</option>
+          </select>
+        </div>
+        <div class="field field--compact">
+          <label class="field__label" for="status-filter">Filter by status</label>
+          <select class="field__control" id="status-filter">
+            <option value="">All statuses</option>
+          </select>
+        </div>
+        <div class="run-controls__actions">
+          <button id="refresh" class="button button--secondary" type="button">Refresh runs</button>
+          <p id="updated" class="meta" aria-live="polite"></p>
+        </div>
+        <p id="run-count" class="run-count" aria-live="polite" aria-atomic="true"></p>
+      </div>
+      <section id="runs" aria-label="Recent runs" hidden></section>
+      <button id="load-more" class="button button--secondary load-more" type="button" hidden>Load more runs</button>
+      <div id="snackbar" class="snackbar" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+    </main>
+  </div>
 </body>
 </html>
