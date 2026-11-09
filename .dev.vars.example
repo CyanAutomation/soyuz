@@ -8,6 +8,5 @@ OPENUI_DEMO_MODE=true
 # OPENUI_PROVIDER_URL=https://gateway.ai.cloudflare.com/v1/account-id/gateway-id/openai/chat/completions
 # OPENUI_PROVIDER_API_KEY=replace-with-a-server-side-provider-or-gateway-credential
 # OPENUI_MODEL=provider/model-name
-# For JEV decisions, use the existing server-side OpenRouter credential and model alias.
-# OPENROUTER_API_KEY=replace-with-a-server-side-openrouter-credential
-# JEV_MODEL=~typesafe/jev-latest
+# Set this to the same local-only token configured for the Soyuz identity in Senku.
+SENKU_SOYUZ_API_TOKEN=replace-with-a-different-long-random-local-token

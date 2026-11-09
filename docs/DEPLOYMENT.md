@@ -37,12 +37,15 @@ npx wrangler secret put KASEKI_SUBMISSION_API_TOKEN
 npx wrangler secret put WORKER_API_TOKEN
 npx wrangler secret put GITHUB_OAUTH_CLIENT_ID
 npx wrangler secret put GITHUB_OAUTH_CLIENT_SECRET
+npx wrangler secret put SENKU_SOYUZ_API_TOKEN
 npm run db:migrate:remote
 npm run cf:types
 npm run deploy
 ```
 
-The analysis page's JEV decision endpoint also uses the server-side `OPENROUTER_API_KEY` secret. Keep the existing Worker secret configured; deployments that do not already have it can add it with `npx wrangler secret put OPENROUTER_API_KEY`. `JEV_MODEL` is a Worker variable with a checked-in default of `~typesafe/jev-latest`.
+The `SENKU_SOYUZ_API_TOKEN` secret must match the Soyuz machine identity configured on Senku. Soyuz binds to the Worker named `senku`; Senku must exist, be ready, and accept that identity before the Soyuz switchover is deployed. Soyuz no longer reads an OpenRouter key or model setting for JEV.
+
+The checked-in production pipeline deploys successful pushes to `main`. Merge a Soyuz switchover only after Senku's independent deployment and readiness checks have passed. The code has no backend feature flag or automatic provider fallback; deployment immediately routes dashboard JEV requests to Senku. See [Senku integration](SENKU-INTEGRATION.md) for the release gate and rollback procedure.
 
 `npm run db:migrate:remote` changes production D1 and requires D1 Edit access. Run it only with separate authorization from the Worker deployment. CI/CD never runs production migrations.
 
