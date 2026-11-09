@@ -12,10 +12,8 @@
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <div class="app-shell">
     <header class="app-header">
-      <div class="app-header__identity">
+      <div class="app-header__brand">
         <p class="eyebrow">Soyuz</p>
-        <h1>Recent runs</h1>
-        <p class="muted">See the latest 30 runs, their progress, activity, and files. This dashboard is read-only.</p>
       </div>
       <nav class="dashboard-nav" aria-label="Soyuz dashboards">
         <a href="/dashboard/" aria-current="page">Recent runs</a>
@@ -27,33 +25,43 @@
       </div>
     </header>
     <main id="main-content" class="app-main" tabindex="-1">
+      <header class="page-header">
+        <div class="page-header__content">
+          <h1 class="page-header__title" id="page-title" aria-describedby="page-description">Recent runs</h1>
+          <p class="page-header__description" id="page-description">See the latest 30 runs, their progress, activity, and files. This dashboard is read-only.</p>
+        </div>
+      </header>
       <p id="notice" class="notice notice--info" role="status" aria-live="polite">Sign in with GitHub to see your recent runs.</p>
-      <div id="run-controls" class="run-controls" role="group" aria-label="Run list controls" hidden>
-        <div class="field field--search">
-          <label class="field__label" for="run-search">Search runs</label>
-          <input class="field__control" id="run-search" type="search" autocomplete="off" aria-describedby="run-search-help" placeholder="Repository, ref, run ID">
-          <p class="field__help" id="run-search-help">Search loaded runs by repository, branch or ref, display ID, technical ID, or status.</p>
+      <div id="run-controls" class="toolbar run-controls" role="group" aria-label="Run list controls" hidden>
+        <div class="toolbar__group toolbar__group--search" role="group" aria-label="Search runs">
+          <div class="field field--search">
+            <label class="field__label" for="run-search">Search runs</label>
+            <input class="field__control" id="run-search" type="search" autocomplete="off" aria-describedby="run-search-help" placeholder="Repository, ref, run ID">
+            <p class="field__help" id="run-search-help">Search loaded runs by repository, branch or ref, display ID, technical ID, or status.</p>
+          </div>
         </div>
-        <div class="field field--compact">
-          <label class="field__label" for="run-sort">Sort by</label>
-          <select class="field__control" id="run-sort">
-            <option value="newest">Newest first</option>
-            <option value="oldest">Oldest first</option>
-            <option value="repository">Repository</option>
-            <option value="status">Status</option>
-          </select>
+        <div class="toolbar__group toolbar__group--filters" role="group" aria-label="Sort and filter runs">
+          <div class="field field--compact">
+            <label class="field__label" for="run-sort">Sort by</label>
+            <select class="field__control" id="run-sort">
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="repository">Repository</option>
+              <option value="status">Status</option>
+            </select>
+          </div>
+          <div class="field field--compact">
+            <label class="field__label" for="status-filter">Filter by status</label>
+            <select class="field__control" id="status-filter">
+              <option value="">All statuses</option>
+            </select>
+          </div>
         </div>
-        <div class="field field--compact">
-          <label class="field__label" for="status-filter">Filter by status</label>
-          <select class="field__control" id="status-filter">
-            <option value="">All statuses</option>
-          </select>
-        </div>
-        <div class="run-controls__actions">
+        <div class="toolbar__group toolbar__group--end run-controls__actions" role="group" aria-label="Run list actions">
           <button id="refresh" class="button button--secondary" type="button">Refresh runs</button>
           <p id="updated" class="meta" aria-live="polite"></p>
         </div>
-        <p id="run-count" class="run-count" aria-live="polite" aria-atomic="true"></p>
+        <p id="run-count" class="toolbar__summary" aria-live="polite" aria-atomic="true"></p>
       </div>
       <section id="runs" aria-label="Recent runs" hidden></section>
       <button id="load-more" class="button button--secondary load-more" type="button" hidden>Load more runs</button>

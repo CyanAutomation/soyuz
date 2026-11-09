@@ -1,6 +1,18 @@
 export type NoticeTone = "info" | "empty" | "success" | "warning" | "danger";
 export type BadgeTone = "active" | "warning" | "success" | "danger" | "neutral";
 
+export interface CardOptions {
+  className?: string;
+  tagName?: "article" | "section" | "div";
+}
+
+export interface CardParts {
+  element: HTMLElement;
+  header: HTMLElement;
+  body: HTMLElement;
+  footer: HTMLElement;
+}
+
 interface NoticeElement {
   hidden: HTMLElement["hidden"];
   textContent: string | null;
@@ -36,4 +48,41 @@ export function createBadge(label: string, tone: BadgeTone, ownerDocument: Docum
   badge.className = `badge badge--${tone}`;
   badge.textContent = label;
   return badge;
+}
+
+/** Create a reusable content card with stable semantic slots for its sections. */
+export function createCard(options: CardOptions = {}, ownerDocument: Document = document): CardParts {
+  const element = ownerDocument.createElement(options.tagName ?? "article");
+  element.className = ["card", "card--structured", options.className].filter(Boolean).join(" ");
+
+  const header = ownerDocument.createElement("header");
+  header.className = "card__header";
+  const body = ownerDocument.createElement("div");
+  body.className = "card__body";
+  const footer = ownerDocument.createElement("footer");
+  footer.className = "card__footer";
+
+  element.append(header, body, footer);
+  return { element, header, body, footer };
+}
+
+/** Create a text-safe definition list for labelled facts. */
+export function createDefinitionList(
+  entries: Array<[string, string]>,
+  className = "data-list",
+  ownerDocument: Document = document,
+): HTMLDListElement {
+  const list = ownerDocument.createElement("dl");
+  list.className = className;
+  for (const [label, value] of entries) {
+    const item = ownerDocument.createElement("div");
+    item.className = "data-list__item";
+    const term = ownerDocument.createElement("dt");
+    term.textContent = label;
+    const description = ownerDocument.createElement("dd");
+    description.textContent = value;
+    item.append(term, description);
+    list.append(item);
+  }
+  return list;
 }
