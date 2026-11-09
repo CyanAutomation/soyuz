@@ -9,9 +9,10 @@ flowchart TD
     Analysis -->|bounded approved GET queries| DashboardApi[Dashboard read API]
     Analysis -->|read-scope authenticated POST| Generation[Analysis generation adapter]
     Generation -->|optional OpenAI-compatible streaming| Provider[Configured model provider]
-    AI[AI clients] -->|Streamable HTTP at /mcp| MCP[MCP adapter]
+    AI[UTCP clients] -->|GET /utcp| Manual[UTCP discovery manual]
+    AI -->|native HTTPS, client bearer token| AgentApi[Sanitized agent HTTP API]
     REST --> App[Shared run application operations]
-    MCP --> App
+    AgentApi --> App
     App --> D1[(D1: runs, events, artifact index)]
     App -->|versioned Queue message| Q[Cloudflare Queue]
     Q -->|HTTP pull, capacity controlled| K[Kaseki host]
@@ -26,7 +27,7 @@ flowchart TD
     Docker --> Repo[Repository, Pi, validation, publication]
 ```
 
-The REST and MCP adapters call the same run application operations. MCP does not make an internal HTTP request to `/v1`; it uses the same validation, idempotency, D1, Queue, read, event, and cancellation paths directly.
+The REST and agent HTTP adapters call the same run application operations. UTCP discovery describes those native HTTP endpoints; tool invocations do not pass through a protocol server or internal forwarding layer. The agent adapter applies its own restricted input contract and sanitized output projections while sharing validation, idempotency, D1, Queue, read, event, and cancellation paths.
 
 The OpenUI analysis page is a separate optional presentation over the existing dashboard read APIs. Its authenticated dashboard POSTs generate OpenUI Lang, request typed JEV answers, and record user ratings of those answers. JEV use remains explicit and cannot change run state. The JEV adapter is reusable by server callers that provide bounded state and server-owned questions. See [OpenUI run analysis](OPENUI-ANALYSIS.md) for profile data boundaries and the advisory display.
 
@@ -93,7 +94,7 @@ Requirement ID: `RUN-ID-UUIDV7-01`.
 
 Soyuz generates RFC 9562 UUIDv7 IDs from the current millisecond timestamp and Web Crypto random bytes rather than Kaseki's historical `kaseki-N`. These remain the canonical IDs used for API paths, Queue delivery, and worker callbacks. Each run also receives a persisted, increasing `soyuz-N` display ID for people; it is not a Kaseki local job ID and never replaces the UUID. UUIDs are URL-safe and lexicographically time-sortable; D1 timestamps remain the source for deterministic history ordering. Callers must treat canonical IDs as opaque strings.
 
-Client and worker APIs have separate bearer secrets. Public health is unauthenticated. `/mcp` accepts the legacy client key or OAuth tokens; OAuth read and write scopes separate reads from run creation/cancellation. The private dashboard and optional analysis page use GitHub OAuth and an explicit user-ID allowlist; analysis generation requires `soyuz:read` and cannot mutate runs. Worker artifact uploads require the shared worker token plus the current worker and claim fencing IDs. These routes cannot be used to execute work directly. Kaseki remains responsible for execution-context safety, Docker, repository access, validation, and publication. See [the MCP interface](MCP.md) and [deployment guide](DEPLOYMENT.md) for OAuth configuration.
+Client and worker APIs have separate bearer secrets. Public health and the non-secret `/utcp` discovery manual are unauthenticated. The five `/v1/agent/runs` operations require the current client bearer token; they reject worker-only and Kaseki submission credentials and return sanitized run/event data. Dashboard routes and the optional analysis page keep the existing GitHub OAuth provider and explicit user-ID allowlist; analysis requires `soyuz:read` and cannot mutate runs. The dashboard's OAuth implementation is unchanged, and a future Cloudflare Access migration remains separate. Worker artifact uploads require the worker token plus current worker and claim fencing IDs. Kaseki remains responsible for execution-context safety, Docker, repository access, validation, and publication. See [the UTCP interface](UTCP.md) and [deployment guide](DEPLOYMENT.md) for agent-origin configuration and dashboard OAuth setup.
 
 The caller migration can be gradual: direct callers may keep using the current Kaseki API while new or selected clients submit to Soyuz. Soyuz and Kaseki remain independently deployable.
 
@@ -108,4 +109,4 @@ Guidance checked against Cloudflare's current documentation on 2026-10-03:
 - [D1 Worker API and transactional batches](https://developers.cloudflare.com/d1/worker-api/d1-database/)
 - [Workers Vitest integration](https://developers.cloudflare.com/workers/testing/vitest-integration/)
 - [Wrangler commands and type generation](https://developers.cloudflare.com/workers/wrangler/commands/)
-- [Cloudflare Agents stateless MCP servers](https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers/)
+- [UTCP tool provider specification](https://www.utcp.io/for-tool-providers)

@@ -41,7 +41,7 @@ This assessment narrows Phase 0: it still needs a deployment-specific caller/con
 
 ```mermaid
 flowchart LR
-  A["Soyuz UI, REST, MCP, Kaseki API/CLI"] --> B["Soyuz authenticates and records canonical run"]
+  A["Soyuz UI, REST, UTCP agent, Kaseki API/CLI"] --> B["Soyuz authenticates and records canonical run"]
   B --> C["Soyuz publishes Queue message"]
   C --> D["Kaseki claims run and persists local mapping"]
   D --> E["Kaseki starts Docker after Soyuz authorization"]

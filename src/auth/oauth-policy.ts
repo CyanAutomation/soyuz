@@ -1,5 +1,4 @@
 export const SOYUZ_READ_SCOPE = "soyuz:read";
-export const SOYUZ_WRITE_SCOPE = "soyuz:write";
 
 export interface OAuthProps {
   githubUserId: string;

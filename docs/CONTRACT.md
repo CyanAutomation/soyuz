@@ -12,7 +12,7 @@ Requirement IDs: `RUN-VALIDATE-01`, `RUN-IDEMPOTENCY-01`, `RUN-ADMISSION-01`, `Q
 
 `taskPrompt` is required unless `startupCheck` is `true`. Validation is structural only. In particular, Soyuz does not assess shell commands, repository contents, publication credentials, or host readiness; Kaseki keeps its current execution-context admission checks.
 
-`repoUrl` must be an absolute HTTPS URL on both REST and MCP submission paths. HTTP, SSH, file, and other schemes are rejected. This transport rule does not restrict HTTPS destinations; Kaseki must continue applying its host-side repository and network safety checks.
+`repoUrl` must be an absolute HTTPS URL on REST and UTCP agent submission paths. HTTP, SSH, file, and other schemes are rejected. This transport rule does not restrict HTTPS destinations; Kaseki must continue applying its host-side repository and network safety checks.
 
 V1 rejects `webhookConfig`. Kaseki's current webhook option can carry a signing secret. Passing it through both the D1 request record and Queue needs a defined secret-storage and webhook-delivery owner first. Direct Kaseki API callers can continue using that option until a separately versioned migration is designed.
 
@@ -45,7 +45,7 @@ Content-Type: application/json
 }
 ```
 
-Fresh admission returns HTTP 202 with a canonical RFC 9562 UUIDv7 `id` and a stable, user-facing `displayId` such as `soyuz-213`. Soyuz assigns display IDs in creation order and includes them in run create, read, list, worker-read, dashboard, and MCP responses. Keep using the UUID `id`/`runId` in API paths, worker callbacks, Queue messages, and deduplication; `displayId` is for showing or discussing runs with people. It is separate from Kaseki's host-local `kaseki-N` job ID. Existing Kaseki clients should not depend on the old `kaseki-N` format as Soyuz's canonical ID.
+Fresh admission returns HTTP 202 with a canonical RFC 9562 UUIDv7 `id` and a stable, user-facing `displayId` such as `soyuz-213`. Soyuz assigns display IDs in creation order and includes them in run create, read, list, worker-read, dashboard, and UTCP agent responses. Keep using the UUID `id`/`runId` in API paths, worker callbacks, Queue messages, and deduplication; `displayId` is for showing or discussing runs with people. It is separate from Kaseki's host-local `kaseki-N` job ID. Existing Kaseki clients should not depend on the old `kaseki-N` format as Soyuz's canonical ID.
 
 If `Queue.send()` throws, its outcome may be unknown: Cloudflare could have accepted the message while the response was lost. Soyuz returns 503 `QUEUE_PUBLISH_UNCERTAIN`, keeps the run in `admitting`, and retries the same run ID through its scheduled reconciler. After five unsuccessful attempts, the run becomes `admission_failed`; its failure message directs callers to check Queue availability and submit a new run with a new idempotency key. Before then, callers should retry with the same idempotency key to retrieve the pending run.
 
@@ -110,7 +110,12 @@ Requirement IDs: `HEALTH-DB-01`, `RUN-READ-REST-01`, `CANCEL-QUEUED-01`, `CANCEL
 | `GET /v1/runs/:id/artifacts` | Client | List retained artifact metadata |
 | `GET /v1/runs/:id/artifacts/:artifactId` | Client | Download an artifact as an attachment |
 | `POST /v1/runs/:id/cancel` | Client | Cancel queued work or record running cancellation intent |
-| `POST /mcp` | Client key or OAuth | Stateless Streamable HTTP MCP tools |
+| `GET /utcp` | None | Public, non-secret UTCP discovery manual |
+| `POST /v1/agent/runs` | Client | Admit a bounded, agent-facing run request; publication defaults to `none` |
+| `GET /v1/agent/runs` | Client | List bounded, sanitized run summaries |
+| `GET /v1/agent/runs/:id` | Client | Read sanitized detail for one retained run |
+| `GET /v1/agent/runs/:id/events` | Client | Read bounded, sanitized operational events |
+| `POST /v1/agent/runs/:id/cancel` | Client | Cancel queued work or record running cancellation intent |
 | `GET /dashboard/` | Browser | Private read-only dashboard; requires OAuth for its API |
 | `GET /dashboard/analysis/` | Browser | Optional OpenUI run-analysis page |
 | `POST /dashboard/api/analysis/generate` | OAuth `soyuz:read` | Stream a generated OpenUI Lang program; does not change run state |
@@ -137,4 +142,4 @@ OAuth client registration fails closed with 503 `CLIENT_IP_UNAVAILABLE` if the c
 
 Invalid JSON returns 400; structurally invalid run requests return 422; an absent or invalid caller key returns 401; a valid scoped Kaseki key used outside its create/retry/cancel permissions returns 403 `INSUFFICIENT_SCOPE`; a missing server-side API key returns 503 `AUTHENTICATION_UNAVAILABLE`; unknown runs return 404; expired idempotency replays return 410 `IDEMPOTENCY_KEY_EXPIRED`; idempotency conflicts and invalid lifecycle transitions return 409; temporary D1 or Queue admission problems return 503 with a user-facing message and request ID. Internal stack traces and raw binding errors are not returned. Soyuz keys are static bearer secrets without automatic expiry; rotation or revocation invalidates older values.
 
-The MCP endpoint exposes only `create_run`, `list_runs`, `get_run`, `get_run_events`, and `cancel_run`. It uses the same client bearer credential and shared run operations as REST. `create_run` defaults an omitted `publishMode` to `none`; REST keeps its existing `pr` default. MCP does not expose `/v1/worker/**` lifecycle operations. See [the MCP interface and security boundary](MCP.md).
+The UTCP manual at `/utcp` describes exactly five tools that invoke the `/v1/agent/runs` HTTP routes directly. Tool requests require `Authorization: Bearer <CLIENT_API_TOKEN>`; the manual contains only a client-side credential placeholder. The agent routes accept only the general client bearer token, reject worker and Kaseki submission credentials, and keep dashboard OAuth separate. Successful responses retain the API `{ "data": ..., "requestId": "..." }` envelope; non-success responses use the standard error envelope. Agent run inputs are intentionally narrower than the general REST contract, and omitted `publishMode` defaults to `none`; explicit valid publication modes remain available. Agent responses use allowlisted projections and do not expose worker lease data, request content, arbitrary errors, raw execution output, repository contents, or private artifacts. See [UTCP discovery and invocation](UTCP.md).

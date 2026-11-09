@@ -13,13 +13,11 @@ import { sha256Hex } from "../lib/sha256";
 import {
   isAllowedGithubUser,
   SOYUZ_READ_SCOPE,
-  SOYUZ_WRITE_SCOPE,
   type OAuthProps,
 } from "./oauth-policy";
-import { handleDashboardApiRequest, handleOAuthMcpRequest } from "./oauth-resource";
+import { handleDashboardApiRequest } from "./oauth-resource";
 
 export { allowedGithubUserIds, isAllowedGithubUser } from "./oauth-policy";
-export { requestNeedsWriteScope } from "./oauth-resource";
 
 const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
@@ -65,15 +63,6 @@ export function canonicalPublicOrigin(value: string | undefined): string | null 
   }
 }
 
-export function isOAuthConfigured(env: Env): boolean {
-  return Boolean(
-    canonicalPublicOrigin(env.SOYUZ_PUBLIC_URL) &&
-    env.GITHUB_OAUTH_CLIENT_ID?.trim() &&
-    env.GITHUB_OAUTH_CLIENT_SECRET?.trim() &&
-    env.OAUTH_KV,
-  );
-}
-
 export function getSoyuzOAuthProvider(env: Env): OAuthProvider<Env> | null {
   const origin = canonicalPublicOrigin(env.SOYUZ_PUBLIC_URL);
   if (!origin || !env.GITHUB_OAUTH_CLIENT_ID?.trim() || !env.GITHUB_OAUTH_CLIENT_SECRET?.trim() || !env.OAUTH_KV) return null;
@@ -89,7 +78,6 @@ export function oauthProviderOptions(origin: string): OAuthProviderOptions<Env> 
   const resource = `${origin}/`;
   return {
     apiHandlers: {
-      "/mcp": { fetch: handleOAuthMcpRequest },
       "/dashboard/api/": { fetch: handleDashboardApiRequest },
     },
     defaultHandler: { fetch: handleOAuthPageRequest },
@@ -109,7 +97,7 @@ export function oauthProviderOptions(origin: string): OAuthProviderOptions<Env> 
     tokenEndpoint: "/oauth/token",
     clientRegistrationEndpoint: "/oauth/register",
     cookiePrefix: OAUTH_COOKIE_PREFIX,
-    scopesSupported: [SOYUZ_READ_SCOPE, SOYUZ_WRITE_SCOPE, "offline_access"],
+    scopesSupported: [SOYUZ_READ_SCOPE, "offline_access"],
     requiredScopes: [SOYUZ_READ_SCOPE],
     resourceMetadata: {
       resource,
@@ -146,8 +134,6 @@ function consentScopeLabel(scope: string): string {
   switch (scope) {
     case SOYUZ_READ_SCOPE:
       return "View run status, history, and files";
-    case SOYUZ_WRITE_SCOPE:
-      return "Create and manage runs";
     case "offline_access":
       return "Stay signed in";
     default:
@@ -338,7 +324,7 @@ export function authorizationErrorResponse(error: unknown, request: Request, sta
     return redirect;
   }
   if (isUnverifiedAuthorizationFailure(error)) {
-    return plainOAuthError(400, "The authorization request could not be verified. Start again from your MCP client.", requestId);
+    return plainOAuthError(400, "The authorization request could not be verified. Start again from the application that requested access.", requestId);
   }
   return plainOAuthError(502, "GitHub sign-in could not be completed. Retry shortly.", requestId);
 }

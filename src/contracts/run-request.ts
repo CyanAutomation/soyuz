@@ -123,18 +123,18 @@ export const RunRequestSchema = z.preprocess(
   }),
 );
 
-// The MCP adapter intentionally accepts a small, agent-facing subset of the
-// REST contract. Field validators are shared with RunRequestShape so limits
-// and accepted enum values stay in sync.
-export const McpCreateRunInputSchema = z.object({
-  repoUrl: RepoUrlSchema,
-  taskPrompt: TaskPromptSchema,
-  ref: RefSchema.optional(),
-  taskMode: TaskModeSchema.optional(),
-  publishMode: PublishModeSchema.optional(),
-  validationCommands: ValidationCommandsSchema.optional(),
-  timeoutSeconds: OptionalTimeout,
-  idempotencyKey: IdempotencyKeySchema.optional(),
+// Agent callers receive a smaller input surface than general REST clients.
+// Validators are shared with RunRequestShape so limits and accepted values
+// stay in sync while publication can retain the safer agent-specific default.
+export const AgentCreateRunInputSchema = z.object({
+  repoUrl: RepoUrlSchema.describe("Absolute HTTPS repository URL. Credentials, query parameters, and fragments are removed from Soyuz read responses."),
+  taskPrompt: TaskPromptSchema.describe("Work Kaseki should perform. Must contain 10–32,000 characters."),
+  ref: RefSchema.optional().describe("Git reference to check out. Defaults to main."),
+  taskMode: TaskModeSchema.optional().describe("patch edits the repository; inspect performs analysis without edits. Defaults to patch."),
+  publishMode: PublishModeSchema.optional().describe("Publication behavior. Defaults to none for agent-created work; choose branch or pr only when publication is intended."),
+  validationCommands: ValidationCommandsSchema.optional().describe("Validation commands Kaseki should run after the task."),
+  timeoutSeconds: OptionalTimeout.describe("Execution timeout from 60 to 10,800 seconds."),
+  idempotencyKey: IdempotencyKeySchema.optional().describe("UUID to prevent duplicate admission. Reuse it with the same request after an uncertain response."),
 }).strict();
 
 export type RunRequest = z.infer<typeof RunRequestSchema>;
