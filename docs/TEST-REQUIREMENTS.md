@@ -31,7 +31,7 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `OAUTH-06` | RFC 7009 revocation invalidates the dashboard's OAuth access token. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |
 | `OAUTH-07` | Dashboard run-list summaries include operational health and last-heartbeat fields. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
 | `OAUTH-01` | Dashboard data is available only to an allowlisted GitHub user. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints); [deployment: OAuth configuration](DEPLOYMENT.md#one-time-cloudflare-bootstrap) |
-| `OAUTH-02` | Dashboard endpoints are read-only except the allowlisted OpenUI generation, JEV decision, and JEV feedback POSTs, which require an authenticated `soyuz:read` token; OAuth write scope is required for MCP mutations. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints); [MCP authentication](MCP.md#authentication-and-security-boundary); [OpenUI run analysis](OPENUI-ANALYSIS.md) |
+| `OAUTH-02` | Dashboard endpoints are read-only except the allowlisted OpenUI generation, JEV decision, and JEV feedback POSTs, which require an authenticated `soyuz:read` token; OAuth tokens do not authenticate agent HTTP operations. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints); [UTCP authentication](UTCP.md#authentication); [OpenUI run analysis](OPENUI-ANALYSIS.md) |
 | `OAUTH-ORIGIN-01` | The configured public OAuth origin is accepted only as a canonical HTTPS origin without a path or embedded credentials. | [Deployment: OAuth configuration](DEPLOYMENT.md) |
 | `OAUTH-03` | Consent content is escaped, non-cacheable, non-framable, and approval is bound to the same-origin browser request. | [Deployment: OAuth consent security](DEPLOYMENT.md#oauth-consent-security) |
 | `OAUTH-04` | Dashboard run details and event pages expose sanitized data to the allowlisted user. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |
@@ -94,20 +94,16 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `QUEUE-RECONCILE-01` | A stale admission is retried with the original run ID. | [Transport contract: run request](CONTRACT.md#run-request) |
 | `WORKER-CLAIM-RECOVERY-01` | An abandoned claim expires and republishes the original run ID. | [Architecture: run lifecycle](ARCHITECTURE.md#run-lifecycle) |
 | `LIFECYCLE-RACE-01` | Competing terminal outcomes commit only one terminal event. | [Architecture: run lifecycle](ARCHITECTURE.md#run-lifecycle) |
-| `MCP-AUTH-01` | MCP accepts the client credential only and admits no request when authentication fails. | [MCP interface: authentication](MCP.md#authentication-and-security-boundary) |
-| `MCP-TOOLS-01` | Streamable HTTP exposes exactly the five client-facing tools and their access hints. | [MCP interface: V1 tools](MCP.md#v1-tools) |
-| `MCP-CREATE-01` | MCP creation uses shared admission and defaults publication to `none`. | [MCP interface: V1 tools](MCP.md#v1-tools) |
-| `MCP-PUBLISH-01` | Explicit MCP publication modes are preserved. | [MCP interface: V1 tools](MCP.md#v1-tools) |
-| `MCP-URL-REDACT-01` | Credentials and query tokens are removed from returned repository URLs. | [MCP interface: read data boundary](MCP.md#v1-tools) |
-| `MCP-IDEMPOTENCY-01` | MCP creation replays equivalent requests and rejects reused keys for different work. | [MCP interface: safe creation retries](MCP.md#safe-creation-retries) |
-| `MCP-VALIDATE-01` | Invalid MCP input returns a validation error without persistence or publication. | [Transport contract: run request](CONTRACT.md#run-request) |
-| `MCP-QUEUE-RETRY-01` | Uncertain MCP admission tells callers to reuse the same idempotency key. | [MCP interface: safe creation retries](MCP.md#safe-creation-retries) |
-| `MCP-LIST-PAGE-01` | MCP listing is bounded, newest-first, and cursor pages do not repeat runs. | [MCP interface: V1 tools](MCP.md#v1-tools) |
-| `MCP-READ-01` | MCP details omit internal fields and unknown IDs return `RUN_NOT_FOUND`. | [MCP interface: read data boundary](MCP.md#v1-tools) |
-| `MCP-DATA-01` | MCP read results omit credentials and private worker/database fields. | [MCP interface: read data boundary](MCP.md#v1-tools) |
-| `MCP-URL-MALFORMED-01` | Malformed persisted URLs return `about:invalid` without exposing stored values. | [MCP interface: read data boundary](MCP.md#v1-tools) |
-| `MCP-EVENTS-01` | MCP event pages are ordered, cursor-based, and omit raw output and worker identity. | [MCP interface: read data boundary](MCP.md#v1-tools) |
-| `MCP-CANCEL-01` | MCP cancellation uses canonical queued, running, and terminal transitions. | [MCP interface: cancellation](MCP.md#v1-tools) |
+| `UTCP-DISCOVERY-01` | `/utcp` returns a valid UTCP 1.0.0 manual with exactly five tools, configured absolute URLs, JSON schemas, HTTP mappings, and no credentials. | [UTCP discovery](UTCP.md#discovery-and-urls) |
+| `UTCP-INTEROP-01` | The official TypeScript client discovers the manual and invokes a read and a state-changing tool over its HTTP plugin. | [UTCP TypeScript client example](UTCP.md#tested-typescript-client-example) |
+| `UTCP-AUTH-01` | Agent routes require the client bearer credential, reject missing, invalid, worker, Kaseki, and OAuth credentials, report current client-token collisions as unavailable, and leave `/mcp` unavailable. | [UTCP authentication](UTCP.md#authentication) |
+| `UTCP-CREATE-01` | Agent creation uses shared admission, defaults publication to `none`, and preserves explicit publication settings. | [UTCP tool inventory](UTCP.md#tool-inventory) |
+| `UTCP-IDEMPOTENCY-01` | Equivalent create requests replay, conflicting key reuse fails, and uncertain Queue retries preserve the existing admission response contract. | [UTCP run lifecycle and idempotency](UTCP.md#run-lifecycle-and-idempotency) |
+| `UTCP-READ-01` | Agent run reads are bounded, cursor-paginated, sanitized, and restricted to retained history. | [UTCP data boundary](UTCP.md#data-boundary) |
+| `UTCP-EVENTS-01` | Agent event pages are sequence-paginated and omit worker identity and unrestricted payloads. | [UTCP data boundary](UTCP.md#data-boundary) |
+| `UTCP-CANCEL-01` | Agent cancellation uses canonical cancellation and run-origin checks. | [UTCP tool inventory](UTCP.md#tool-inventory) |
+| `UTCP-ORIGIN-01` | Discovery URLs come from validated trusted configuration; production rejects loopback origins and local development permits explicit loopback only. | [UTCP discovery](UTCP.md#discovery-and-urls) |
+| `UTCP-ORIGIN-02` | Agent runs have a stable server-derived origin, separate idempotency namespace, and cancellation ownership from the general client API. | [UTCP run lifecycle and idempotency](UTCP.md#run-lifecycle-and-idempotency) |
 | `LIFECYCLE-TRANSITIONS-01` | The state machine permits the documented lifecycle transitions. | [Architecture: run lifecycle](ARCHITECTURE.md#run-lifecycle) |
 | `LIFECYCLE-TERMINAL-01` | Terminal states cannot return to active states. | [Architecture: run lifecycle](ARCHITECTURE.md#run-lifecycle) |
 | `RUN-ID-UUIDV7-01` | Run IDs encode the millisecond timestamp and sort across millisecond boundaries. | [Architecture: IDs, authentication, and compatibility](ARCHITECTURE.md#ids-authentication-and-compatibility) |
@@ -116,9 +112,7 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `OAUTH-CONSENT-COPY-01` | Consent explains dashboard access in user-facing language without exposing internal scope identifiers. | [Deployment: OAuth consent security](DEPLOYMENT.md#oauth-consent-security) |
 | `HTTP-BODY-01` | JSON body size is measured in bytes and capped at 96 KiB. | [Transport contract: errors](CONTRACT.md#errors) |
 | `HTTP-BODY-02` | Oversized JSON bodies are cancelled as soon as streamed bytes exceed 96 KiB, even when Content-Length is inaccurate. | [Transport contract: errors](CONTRACT.md#errors) |
-| `MCP-BODY-01` | OAuth-authenticated MCP requests above 96 KiB are rejected before write-scope inspection buffers the message. | [MCP interface: endpoint and transport](MCP.md#endpoint-and-transport) |
-| `MCP-BODY-02` | Bearer-authenticated MCP requests are capped at 96 KiB by the stateless MCP transport. | [MCP interface: endpoint and transport](MCP.md#endpoint-and-transport) |
-| `RUN-REPO-HTTPS-01` | REST and MCP run submissions accept HTTPS repository URLs and reject other URL schemes. | [Transport contract: run request](CONTRACT.md#run-request) |
+| `RUN-REPO-HTTPS-01` | REST and UTCP agent submissions accept HTTPS repository URLs and reject other URL schemes. | [Transport contract: run request](CONTRACT.md#run-request) |
 | `RUN-RETRY-HTTPS-01` | A terminal legacy run with a non-HTTPS repository URL cannot be requeued through retry. | [Transport contract: run request](CONTRACT.md#run-request) |
 | `OAUTH-RATE-LIMIT-01` | Public OAuth client registration is capped at 10 requests per connecting IP per minute. | [Architecture: ownership boundary](ARCHITECTURE.md#ownership-boundary) |
 | `OAUTH-RATE-LIMIT-IP-01` | OAuth registration fails closed without a connecting IP and never shares a fallback rate-limit bucket. | [Architecture: ownership boundary](ARCHITECTURE.md#ownership-boundary) |

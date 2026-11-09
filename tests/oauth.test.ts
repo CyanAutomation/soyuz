@@ -7,7 +7,6 @@ import {
   canonicalPublicOrigin,
   isAllowedGithubUser,
   oauthProviderOptions,
-  requestNeedsWriteScope,
   renderConsentPage,
 } from "../src/auth/oauth";
 import { vi } from "vitest";
@@ -28,31 +27,6 @@ describe("Soyuz OAuth policy", () => {
     expect(canonicalPublicOrigin("http://soyuz.example.test")).toBeNull();
     expect(canonicalPublicOrigin("https://soyuz.example.test/path")).toBeNull();
     expect(canonicalPublicOrigin("https://user:pass@soyuz.example.test")).toBeNull();
-  });
-
-  it("[OAUTH-02] identifies MCP tool requests that require write scope, including batches", async () => {
-    const write = new Request("https://soyuz.example.test/mcp", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", method: "tools/call", params: { name: "create_run" } }),
-    });
-    expect(await requestNeedsWriteScope(write)).toBe(true);
-    const batch = new Request("https://soyuz.example.test/mcp", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify([
-        { jsonrpc: "2.0", method: "tools/call", params: { name: "list_runs" } },
-        { jsonrpc: "2.0", method: "tools/call", params: { name: "cancel_run" } },
-      ]),
-    });
-    expect(await requestNeedsWriteScope(batch)).toBe(true);
-    const read = new Request("https://soyuz.example.test/mcp", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", method: "tools/call", params: { name: "get_run" } }),
-    });
-    expect(await requestNeedsWriteScope(read)).toBe(false);
-    expect(await requestNeedsWriteScope(new Request("https://soyuz.example.test/mcp"))).toBe(false);
   });
 
   it("[OAUTH-CONSENT-ESCAPE-01] escapes dynamic consent text and form values", () => {

@@ -44,7 +44,7 @@ Core's package documentation describes pseudonymous installation telemetry durin
 
 ## Security and limits
 
-- The analysis page uses the existing GitHub OAuth allowlist and `soyuz:read`; it does not request `soyuz:write`.
+- The analysis page uses the existing GitHub OAuth allowlist and `soyuz:read` scope.
 - The OpenUI generation, JEV decision, and JEV feedback endpoints are the only POST exceptions under `/dashboard/api/**`. They require the allowlisted `soyuz:read` scope, use per-user rate limits, and cannot create, cancel, retry, or otherwise change runs.
 - Provider credentials remain in Worker configuration. The access token stays in page memory and is sent only to Soyuz's same-origin APIs.
 - Components and actions are explicit allowlists. Core mutations, arbitrary HTTP/SQL, generated JavaScript/HTML, and external navigation are unsupported.

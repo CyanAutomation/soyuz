@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { McpCreateRunInputSchema, RunRequestSchema } from "../src/contracts/run-request";
+import { AgentCreateRunInputSchema, RunRequestSchema } from "../src/contracts/run-request";
 
 describe("run repository URL policy", () => {
-  it("[RUN-REPO-HTTPS-01] accepts HTTPS repository URLs for REST and MCP submissions", () => {
+  it("[RUN-REPO-HTTPS-01] accepts HTTPS repository URLs for REST and UTCP submissions", () => {
     const httpsRepository = "https://github.com/example/project.git";
 
     expect(RunRequestSchema.safeParse({
       repoUrl: httpsRepository,
       taskPrompt: "Update the project documentation.",
     }).success).toBe(true);
-    expect(McpCreateRunInputSchema.safeParse({
+    expect(AgentCreateRunInputSchema.safeParse({
       repoUrl: httpsRepository,
       taskPrompt: "Update the project documentation.",
     }).success).toBe(true);
@@ -19,10 +19,10 @@ describe("run repository URL policy", () => {
     "http://github.com/example/project.git",
     "ssh://git@github.com/example/project.git",
     "file:///etc/passwd",
-  ])("[RUN-REPO-HTTPS-01] rejects non-HTTPS repository URL %s for REST and MCP submissions", (repoUrl) => {
+  ])("[RUN-REPO-HTTPS-01] rejects non-HTTPS repository URL %s for REST and UTCP submissions", (repoUrl) => {
     const request = { repoUrl, taskPrompt: "Update the project documentation." };
 
     expect(RunRequestSchema.safeParse(request).success).toBe(false);
-    expect(McpCreateRunInputSchema.safeParse(request).success).toBe(false);
+    expect(AgentCreateRunInputSchema.safeParse(request).success).toBe(false);
   });
 });

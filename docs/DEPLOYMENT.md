@@ -46,7 +46,11 @@ The analysis page's JEV decision endpoint also uses the server-side `OPENROUTER_
 
 `npm run db:migrate:remote` changes production D1 and requires D1 Edit access. Run it only with separate authorization from the Worker deployment. CI/CD never runs production migrations.
 
-Set `SOYUZ_PUBLIC_URL` to the canonical HTTPS origin, such as `https://soyuz.example.com`, and `SOYUZ_OAUTH_ALLOWED_GITHUB_IDS` to a comma-separated allowlist of numeric GitHub user IDs as Worker variables or secrets. Configure the GitHub OAuth App callback URL to `${SOYUZ_PUBLIC_URL}/oauth/callback`. The dashboard API and OAuth access tokens remain unavailable unless the `OAUTH_KV` binding, callback origin, OAuth credentials, and non-empty allowlist are configured.
+Set `SOYUZ_ENVIRONMENT=production` and `SOYUZ_PUBLIC_URL` to the canonical HTTPS origin, such as `https://soyuz.example.com`, and set `SOYUZ_OAUTH_ALLOWED_GITHUB_IDS` to a comma-separated allowlist of numeric GitHub user IDs as Worker variables or secrets. `GET /utcp` uses this trusted configured origin to publish absolute tool URLs and rejects loopback origins in production; it never trusts inbound Host headers. Configure the GitHub OAuth App callback URL to `${SOYUZ_PUBLIC_URL}/oauth/callback`. The dashboard API and OAuth access tokens remain unavailable unless the `OAUTH_KV` binding, callback origin, OAuth credentials, and non-empty allowlist are configured. The dashboard continues to use its current GitHub OAuth implementation; the future Cloudflare Access migration is separate.
+
+For local development, `.dev.vars.example` sets `SOYUZ_ENVIRONMENT=development` and `SOYUZ_PUBLIC_URL=http://127.0.0.1:8787`. Only an explicitly configured loopback origin is accepted over HTTP, and that exception is gated on the development environment value. Do not copy the local override into production.
+
+UTCP discovery is public and contains only tool metadata, schemas, endpoint URLs, and a `CLIENT_API_TOKEN` placeholder. The five `/v1/agent/runs` operations require `Authorization: Bearer <CLIENT_API_TOKEN>`; they reject dashboard OAuth, worker, and scoped Kaseki submission credentials. They share the existing D1, Queue, idempotency, cancellation, and retention mechanisms. See [the UTCP interface](UTCP.md) for the tool/client contract and response data boundary.
 
 ### OAuth consent security
 
