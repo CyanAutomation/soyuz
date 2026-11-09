@@ -45,7 +45,12 @@ GET  /v1/runs/:id/events?after=0&limit=100
 GET  /v1/runs/:id/artifacts
 GET  /v1/runs/:id/artifacts/:artifactId
 POST /v1/runs/:id/cancel
-POST /mcp (Streamable HTTP MCP)
+GET  /utcp (public UTCP tool discovery manual)
+POST /v1/agent/runs
+GET  /v1/agent/runs?limit=30&status=queued
+GET  /v1/agent/runs/:id
+GET  /v1/agent/runs/:id/events?after=0&limit=100
+POST /v1/agent/runs/:id/cancel
 GET  /dashboard/ (GitHub OAuth, read-only)
 ```
 
@@ -66,11 +71,11 @@ Artifact uploads require the current worker ID and claim callback ID as headers,
 
 The optional `/dashboard/analysis/` page uses OpenUI Core and a native TypeScript DOM renderer to build read-only run-analysis views from natural-language prompts. It also offers explicit advisory JEV triage and Kaseki outcome scoring through a separate OpenRouter decisions adapter and reusable server-side decision function. Users can rate an assessment; Soyuz keeps the rating but not the model answer. Local development enables a deterministic fixture for OpenUI generation; JEV requires the server-side OpenRouter key. See [OpenUI run analysis](docs/OPENUI-ANALYSIS.md) for provider setup, profiles, evaluation signals, and security boundaries.
 
-All Soyuz↔Kaseki messages carry `contractVersion: "1"`. See [the architecture](docs/ARCHITECTURE.md), [transport contract](docs/CONTRACT.md), [MCP interface](docs/MCP.md), [OpenUI run analysis](docs/OPENUI-ANALYSIS.md), [Kaseki integration](docs/KASEKI-INTEGRATION.md), and [Cloudflare setup](docs/DEPLOYMENT.md).
+All Soyuz↔Kaseki messages carry `contractVersion: "1"`. AI clients discover the five supported tools from `GET /utcp` and invoke the documented HTTP endpoints directly with the client bearer credential. `create_run` defaults to `publishMode: "none"`; agent results are bounded and sanitized. See [the UTCP interface](docs/UTCP.md), [architecture](docs/ARCHITECTURE.md), [transport contract](docs/CONTRACT.md), [OpenUI run analysis](docs/OPENUI-ANALYSIS.md), [Kaseki integration](docs/KASEKI-INTEGRATION.md), and [Cloudflare setup](docs/DEPLOYMENT.md).
 
 Client and worker keys are static bearer secrets; Soyuz does not assign them an automatic expiry time. Rotating or revoking a configured key makes earlier keys invalid. Authentication errors return 401 with guidance to use the current key; a missing server-side key returns 503 so it is distinguishable from a caller credential error.
 
-The `/mcp` endpoint exposes the client-facing `create_run`, `list_runs`, `get_run`, `get_run_events`, and `cancel_run` tools over stateless Streamable HTTP. It uses the client bearer token; worker callbacks are not exposed through MCP. See [the MCP interface and security boundary](docs/MCP.md).
+The dashboard continues to use its GitHub OAuth login, user-ID allowlist, sessions, and read-only analysis access. Cloudflare Access migration remains a separate future workstream.
 
 ## Provisioning Cloudflare resources
 
@@ -91,7 +96,7 @@ npm run db:migrate:remote
 npm run deploy
 ```
 
-Set `SOYUZ_PUBLIC_URL`, `SOYUZ_OAUTH_ALLOWED_GITHUB_IDS`, and (for Kaseki submission routing) `KASEKI_SUBMISSION_IDENTITY` as Worker variables or secrets. Keep `KASEKI_SUBMISSION_API_TOKEN` distinct from the general client and worker tokens. Apply remote D1 migrations only through the separately authorized migration procedure in the [deployment guide](docs/DEPLOYMENT.md).
+Set `SOYUZ_PUBLIC_URL` to the canonical public HTTPS origin, keep `SOYUZ_ENVIRONMENT=production`, set `SOYUZ_OAUTH_ALLOWED_GITHUB_IDS`, and configure (for Kaseki submission routing) `KASEKI_SUBMISSION_IDENTITY` as Worker variables or secrets. Local `.dev.vars` may set `SOYUZ_ENVIRONMENT=development` and `SOYUZ_PUBLIC_URL=http://127.0.0.1:8787`; only an explicitly configured loopback URL is accepted for local discovery. Keep `KASEKI_SUBMISSION_API_TOKEN` distinct from the general client and worker tokens. Apply remote D1 migrations only through the separately authorized migration procedure in the [deployment guide](docs/DEPLOYMENT.md).
 
 Enable the Queue's HTTP pull consumer for the Kaseki host separately in Cloudflare. See [deployment and secret setup](docs/DEPLOYMENT.md) and [Kaseki integration](docs/KASEKI-INTEGRATION.md) for the required pull permissions and acknowledgement contract.
 

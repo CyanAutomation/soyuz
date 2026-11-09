@@ -57,7 +57,7 @@ export interface RunEventsPage {
 }
 
 export interface RunOrigin {
-  type: "api_client" | "kaseki" | "mcp";
+  type: "api_client" | "kaseki";
   id: string;
 }
 

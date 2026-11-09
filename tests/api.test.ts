@@ -597,7 +597,7 @@ describe("Soyuz Worker API", () => {
     expect(second.body.data.nextAfter).toBeGreaterThan(first.body.data.nextAfter);
   });
 
-  it("[OAUTH-02] keeps the dashboard read-only and requires write scope for MCP mutations", async () => {
+  it("[OAUTH-02] keeps the dashboard read-only and restricts agent endpoints to the client bearer credential", async () => {
     const { bindings } = testEnv({ oauth: true });
     const accessToken = await createOAuthAccessToken(bindings);
 
@@ -608,14 +608,14 @@ describe("Soyuz Worker API", () => {
     });
     expect(dashboardWrite.response.status).toBe(405);
 
-    const mcpWrite = await callBinary(bindings, "/mcp", {
+    const agentWrite = await call(bindings, "/v1/agent/runs", {
       method: "POST",
       token: accessToken,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "create_run", arguments: validRequest() } }),
+      body: validRequest(),
     });
-    expect(mcpWrite.response.status).toBe(403);
-    expect((mcpWrite.body as any).error).toBe("insufficient_scope");
+    expect(agentWrite.response.status).toBe(401);
+    expect(agentWrite.body.error.code).toBe("UNAUTHORIZED");
+    expect((await callBinary(bindings, "/mcp", { token: accessToken })).response.status).toBe(404);
   });
 
   it("[OAUTH-02] allows only the authenticated analysis-generation POST with read scope", async () => {
@@ -641,14 +641,14 @@ describe("Soyuz Worker API", () => {
     });
     expect(unauthenticated.response.status).toBe(401);
 
-    const writeOnlyToken = await createOAuthAccessToken(bindings, ["soyuz:write"]);
-    const writeOnly = await callBinary(bindings, "/dashboard/api/analysis/generate", {
+    const tokenWithoutReadScope = await createOAuthAccessToken(bindings, ["offline_access"]);
+    const withoutReadScope = await callBinary(bindings, "/dashboard/api/analysis/generate", {
       method: "POST",
-      token: writeOnlyToken,
+      token: tokenWithoutReadScope,
       headers: { "content-type": "application/json" },
       body: request.body,
     });
-    expect(writeOnly.response.status).toBe(403);
+    expect(withoutReadScope.response.status).toBe(403);
 
     const otherPost = await call(bindings, "/dashboard/api/runs", {
       method: "POST",
@@ -656,29 +656,6 @@ describe("Soyuz Worker API", () => {
       body: validRequest(),
     });
     expect(otherPost.response.status).toBe(405);
-  });
-
-  it("[MCP-BODY-01] rejects oversized OAuth MCP requests before scope inspection buffers them", async () => {
-    const { bindings } = testEnv({ oauth: true });
-    const accessToken = await createOAuthAccessToken(bindings);
-    const response = await callBinary(bindings, "/mcp", {
-      method: "POST",
-      token: accessToken,
-      headers: {
-        accept: "application/json, text/event-stream",
-        "content-type": "application/json",
-        "mcp-protocol-version": "2025-03-26",
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "ping",
-        params: { padding: "x".repeat(100 * 1024) },
-      }),
-    });
-
-    expect(response.response.status).toBe(413);
-    expect((response.body as any).error.code).toBe("REQUEST_TOO_LARGE");
   });
 
   it("[OPENUI-RATE-LIMIT-01] applies a per-GitHub-user limit before analysis generation", async () => {
@@ -764,14 +741,14 @@ describe("Soyuz Worker API", () => {
     });
     expect(unauthenticated.response.status).toBe(401);
 
-    const writeOnlyToken = await createOAuthAccessToken(bindings, ["soyuz:write"]);
-    const writeOnly = await callBinary(bindings, "/dashboard/api/analysis/decisions", {
+    const tokenWithoutReadScope = await createOAuthAccessToken(bindings, ["offline_access"]);
+    const withoutReadScope = await callBinary(bindings, "/dashboard/api/analysis/decisions", {
       method: "POST",
-      token: writeOnlyToken,
+      token: tokenWithoutReadScope,
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ profileId: "run_operations_triage_v1", runId }),
     });
-    expect(writeOnly.response.status).toBe(403);
+    expect(withoutReadScope.response.status).toBe(403);
   });
 
   it("[JEV-KASEKI-01] assesses only the bounded Kaseki result summary and canonical outcome", async () => {

@@ -5,74 +5,10 @@ import type { Env } from "../env";
 import { isUuid } from "../lib/uuid";
 import { safeUrlForDisplay } from "../lib/safe-url";
 import { handleClientArtifacts } from "../api/artifacts";
-import { ApiError, errorResponse, rateLimitedResponse, requestIdFor, requestWithBoundedBody, successResponse } from "../api/http";
-import { createSoyuzMcpHandler } from "../mcp/server";
-import { isAllowedGithubUser, SOYUZ_READ_SCOPE, SOYUZ_WRITE_SCOPE, type OAuthProps } from "./oauth-policy";
+import { errorResponse, rateLimitedResponse, requestIdFor, successResponse } from "../api/http";
+import { isAllowedGithubUser, SOYUZ_READ_SCOPE, type OAuthProps } from "./oauth-policy";
 
 const API_PREFIX = "/dashboard/api";
-const MAX_MCP_AUTH_INSPECTION_BYTES = 1_000_000;
-
-export async function requestNeedsWriteScope(request: Request): Promise<boolean> {
-  if (request.method !== "POST") return false;
-  const length = request.headers.get("content-length");
-  if (length && /^\d+$/.test(length) && Number(length) > MAX_MCP_AUTH_INSPECTION_BYTES) return true;
-  try {
-    const body = request.clone().body;
-    if (!body) return false;
-    const reader = body.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    while (true) {
-      const result = await reader.read();
-      if (result.done) break;
-      size += result.value.byteLength;
-      if (size > MAX_MCP_AUTH_INSPECTION_BYTES) {
-        await reader.cancel();
-        return true;
-      }
-      chunks.push(result.value);
-    }
-    const bytes = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    const message: unknown = JSON.parse(new TextDecoder().decode(bytes));
-    return containsWriteCall(message);
-  } catch {
-    return false;
-  }
-}
-
-function containsWriteCall(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(containsWriteCall);
-  if (!value || typeof value !== "object") return false;
-  const message = value as { method?: unknown; params?: unknown };
-  if (message.method !== "tools/call" || !message.params || typeof message.params !== "object") return false;
-  const name = (message.params as { name?: unknown }).name;
-  return name === "create_run" || name === "cancel_run";
-}
-
-export async function handleOAuthMcpRequest(
-  request: Request,
-  env: Env,
-  context: ExecutionContext,
-): Promise<Response> {
-  const access = authorizeOAuthContext(context, env);
-  if (!access.ok) return access.response;
-  let scopedRequest: Request;
-  try {
-    scopedRequest = await requestWithBoundedBody(request);
-  } catch (error) {
-    if (error instanceof ApiError) return error.toResponse(requestIdFor(request));
-    throw error;
-  }
-  if (await requestNeedsWriteScope(scopedRequest) && !access.context.auth.scope.includes(SOYUZ_WRITE_SCOPE)) {
-    return insufficientScope(access.context.auth, [SOYUZ_READ_SCOPE, SOYUZ_WRITE_SCOPE]);
-  }
-  return createSoyuzMcpHandler(env).fetch(scopedRequest);
-}
 
 export async function handleDashboardApiRequest(
   request: Request,
