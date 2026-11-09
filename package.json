@@ -20,7 +20,7 @@
     "soyuz:smoke": "node scripts/soyuz-production-smoke.ts"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "^1.2.3",
+    "@cloudflare/workers-oauth-provider": "^1.2.4",
     "@modelcontextprotocol/server": "^2.0.0",
     "@openuidev/lang-core": "^1.0.1",
     "agents": "^0.28.1",
