@@ -2,6 +2,7 @@ import { fetchJson, HttpError } from "./api.js";
 import { revokeAccessToken } from "./auth-api.js";
 import { renderAuthUi } from "./auth-ui.js";
 import { createSnackBarController } from "./snackbar.js";
+import { createBadge, setButtonBusy, setNotice as renderNotice, type NoticeTone } from "./ui/components.js";
 import {
   formatEventLabel,
   formatEventPayloadValue,
@@ -10,7 +11,7 @@ import {
   getRunStatusPresentation,
   RUN_STATUS_OPTIONS,
 } from "./presentation.js";
-import { buildRunListPath } from "./run-list.js";
+import { buildRunListPath, filterAndSortRuns, type RunSortOrder } from "./run-list.js";
 
 interface OAuthRegistration {
   client_id: string;
@@ -77,8 +78,6 @@ interface DashboardRunEvent {
   payload: Record<string, string | number | boolean>;
 }
 
-type NoticeTone = "info" | "empty" | "success" | "warning" | "danger";
-
 const notice = requiredElement<HTMLElement>("#notice");
 const runsSection = requiredElement<HTMLElement>("#runs");
 const runControls = requiredElement<HTMLElement>("#run-controls");
@@ -86,6 +85,9 @@ const connectButton = requiredElement<HTMLButtonElement>("#connect");
 const accountLabel = requiredElement<HTMLElement>("#account");
 const refreshButton = requiredElement<HTMLButtonElement>("#refresh");
 const statusFilter = requiredElement<HTMLSelectElement>("#status-filter");
+const runSearch = requiredElement<HTMLInputElement>("#run-search");
+const runSort = requiredElement<HTMLSelectElement>("#run-sort");
+const runCount = requiredElement<HTMLElement>("#run-count");
 const loadMoreButton = requiredElement<HTMLButtonElement>("#load-more");
 const updatedLabel = requiredElement<HTMLElement>("#updated");
 const snackbar = createSnackBarController(requiredElement<HTMLElement>("#snackbar"));
@@ -112,6 +114,8 @@ renderAuthUi(connectButton, accountLabel, "signed-out");
 void finishSignIn();
 
 refreshButton.addEventListener("click", () => void loadRuns({ reset: true }));
+runSearch.addEventListener("input", renderRuns);
+runSort.addEventListener("change", renderRuns);
 statusFilter.addEventListener("change", () => {
   expandedRunIds.clear();
   void loadRuns({ reset: true });
@@ -274,7 +278,12 @@ async function loadRuns(options: { reset: boolean; quiet?: boolean; refreshFirst
 
   isLoadingRuns = true;
   loadMoreButton.disabled = true;
-  if (!options.quiet && options.reset) setNotice("Loading recent runs…", "info");
+  if (!options.quiet) {
+    const loadingMore = !options.reset && !options.refreshFirstPage;
+    setButtonBusy(loadingMore ? loadMoreButton : refreshButton, true, loadingMore ? "Loading more…" : "Loading runs…");
+    runsSection.setAttribute("aria-busy", "true");
+    setNotice(loadingMore ? "Loading more runs…" : "Loading recent runs…", "info");
+  }
   try {
     const result = await apiJson<DashboardRunListResponse>(buildRunListPath({
       status: statusFilter.value || null,
@@ -287,23 +296,19 @@ async function loadRuns(options: { reset: boolean; quiet?: boolean; refreshFirst
     if (!(options.refreshFirstPage && expandedRunIds.size > 0)) renderRuns();
     loadMoreButton.hidden = !nextCursor;
     updatedLabel.textContent = `Last refreshed ${new Date().toLocaleTimeString()}`;
-    if (!runsById.size) {
-      setNotice(
-        statusFilter.value
-          ? "No runs match this filter yet."
-          : "No runs yet. Runs submitted to Soyuz will appear here.",
-        "empty",
-      );
-    } else {
-      setNotice(`${runsById.size} ${runsById.size === 1 ? "run" : "runs"} shown.`, "info");
-    }
+    setNotice("", "info");
   } catch {
     if (token === accessToken) {
       if (!options.quiet) setNotice("We couldn't load runs. Please try again shortly.", "danger");
     }
   } finally {
+    runsSection.removeAttribute("aria-busy");
     if (token === accessToken) {
       isLoadingRuns = false;
+      if (!options.quiet) {
+        setButtonBusy(refreshButton, false);
+        setButtonBusy(loadMoreButton, false);
+      }
       loadMoreButton.disabled = !nextCursor;
       if (pendingRunReset) {
         pendingRunReset = false;
@@ -314,8 +319,23 @@ async function loadRuns(options: { reset: boolean; quiet?: boolean; refreshFirst
 }
 
 function renderRuns(): void {
-  const runs = [...runsById.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  const loadedRuns = [...runsById.values()];
+  const order = runSort.value as RunSortOrder;
+  const runs = filterAndSortRuns(loadedRuns, runSearch.value, order);
   runsSection.replaceChildren(...runs.map(renderRun));
+  if (runs.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "notice notice--empty run-list-empty";
+    empty.textContent = loadedRuns.length > 0
+      ? "No loaded runs match your search and status filter. Clear the search or choose a different status."
+      : statusFilter.value
+        ? "No runs match this status filter yet."
+        : "No runs yet. Runs submitted to Soyuz will appear here.";
+    runsSection.append(empty);
+  }
+  runCount.textContent = loadedRuns.length === 0
+    ? "No runs loaded"
+    : `Showing ${runs.length} of ${loadedRuns.length} loaded ${loadedRuns.length === 1 ? "run" : "runs"}`;
 }
 
 function renderRun(run: DashboardRunSummary): HTMLElement {
@@ -334,9 +354,7 @@ function renderRun(run: DashboardRunSummary): HTMLElement {
   identity.append(heading, ref);
 
   const statusPresentation = getRunStatusPresentation(run.status);
-  const status = document.createElement("p");
-  status.className = `badge badge--${statusPresentation.tone}`;
-  status.textContent = `Status: ${statusPresentation.label}`;
+  const status = createBadge(`Status: ${statusPresentation.label}`, statusPresentation.tone, card.ownerDocument);
   cardHeader.append(identity, status);
 
   const identifiers = document.createElement("div");
@@ -650,8 +668,7 @@ function setDashboardVisible(visible: boolean): void {
 }
 
 function setNotice(message: string, tone: NoticeTone): void {
-  notice.textContent = message;
-  notice.className = `notice notice--${tone}`;
+  renderNotice(notice, message, tone);
 }
 
 function createDefinitionList(entries: Array<[string, string]>, className = "data-list"): HTMLDListElement {

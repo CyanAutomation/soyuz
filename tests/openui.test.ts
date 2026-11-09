@@ -198,6 +198,37 @@ describe("Soyuz OpenUI Core integration", () => {
 describe("vanilla OpenUI DOM renderer", () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it("[OPENUI-RENDER-03] makes the run table a named keyboard-reachable region", async () => {
+    const { document, window } = parseHTML("<html><body><div id='output'></div></body></html>");
+    vi.stubGlobal("document", document);
+    vi.stubGlobal("window", window);
+    vi.stubGlobal("AbortController", window.AbortController);
+    const container = document.querySelector<HTMLElement>("#output")!;
+    const fetcher: typeof fetch = vi.fn(async () => new Response(JSON.stringify({ data: { runs: [], nextCursor: null } }), {
+      headers: { "content-type": "application/json" },
+    }));
+    const program = [
+      '$runStatus = "all"',
+      'runs = Query("list_runs", { limit: 30, status: $runStatus }, { runs: [], nextCursor: null })',
+      'root = Stack([RunTable(runs.runs, "Recent runs")])',
+    ].join("\n");
+    const parsed = validateGeneratedProgram(program);
+    expect(parsed.ok).toBe(true);
+    const runtime = createSoyuzOpenUIRuntime("analysis-token", fetcher);
+    const renderer = new OpenUIDOMRenderer(container, soyuzOpenUILibrary, soyuzComponentRenderers, { maxDepth: 8, maxComponents: 100 });
+    runtime.setProgram(parsed.result!);
+    await vi.waitFor(() => expect(runtime.queryManager.isAnyLoading()).toBe(false));
+    renderer.render(runtime.getRoot()!, { store: runtime.store, queryManager: runtime.queryManager, dispatchAction: () => undefined });
+
+    const tableRegion = container.querySelector(".analysis-run-table");
+    expect(tableRegion?.getAttribute("role")).toBe("region");
+    expect(tableRegion?.getAttribute("tabindex")).toBe("0");
+    expect(tableRegion?.getAttribute("aria-label")).toBe("Recent runs");
+
+    renderer.dispose();
+    runtime.dispose();
+  });
+
   it("[OPENUI-RENDER-01] renders nested components with textContent and preserves stable instances on updates", () => {
     const { document, window } = parseHTML("<html><body><div id='output'></div></body></html>");
     vi.stubGlobal("document", document);
