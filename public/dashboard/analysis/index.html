@@ -12,10 +12,8 @@
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <div class="app-shell">
     <header class="app-header">
-      <div class="app-header__identity">
+      <div class="app-header__brand">
         <p class="eyebrow">Soyuz</p>
-        <h1>Run analysis</h1>
-        <p class="muted">Ask a question about retained Kaseki-agent runs and compose a read-only view from the data Soyuz records.</p>
       </div>
       <nav class="dashboard-nav" aria-label="Soyuz dashboards">
         <a href="/dashboard/">Recent runs</a>
@@ -28,8 +26,14 @@
     </header>
 
     <main id="main-content" class="app-main" tabindex="-1">
+      <header class="page-header">
+        <div class="page-header__content">
+          <h1 class="page-header__title" id="page-title" aria-describedby="page-description">Run analysis</h1>
+          <p class="page-header__description" id="page-description">Ask a question about retained Kaseki-agent runs and compose a read-only view from the data Soyuz records.</p>
+        </div>
+      </header>
       <p id="analysis-notice" class="notice notice--info" role="status" aria-live="polite">Sign in with GitHub to analyze retained runs.</p>
-      <form id="analysis-form" class="analysis-form" hidden>
+      <form id="analysis-form" class="card card--padded analysis-form" hidden>
         <div class="field">
           <label class="field__label" for="analysis-question">What would you like to know?</label>
           <textarea class="field__control field__control--textarea" id="analysis-question" name="prompt" maxlength="2000" rows="3" required aria-describedby="analysis-question-help" placeholder="Summarise the last 10 runs, compare completed run durations, or show events for a selected run."></textarea>
@@ -42,7 +46,7 @@
       </form>
       <details id="analysis-jev-disclosure" class="analysis-jev-disclosure" hidden>
         <summary>Decision support with JEV</summary>
-        <section id="analysis-jev-controls" class="analysis-jev-controls card" aria-labelledby="analysis-jev-heading" hidden>
+        <section id="analysis-jev-controls" class="analysis-jev-controls card card--padded" aria-labelledby="analysis-jev-heading" hidden>
           <h2 id="analysis-jev-heading">JEV assessment</h2>
           <p class="muted">JEV sends only the selected run’s approved operational fields or recorded Kaseki result summary to Senku. Its answers are advisory and may incur provider charges.</p>
           <form id="analysis-jev-form" class="analysis-jev-form">

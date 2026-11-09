@@ -2,7 +2,7 @@ import { fetchJson, HttpError } from "./api.js";
 import { revokeAccessToken } from "./auth-api.js";
 import { renderAuthUi } from "./auth-ui.js";
 import { createSnackBarController } from "./snackbar.js";
-import { createBadge, setButtonBusy, setNotice as renderNotice, type NoticeTone } from "./ui/components.js";
+import { createBadge, createCard, createDefinitionList, setButtonBusy, setNotice as renderNotice, type NoticeTone } from "./ui/components.js";
 import {
   formatEventLabel,
   formatEventPayloadValue,
@@ -339,14 +339,12 @@ function renderRuns(): void {
 }
 
 function renderRun(run: DashboardRunSummary): HTMLElement {
-  const card = document.createElement("article");
-  card.className = "card run-card";
-
-  const cardHeader = document.createElement("div");
-  cardHeader.className = "run-card__header";
+  const { element: card, header: cardHeader, body: cardBody, footer: cardFooter } = createCard({ className: "run-card" }, document);
+  cardHeader.className += " run-card__header";
   const identity = document.createElement("div");
   identity.className = "run-card__identity";
   const heading = document.createElement("h2");
+  heading.className = "card__title";
   heading.textContent = formatRepositoryName(run.repoUrl);
   const ref = document.createElement("p");
   ref.className = "run-card__ref";
@@ -410,7 +408,7 @@ function renderRun(run: DashboardRunSummary): HTMLElement {
     ? `The worker hasn't checked in recently. Last check-in: ${formatTimestamp(run.lastHeartbeatAt)}.`
     : "The worker hasn't checked in recently. This run may be stalled.";
   health.hidden = run.operationalHealth !== "suspect_stalled";
-  card.append(cardHeader, identifiers, progress, health);
+  cardBody.append(identifiers, progress, health);
 
   const metadata = document.createElement("details");
   metadata.className = "run-card__metadata";
@@ -423,7 +421,7 @@ function renderRun(run: DashboardRunSummary): HTMLElement {
   metadataIdentifiers.append(technicalId, copyIdButton);
   metadataContent.append(metadataIdentifiers, facts);
   metadata.append(metadataSummary, metadataContent);
-  card.append(metadata);
+  cardFooter.append(metadata);
 
   const details = document.createElement("details");
   const summary = document.createElement("summary");
@@ -442,7 +440,7 @@ function renderRun(run: DashboardRunSummary): HTMLElement {
     }
   });
   if (expandedRunIds.has(run.runId)) details.open = true;
-  card.append(details);
+  cardFooter.append(details);
   return card;
 }
 
@@ -669,22 +667,6 @@ function setDashboardVisible(visible: boolean): void {
 
 function setNotice(message: string, tone: NoticeTone): void {
   renderNotice(notice, message, tone);
-}
-
-function createDefinitionList(entries: Array<[string, string]>, className = "data-list"): HTMLDListElement {
-  const list = document.createElement("dl");
-  list.className = className;
-  for (const [label, value] of entries) {
-    const item = document.createElement("div");
-    item.className = "data-list__item";
-    const term = document.createElement("dt");
-    term.textContent = label;
-    const description = document.createElement("dd");
-    description.textContent = value;
-    item.append(term, description);
-    list.append(item);
-  }
-  return list;
 }
 
 async function apiJson<T = unknown>(path: string): Promise<T> {
