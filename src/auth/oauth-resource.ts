@@ -3,7 +3,7 @@ import { listRunsPage, readRun, readRunEventsPage, RunApplicationError } from ".
 import { parseEventPayload, parseResult, type RunEventRow, type RunRow } from "../db/runs";
 import type { Env } from "../env";
 import { isUuid } from "../lib/uuid";
-import { safeUrlForDisplay } from "../lib/safe-url";
+import { safeHttpUrlForDisplay, safeUrlForDisplay } from "../lib/safe-url";
 import { handleClientArtifacts } from "../api/artifacts";
 import { errorResponse, rateLimitedResponse, requestIdFor, successResponse } from "../api/http";
 import { isAllowedGithubUser, SOYUZ_READ_SCOPE, type OAuthProps } from "./oauth-policy";
@@ -201,7 +201,7 @@ function dashboardRunSummary(row: RunRow): Record<string, unknown> {
 
 function dashboardRunDetail(row: RunRow): Record<string, unknown> {
   const result = parseResult(row);
-  const publishedUrl = typeof result?.publishedUrl === "string" ? safeUrlForDisplay(result.publishedUrl) : null;
+  const publishedUrl = typeof result?.publishedUrl === "string" ? safeHttpUrlForDisplay(result.publishedUrl) : null;
   return {
     ...dashboardRunSummary(row),
     updatedAt: row.updated_at,

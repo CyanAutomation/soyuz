@@ -10,7 +10,7 @@ import {
 import { AgentCreateRunInputSchema } from "../contracts/run-request";
 import { parseEventPayload, parseResult, type RunEventRow, type RunRow } from "../db/runs";
 import type { Env } from "../env";
-import { safeUrlForDisplay } from "../lib/safe-url";
+import { safeHttpUrlForDisplay, safeUrlForDisplay } from "../lib/safe-url";
 import { isUuid } from "../lib/uuid";
 import {
   AgentCancelRunOutputSchema,
@@ -185,7 +185,7 @@ function agentRunListItem(row: RunRow): Record<string, unknown> {
 function agentRunDetail(row: RunRow): Record<string, unknown> {
   const result = parseResult(row);
   const summary = typeof result?.summary === "string" ? result.summary.slice(0, 2_000) : null;
-  const publishedUrl = typeof result?.publishedUrl === "string" ? safeUrlForDisplay(result.publishedUrl) : null;
+  const publishedUrl = typeof result?.publishedUrl === "string" ? safeHttpUrlForDisplay(result.publishedUrl) : null;
   const changedFileCount = typeof result?.changedFileCount === "number" ? result.changedFileCount : null;
   return {
     ...agentRunListItem(row),

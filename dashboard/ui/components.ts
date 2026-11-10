@@ -13,6 +13,23 @@ export interface CardParts {
   footer: HTMLElement;
 }
 
+export interface FieldOptions {
+  id: string;
+  label: string;
+  control: HTMLElement;
+  helpText?: string;
+  errorText?: string;
+  className?: string;
+}
+
+export interface FieldParts {
+  element: HTMLDivElement;
+  label: HTMLLabelElement;
+  control: HTMLElement;
+  help: HTMLParagraphElement | null;
+  error: HTMLParagraphElement | null;
+}
+
 interface NoticeElement {
   hidden: HTMLElement["hidden"];
   textContent: string | null;
@@ -85,4 +102,73 @@ export function createDefinitionList(
     list.append(item);
   }
   return list;
+}
+
+/** Build a labelled field and associate its help and validation messages with the control. */
+export function createField(
+  options: FieldOptions,
+  ownerDocument: Document = document,
+): FieldParts {
+  const element = ownerDocument.createElement("div");
+  element.className = ["field", options.className].filter(Boolean).join(" ");
+
+  const label = ownerDocument.createElement("label");
+  label.className = "field__label";
+  label.htmlFor = options.id;
+  label.textContent = options.label;
+  options.control.id = options.id;
+
+  const describedBy = new Set((options.control.getAttribute("aria-describedby") ?? "").split(/\s+/).filter(Boolean));
+  let help: HTMLParagraphElement | null = null;
+  if (options.helpText) {
+    help = ownerDocument.createElement("p");
+    help.className = "field__help";
+    help.id = `${options.id}-help`;
+    help.textContent = options.helpText;
+    describedBy.add(help.id);
+  }
+
+  let error: HTMLParagraphElement | null = null;
+  if (options.errorText) {
+    error = ownerDocument.createElement("p");
+    error.className = "field__error";
+    error.id = `${options.id}-error`;
+    error.textContent = options.errorText;
+    describedBy.add(error.id);
+    options.control.setAttribute("aria-invalid", "true");
+  } else {
+    options.control.removeAttribute("aria-invalid");
+  }
+
+  if (describedBy.size > 0) options.control.setAttribute("aria-describedby", [...describedBy].join(" "));
+  else options.control.removeAttribute("aria-describedby");
+
+  element.append(label, options.control);
+  if (help) element.append(help);
+  if (error) element.append(error);
+  return { element, label, control: options.control, help, error };
+}
+
+/** Render a human-readable timestamp with semantic machine-readable time. */
+export function createTimestamp(
+  label: string,
+  value: string | null,
+  className = "",
+  ownerDocument: Document = document,
+): HTMLParagraphElement {
+  const element = ownerDocument.createElement("p");
+  element.className = ["ui-timestamp", className].filter(Boolean).join(" ");
+  const labelElement = ownerDocument.createElement("span");
+  labelElement.className = "ui-timestamp__label";
+  labelElement.textContent = `${label} · `;
+  const time = ownerDocument.createElement("time");
+  const timestamp = value ? new Date(value) : null;
+  if (value && timestamp && !Number.isNaN(timestamp.getTime())) {
+    time.dateTime = value;
+    time.textContent = timestamp.toLocaleString();
+  } else {
+    time.textContent = "Time unavailable";
+  }
+  element.append(labelElement, time);
+  return element;
 }

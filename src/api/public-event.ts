@@ -1,6 +1,13 @@
 import { parseEventPayload, type RunEventRow } from "../db/runs";
+import { safeHttpUrlForDisplay } from "../lib/safe-url";
 
 export function publicEvent(row: RunEventRow): Record<string, unknown> {
+  const payload = parseEventPayload(row);
+  if (Object.hasOwn(payload, "publishedUrl")) {
+    payload.publishedUrl = typeof payload.publishedUrl === "string"
+      ? safeHttpUrlForDisplay(payload.publishedUrl)
+      : null;
+  }
   return {
     contractVersion: row.contract_version,
     runId: row.run_id,
@@ -12,6 +19,6 @@ export function publicEvent(row: RunEventRow): Record<string, unknown> {
     step: row.step,
     timestamp: row.occurred_at,
     recordedAt: row.recorded_at,
-    payload: parseEventPayload(row),
+    payload,
   };
 }
