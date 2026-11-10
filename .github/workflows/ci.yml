@@ -223,6 +223,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy .wrangler/deploy/index.js --no-bundle
+          wranglerVersion: "4.157.0"
         env:
           WRANGLER_LOG: debug
           WRANGLER_LOG_PATH: .wrangler/logs
