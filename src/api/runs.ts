@@ -14,6 +14,7 @@ import {
   type RunRow,
 } from "../db/runs";
 import type { Env } from "../env";
+import { safeHttpUrlForDisplay } from "../lib/safe-url";
 import { isUuid } from "../lib/uuid";
 import { ApiError, errorResponse, parseJsonBody, successResponse } from "./http";
 import { publicEvent } from "./public-event";
@@ -125,6 +126,13 @@ function applicationErrorResponse(error: unknown, requestId: string): Response {
 }
 
 export function publicRun(row: RunRow): Record<string, unknown> {
+  const result = parseResult(row);
+  const publicResult = result && Object.hasOwn(result, "publishedUrl")
+    ? {
+      ...result,
+      publishedUrl: typeof result.publishedUrl === "string" ? safeHttpUrlForDisplay(result.publishedUrl) : null,
+    }
+    : result;
   return {
     id: row.id,
     displayId: row.display_id,
@@ -137,7 +145,7 @@ export function publicRun(row: RunRow): Record<string, unknown> {
     taskMode: row.task_mode,
     publishMode: row.publish_mode,
     request: parseRequest(row),
-    result: parseResult(row),
+    result: publicResult,
     createdAt: row.created_at,
     queuedAt: row.queued_at,
     startedAt: row.started_at,

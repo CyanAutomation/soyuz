@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CONTRACT_VERSION } from "./queue-message";
+import { isHttpUrl } from "../lib/safe-url";
 
 const CallbackBase = z.object({
   contractVersion: z.literal(CONTRACT_VERSION),
@@ -69,7 +70,7 @@ export const WorkerCompletedSchema = FencedCallbackBase.extend({
   completedAt: OptionalTimestamp,
   exitCode: z.literal(0).optional(),
   summary: z.string().max(2_000).optional(),
-  publishedUrl: z.string().url().max(2_048).optional(),
+  publishedUrl: z.string().url().max(2_048).refine(isHttpUrl, "publishedUrl must use HTTP or HTTPS").optional(),
   changedFileCount: z.number().int().min(0).max(100_000).optional(),
 }).strict();
 

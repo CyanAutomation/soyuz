@@ -38,10 +38,12 @@ describe("dashboard page composition", () => {
 
     expect(toolbar.className.split(/\s+/)).toContain("toolbar");
     expect(toolbar.getAttribute("role")).toBe("group");
-    expect(toolbar.querySelector('[aria-label="Search runs"]')).not.toBeNull();
+    expect(toolbar.querySelector('[aria-label="Search retained runs"]')).not.toBeNull();
     expect(toolbar.querySelector('[aria-label="Sort and filter runs"]')).not.toBeNull();
     expect(toolbar.querySelector('[aria-label="Run list actions"]')).not.toBeNull();
     expect(toolbar.querySelector('label[for="run-search"]')).not.toBeNull();
+    expect(toolbar.querySelector('label[for="run-search"]').textContent).toBe("Search retained runs");
+    expect(toolbar.querySelector("#run-search-help").textContent).toContain("newest 30 runs retained by Soyuz");
     expect(toolbar.querySelector('label[for="run-sort"]')).not.toBeNull();
     expect(toolbar.querySelector('label[for="status-filter"]')).not.toBeNull();
     expect(toolbar.querySelector("#run-count").getAttribute("aria-live")).toBe("polite");
@@ -72,5 +74,9 @@ describe("dashboard page composition", () => {
     expect(stylesheet).toContain(".toolbar__group--filters");
     expect(stylesheet).toContain(".card--structured");
     expect(stylesheet).toContain(".card__title");
+    expect(stylesheet).toMatch(/\.field__control\s*\{[^}]*min-height:\s*3rem/);
+    expect(stylesheet).toMatch(/\.button\s*\{[^}]*min-height:\s*3rem/);
+    expect(stylesheet).toMatch(/\.run-card__copy-id\s*\{[^}]*min-height:\s*2\.75rem/);
+    expect(stylesheet).toContain(".ui-timestamp__label");
   });
 });
