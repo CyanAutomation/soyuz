@@ -1,6 +1,7 @@
 import type { ElementNode } from "@openuidev/lang-core";
 import type { NativeComponentRenderer } from "../../openui/dom-renderer";
 import { RUN_STATUSES } from "../../src/domain/run-state-machine";
+import { createField } from "../ui/components.js";
 
 const STATUS_OPTIONS = ["all", ...RUN_STATUSES] as const;
 const SORT_OPTIONS = ["createdAt", "displayId", "status", "repoUrl", "ref", "durationMs"] as const;
@@ -52,7 +53,7 @@ export const soyuzComponentRenderers: Record<string, NativeComponentRenderer> = 
       heading?.remove();
     }
 
-    if (props.filterable !== false) renderStatusFilter(element, context);
+    if (props.filterable !== false) renderStatusFilter(element, context, keyFor(node));
     else {
       const filter = element.querySelector<HTMLElement>(".analysis-run-table__filter");
       if (filter) {
@@ -267,21 +268,24 @@ export const soyuzComponentRenderers: Record<string, NativeComponentRenderer> = 
   },
 };
 
-function renderStatusFilter(element: HTMLElement, context: Parameters<NativeComponentRenderer>[3]): void {
+function renderStatusFilter(element: HTMLElement, context: Parameters<NativeComponentRenderer>[3], componentKey: string): void {
   let wrapper = element.querySelector<HTMLElement>(".analysis-run-table__filter");
   if (!wrapper) {
-    wrapper = document.createElement("label");
-    wrapper.className = "analysis-run-table__filter";
-    wrapper.textContent = "Filter by status ";
     const select = document.createElement("select");
-    select.setAttribute("aria-label", "Filter runs by status");
+    select.className = "field__control";
     for (const value of STATUS_OPTIONS) {
       const option = document.createElement("option");
       option.value = value;
       option.textContent = value === "all" ? "All statuses" : value.replaceAll("_", " ");
       select.append(option);
     }
-    wrapper.append(select);
+    const idSuffix = componentKey.replace(/[^a-zA-Z0-9_-]/g, "-");
+    wrapper = createField({
+      id: `analysis-status-filter-${idSuffix}`,
+      label: "Filter by status",
+      control: select,
+      className: "analysis-run-table__filter",
+    }, document).element;
     element.prepend(wrapper);
   }
   const select = wrapper.querySelector("select");

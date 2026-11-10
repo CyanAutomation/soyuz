@@ -391,8 +391,10 @@ describe("vanilla OpenUI DOM renderer", () => {
     accessibleRenderer.render(runtime.getRoot()!, { store: runtime.store, queryManager: runtime.queryManager, dispatchAction: () => undefined });
     expect(container.querySelector("table")?.getAttribute("aria-label")).toBe("Recent runs");
     expect(container.querySelector("th")?.getAttribute("scope")).toBe("col");
-    expect(container.querySelector("select")?.getAttribute("aria-label")).toBe("Filter runs by status");
+    const statusLabel = container.querySelector<HTMLLabelElement>(".analysis-run-table__filter label");
     const select = container.querySelector("select");
+    expect(statusLabel?.textContent).toBe("Filter by status");
+    expect(statusLabel?.htmlFor).toBe(select?.id);
     if (select) Object.defineProperty(select, "value", { configurable: true, value: "failed" });
     select?.dispatchEvent(new window.Event("change"));
     expect(runtime.store.get("$runStatus")).toBe("failed");

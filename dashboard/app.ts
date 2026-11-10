@@ -2,13 +2,13 @@ import { fetchJson, HttpError } from "./api.js";
 import { revokeAccessToken } from "./auth-api.js";
 import { renderAuthUi } from "./auth-ui.js";
 import { createSnackBarController } from "./snackbar.js";
-import { createBadge, createCard, createDefinitionList, setButtonBusy, setNotice as renderNotice, type NoticeTone } from "./ui/components.js";
+import { createDefinitionList, setButtonBusy, setNotice as renderNotice, type NoticeTone } from "./ui/components.js";
+import { createRunCard, type DashboardRunSummary } from "./run-card.js";
 import {
   formatEventLabel,
   formatEventPayloadValue,
   formatMachineLabel,
-  formatRepositoryName,
-  getRunStatusPresentation,
+  formatTimestamp,
   RUN_STATUS_OPTIONS,
 } from "./presentation.js";
 import { buildRunListPath, filterAndSortRuns, type RunSortOrder } from "./run-list.js";
@@ -19,23 +19,6 @@ interface OAuthRegistration {
 
 interface OAuthTokenResponse {
   access_token: string;
-}
-
-interface DashboardRunSummary {
-  status: string;
-  runId: string;
-  displayId: string;
-  repoUrl: string;
-  ref: string;
-  origin: { type: string; id: string };
-  retryOf: string | null;
-  createdAt: string;
-  queuedAt: string | null;
-  startedAt: string | null;
-  completedAt: string | null;
-  stage: string | null;
-  operationalHealth: "unknown" | "healthy" | "suspect_stalled";
-  lastHeartbeatAt: string | null;
 }
 
 interface DashboardRunListResponse {
@@ -327,121 +310,45 @@ function renderRuns(): void {
     const empty = document.createElement("p");
     empty.className = "notice notice--empty run-list-empty";
     empty.textContent = loadedRuns.length > 0
-      ? "No loaded runs match your search and status filter. Clear the search or choose a different status."
+      ? "No retained runs match your search and status filter. Clear the search or choose a different status."
       : statusFilter.value
-        ? "No runs match this status filter yet."
+        ? "No retained runs match this status filter."
         : "No runs yet. Runs submitted to Soyuz will appear here.";
     runsSection.append(empty);
   }
+  const matching = statusFilter.value ? "matching " : "";
+  const runLabel = loadedRuns.length === 1 ? "run" : "runs";
   runCount.textContent = loadedRuns.length === 0
-    ? "No runs loaded"
-    : `Showing ${runs.length} of ${loadedRuns.length} loaded ${loadedRuns.length === 1 ? "run" : "runs"}`;
+    ? "No retained runs"
+    : `Showing ${runs.length} of ${loadedRuns.length} ${matching}retained ${runLabel}`;
 }
 
 function renderRun(run: DashboardRunSummary): HTMLElement {
-  const { element: card, header: cardHeader, body: cardBody, footer: cardFooter } = createCard({ className: "run-card" }, document);
-  cardHeader.className += " run-card__header";
-  const identity = document.createElement("div");
-  identity.className = "run-card__identity";
-  const heading = document.createElement("h2");
-  heading.className = "card__title";
-  heading.textContent = formatRepositoryName(run.repoUrl);
-  const ref = document.createElement("p");
-  ref.className = "run-card__ref";
-  ref.textContent = `Ref · ${run.ref || "Not reported"}`;
-  identity.append(heading, ref);
-
-  const statusPresentation = getRunStatusPresentation(run.status);
-  const status = createBadge(`Status: ${statusPresentation.label}`, statusPresentation.tone, card.ownerDocument);
-  cardHeader.append(identity, status);
-
-  const identifiers = document.createElement("div");
-  identifiers.className = "run-card__identifiers";
-  const displayId = document.createElement("p");
-  displayId.className = "run-card__id";
-  displayId.textContent = `Soyuz run · ${run.displayId}`;
-  const technicalId = document.createElement("p");
-  technicalId.className = "run-card__technical-id";
-  technicalId.textContent = "Technical ID · ";
-  const technicalIdCode = document.createElement("code");
-  technicalIdCode.textContent = run.runId;
-  technicalId.append(technicalIdCode);
-  const copyIdButton = document.createElement("button");
-  copyIdButton.className = "button button--secondary run-card__copy-id";
-  copyIdButton.type = "button";
-  copyIdButton.textContent = "Copy ID";
-  copyIdButton.setAttribute("aria-label", "Copy technical run ID");
-  copyIdButton.addEventListener("click", () => {
-    const clipboard = navigator.clipboard;
-    if (!clipboard) {
-      copyIdButton.textContent = "Copy unavailable";
-      return;
-    }
-    void clipboard.writeText(run.runId).then(
-      () => { snackbar.show("Technical run ID copied.", "success"); },
-      () => { copyIdButton.textContent = "Copy failed"; },
-    );
-  });
-  identifiers.append(displayId);
-
-  const facts = createDefinitionList([
-    ["Created", formatRunTimestamp(run.createdAt)],
-    ["Queued", formatRunTimestamp(run.queuedAt)],
-    ["Started", formatRunTimestamp(run.startedAt)],
-    ["Completed", formatRunTimestamp(run.completedAt)],
-  ], "data-list run-facts");
-
-  const progress = document.createElement("p");
-  progress.className = "run-card__progress";
-  progress.textContent = statusPresentation.active
-    ? [
-      `Current stage · ${formatMachineLabel(run.stage)}`,
-      run.operationalHealth === "suspect_stalled" || !run.lastHeartbeatAt ? "" : `Last check-in · ${formatTimestamp(run.lastHeartbeatAt)}`,
-    ].filter(Boolean).join(" · ")
-    : run.completedAt
-      ? `Finished · ${formatTimestamp(run.completedAt)}`
-      : "Run finished";
-
-  const health = document.createElement("p");
-  health.className = "notice notice--warning run-card__health";
-  health.textContent = run.lastHeartbeatAt
-    ? `The worker hasn't checked in recently. Last check-in: ${formatTimestamp(run.lastHeartbeatAt)}.`
-    : "The worker hasn't checked in recently. This run may be stalled.";
-  health.hidden = run.operationalHealth !== "suspect_stalled";
-  cardBody.append(identifiers, progress, health);
-
-  const metadata = document.createElement("details");
-  metadata.className = "run-card__metadata";
-  const metadataSummary = document.createElement("summary");
-  metadataSummary.textContent = "Run metadata · technical ID and timestamps";
-  const metadataContent = document.createElement("div");
-  metadataContent.className = "details-content";
-  const metadataIdentifiers = document.createElement("div");
-  metadataIdentifiers.className = "run-card__identifiers";
-  metadataIdentifiers.append(technicalId, copyIdButton);
-  metadataContent.append(metadataIdentifiers, facts);
-  metadata.append(metadataSummary, metadataContent);
-  cardFooter.append(metadata);
-
-  const details = document.createElement("details");
-  const summary = document.createElement("summary");
-  summary.textContent = "View outcome, activity, and files";
-  const content = document.createElement("div");
-  content.className = "details-content";
-  details.append(summary, content);
-  details.addEventListener("toggle", () => {
-    if (details.open) {
-      expandedRunIds.add(run.runId);
-      if (details.dataset.loaded !== "yes" && details.dataset.loading !== "yes") {
-        void loadRunDetails(run.runId, details, content);
+  return createRunCard(run, {
+    ownerDocument: document,
+    expanded: expandedRunIds.has(run.runId),
+    onCopyId: (runId) => {
+      const clipboard = navigator.clipboard;
+      if (!clipboard) {
+        snackbar.show("Clipboard access isn't available. You can select and copy the technical ID from run metadata.", "warning");
+        return;
       }
-    } else {
-      expandedRunIds.delete(run.runId);
-    }
+      void clipboard.writeText(runId).then(
+        () => { snackbar.show("Technical run ID copied.", "success"); },
+        () => { snackbar.show("We couldn't copy the technical run ID. You can select and copy it from run metadata.", "danger"); },
+      );
+    },
+    onDetailsToggle: (currentRun, details, content, expanded) => {
+      if (expanded) {
+        expandedRunIds.add(currentRun.runId);
+        if (details.dataset.loaded !== "yes" && details.dataset.loading !== "yes") {
+          void loadRunDetails(currentRun.runId, details, content);
+        }
+      } else {
+        expandedRunIds.delete(currentRun.runId);
+      }
+    },
   });
-  if (expandedRunIds.has(run.runId)) details.open = true;
-  cardFooter.append(details);
-  return card;
 }
 
 async function loadRunDetails(runId: string, details: HTMLDetailsElement, content: HTMLElement): Promise<void> {
@@ -515,10 +422,6 @@ function appendRunSummary(container: HTMLElement, detail: DashboardRunDetail): v
 function formatRunOrigin(origin: DashboardRunSummary["origin"] | null | undefined): string {
   if (!origin?.type || !origin.id) return "Not reported";
   return `${formatMachineLabel(origin.type)} (${origin.id})`;
-}
-
-function formatRunTimestamp(value: string | null): string {
-  return value ? formatTimestamp(value) : "Not reported";
 }
 
 function appendRunEvents(container: HTMLElement, runId: string, page: DashboardRunEventsResponse): void {
@@ -702,12 +605,6 @@ function base64Url(bytes: Uint8Array): string {
 
 function formatBytes(bytes: number): string {
   return bytes < 1_000_000 ? `${Math.ceil(bytes / 1_000)} KB` : `${(bytes / 1_000_000).toFixed(1)} MB`;
-}
-
-function formatTimestamp(value: string | null): string {
-  if (!value) return "Time unavailable";
-  const timestamp = new Date(value);
-  return Number.isNaN(timestamp.getTime()) ? "Time unavailable" : timestamp.toLocaleString();
 }
 
 function startRunRefresh(): void {
