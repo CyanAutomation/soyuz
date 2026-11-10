@@ -223,6 +223,10 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy .wrangler/deploy/index.js --no-bundle
+        env:
+          WRANGLER_LOG: debug
+          WRANGLER_LOG_PATH: .wrangler/logs
+          WRANGLER_LOG_SANITIZE: "true"
 
       - name: Check deployed health endpoint
         env:
@@ -232,3 +236,13 @@ jobs:
           curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 \
             --connect-timeout 10 --max-time 30 \
             "${DEPLOYMENT_URL%/}/health"
+
+      - name: Upload Wrangler debug logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wrangler-debug-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .wrangler/logs/
+          if-no-files-found: ignore
+          include-hidden-files: true
+          retention-days: 1
