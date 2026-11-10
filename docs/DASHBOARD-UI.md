@@ -39,12 +39,19 @@ entire surface clickable; actions remain independent controls.
   or div with `header`, `body`, and `footer` slots.
 - `createDefinitionList(entries, className, document)` builds a semantic `dl`
   using text content for labels and values.
+- `createField({ id, label, control, helpText, errorText }, document)` builds a
+  labelled field and associates its help and validation messages with the
+  control.
+- `createTimestamp(label, value, className, document)` pairs a readable label
+  with a semantic `<time>` element.
 - `createBadge`, `setNotice`, and `setButtonBusy` share status and loading
   presentation across dashboard views.
 
 Use `createCard` for a related content unit and its slots. Keep larger dynamic
-views application-owned. Soyuz status tones intentionally include warning and
-danger in addition to the neutral, active, and success states.
+views application-owned. The reusable run-card component lives in
+`dashboard/run-card.ts`; the dashboard owns its data fetching and clipboard
+effects. Soyuz status tones intentionally include warning and danger in addition
+to the neutral, active, and success states.
 
 ## Page patterns
 
@@ -54,6 +61,11 @@ revisit a sidebar and shell layout. The Recent runs page keeps its newest-first
 run cards and native disclosure sections; the toolbar groups search, sorting,
 status filtering, refresh, and result count. The Run analysis page uses the same
 page header and padded card primitive for its prompt and JEV controls.
+
+Soyuz retains at most 30 runs and the dashboard requests that full page on its
+initial load. Search therefore covers the retained history in normal use; the
+visible help text states this scope. Keep pagination support for smaller page
+sizes and future retention changes.
 
 These patterns establish consistency, but they do not certify accessibility.
 Review keyboard use, zoom and reflow, forced colours, reduced motion, and

@@ -94,3 +94,9 @@ export function formatRepositoryName(repoUrl: string): string {
 
   return path.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "") || repo;
 }
+
+export function formatTimestamp(value: string | null): string {
+  if (!value) return "Time unavailable";
+  const timestamp = new Date(value);
+  return Number.isNaN(timestamp.getTime()) ? "Time unavailable" : timestamp.toLocaleString();
+}

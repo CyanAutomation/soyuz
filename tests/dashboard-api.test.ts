@@ -280,7 +280,7 @@ describe("dashboard application flows", () => {
     nodeAt(nodes, "#run-search").dispatch("input");
     expect(nodeAt(nodes, "#runs").children).toHaveLength(1);
     expect(flattenText(nodeAt(nodes, "#runs"))).toContain("example/other-project");
-    expect(nodeAt(nodes, "#run-count").textContent).toBe("Showing 1 of 2 loaded runs");
+    expect(nodeAt(nodes, "#run-count").textContent).toBe("Showing 1 of 2 retained runs");
 
     nodeAt(nodes, "#run-search").value = "";
     nodeAt(nodes, "#run-search").dispatch("input");

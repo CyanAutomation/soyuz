@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseHTML } from "linkedom";
-import { createBadge, createCard, createDefinitionList, setButtonBusy, setNotice } from "../dashboard/ui/components";
+import { createBadge, createCard, createDefinitionList, createField, setButtonBusy, setNotice } from "../dashboard/ui/components";
+import { createRunCard } from "../dashboard/run-card";
 
 function createDocument() {
   return parseHTML("<!doctype html><html><body></body></html>").document;
@@ -77,4 +78,69 @@ describe("shared dashboard UI components", () => {
       ]);
   });
 
+  it("creates an accessible reusable field with associated help and recovery text", () => {
+    const document = createDocument();
+    const control = document.createElement("input");
+    control.setAttribute("aria-describedby", "existing-help");
+
+    const field = createField({
+      id: "run-filter",
+      label: "Filter runs",
+      control,
+      helpText: "Search retained runs.",
+      errorText: "Enter a repository or run ID.",
+      className: "toolbar-field",
+    }, document);
+
+    expect(field.element.className).toBe("field toolbar-field");
+    expect(field.label.htmlFor).toBe("run-filter");
+    expect(field.label.textContent).toBe("Filter runs");
+    expect(field.control.id).toBe("run-filter");
+    expect(field.control.getAttribute("aria-describedby")).toBe("existing-help run-filter-help run-filter-error");
+    expect(field.control.getAttribute("aria-invalid")).toBe("true");
+    expect(field.help?.textContent).toBe("Search retained runs.");
+    expect(field.error?.textContent).toBe("Enter a repository or run ID.");
+  });
+
+  it("keeps the run creation time visible while technical details remain disclosed", () => {
+    const document = createDocument();
+    const run = {
+      status: "completed",
+      runId: "00000000-0000-4000-8000-000000000012",
+      displayId: "soyuz-12",
+      repoUrl: "https://github.com/cyan/Orion",
+      ref: "main",
+      origin: { type: "api_client", id: "client-api" },
+      retryOf: null,
+      createdAt: "2026-11-03T12:00:00.000Z",
+      queuedAt: "2026-11-03T12:00:05.000Z",
+      startedAt: "2026-11-03T12:01:00.000Z",
+      completedAt: "2026-11-03T12:03:00.000Z",
+      stage: null,
+      operationalHealth: "unknown" as const,
+      lastHeartbeatAt: null,
+    };
+    const onCopyId = vi.fn();
+    const onDetailsToggle = vi.fn();
+
+    const card = createRunCard(run, { ownerDocument: document, onCopyId, onDetailsToggle });
+    const visibleCreated = card.querySelector(".run-card__created time");
+    const metadata = card.querySelector<HTMLDetailsElement>(".run-card__metadata");
+
+    expect(card.tagName).toBe("ARTICLE");
+    expect(visibleCreated?.getAttribute("datetime")).toBe(run.createdAt);
+    expect(visibleCreated?.textContent).toBe(new Date(run.createdAt).toLocaleString());
+    expect(visibleCreated?.closest("details")).toBeNull();
+    expect(metadata?.hasAttribute("open")).toBe(false);
+    expect(metadata?.textContent).toContain(run.runId);
+    expect(metadata?.textContent).toContain("Started");
+
+    card.querySelector<HTMLButtonElement>(".run-card__copy-id")?.click();
+    expect(onCopyId).toHaveBeenCalledWith(run.runId);
+
+    const details = card.querySelector<HTMLDetailsElement>(".run-card__details");
+    details!.open = true;
+    details!.dispatchEvent(new document.defaultView!.Event("toggle"));
+    expect(onDetailsToggle).toHaveBeenCalledWith(run, details, expect.anything(), true);
+  });
 });
