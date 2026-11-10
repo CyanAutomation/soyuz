@@ -1,4 +1,4 @@
-[![CI and deploy](https://github.com/CyanAutomation/soyuz/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CyanAutomation/soyuz/actions/workflows/ci.yml)
+[![CI and deploy](https://github.com/CyanAutomation/soyuz/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CyanAutomation/soyuz/actions/workflows/ci.yml) [![CodeQL](https://github.com/CyanAutomation/soyuz/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/CyanAutomation/soyuz/actions/workflows/codeql.yml)
 
 # Soyuz
 
