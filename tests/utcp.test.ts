@@ -351,6 +351,12 @@ describe("Soyuz UTCP discovery and agent API", () => {
     expect((await call(bindings, "/v1/agent/runs/not-a-uuid", { token: CLIENT_TOKEN })).response.status).toBe(404);
 
     await bindings.DB.prepare("UPDATE runs SET result_json = ? WHERE id = ?")
+      .bind(JSON.stringify({ summary: "Legacy result", publishedUrl: "javascript:alert(1)" }), created[0].runId)
+      .run();
+    const legacyDetail = await call(bindings, `/v1/agent/runs/${created[0].runId}`, { token: CLIENT_TOKEN });
+    expect(AgentGetRunOutputSchema.parse(legacyDetail.body).data.publishedUrl).toBeNull();
+
+    await bindings.DB.prepare("UPDATE runs SET result_json = ? WHERE id = ?")
       .bind(JSON.stringify({ summary: "s".repeat(2_500) }), created[0].runId)
       .run();
     const longDetail = await call(bindings, `/v1/agent/runs/${created[0].runId}`, { token: CLIENT_TOKEN });

@@ -3,6 +3,7 @@ import { fetchJson } from "../dashboard/api.ts";
 import { renderAuthUi } from "../dashboard/auth-ui.ts";
 import { revokeAccessToken } from "../dashboard/auth-api.ts";
 import { buildRunListPath, isActiveRunStatus } from "../dashboard/run-list.ts";
+import { safeHttpUrlForDisplay } from "../dashboard/ui/safe-url.ts";
 import {
   formatEventLabel,
   formatEventPayloadValue,
@@ -20,6 +21,9 @@ interface FakeNode {
   value: string;
   className: string;
   type: string;
+  href: string;
+  target: string;
+  rel: string;
   open: boolean;
   dataset: DOMStringMap;
   attributes: Record<string, string>;
@@ -47,6 +51,12 @@ interface RecordedRequest {
 }
 
 describe("dashboard API responses", () => {
+  it("[DASHBOARD-URL-PRIMITIVE-01] allows only sanitized HTTP(S) links", () => {
+    expect(safeHttpUrlForDisplay("https://user:secret@example.com/path?token=secret#section"))
+      .toBe("https://example.com/path");
+    expect(safeHttpUrlForDisplay("javascript:alert(1)")).toBeNull();
+  });
+
   it("[DASHBOARD-TEST-DOM-01] dispatches every listener registered for the same event", () => {
     const node = createNode("BUTTON");
     const firstListener = vi.fn();
@@ -242,6 +252,8 @@ describe("dashboard application flows", () => {
 
     await vi.waitFor(() => expect(requests.some(({ path }) => path === `/dashboard/api/runs/${runId}/events?limit=100`)).toBe(true));
     await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("https://github.com/example/project/pull/7"));
+    expect(findNodes(nodeAt(nodes, "#runs"), "A").find((link) => link.textContent === "Open published URL"))
+      .toMatchObject({ href: "https://github.com/example/project/pull/7", target: "_blank", rel: "noopener noreferrer" });
     expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Changed files 2");
     expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Exit code 0");
     expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Origin Kaseki (kaseki-prod)");
@@ -254,6 +266,17 @@ describe("dashboard application flows", () => {
     findNodeByClass(nodeAt(nodes, "#runs"), "load-older-events").click();
     await vi.waitFor(() => expect(requests.some(({ path }) => path === `/dashboard/api/runs/${runId}/events?after=100&limit=100`)).toBe(true));
     await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Run completed"));
+  });
+
+  it("[DASHBOARD-PUBLISHED-URL-01] does not create links from active URL schemes", async () => {
+    const { nodes } = await mountDashboard("javascript:alert(1)");
+    const details = findNodeBySummary(nodeAt(nodes, "#runs"), "View outcome, activity, and files");
+    details.open = true;
+    details.dispatch("toggle");
+
+    await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Validation passed"));
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Published URL Not reported");
+    expect(findNodes(nodeAt(nodes, "#runs"), "A")).toHaveLength(0);
   });
 
   it("[DASHBOARD-RUN-LIST-FLOW-01] pauses hidden refreshes and supports pagination and status filtering", async () => {
@@ -292,7 +315,7 @@ describe("dashboard application flows", () => {
   });
 });
 
-async function mountDashboard() {
+async function mountDashboard(publishedUrl = "https://github.com/example/project/pull/7") {
   const nodes = new Map([
     ["#notice", createNode()],
     ["#runs", createNode()],
@@ -364,7 +387,7 @@ async function mountDashboard() {
       outcomeSummary: "Validation passed",
       taskMode: "inspect",
       publishMode: "pr",
-      publishedUrl: "https://github.com/example/project/pull/7",
+      publishedUrl,
       changedFileCount: 2,
       failureClass: null,
       exitCode: 0,
@@ -423,6 +446,9 @@ function createNode(tagName = "DIV"): FakeNode {
     value: "",
     className: "",
     type: "",
+    href: "",
+    target: "",
+    rel: "",
     open: false,
     dataset: {} as DOMStringMap,
     classList: {
@@ -475,6 +501,17 @@ function findNode(root: FakeNode, tagName: string): FakeNode {
     }
   }
   throw new Error(`Missing ${tagName} node`);
+}
+
+function findNodes(root: FakeNode, tagName: string): FakeNode[] {
+  const found: FakeNode[] = [];
+  for (const child of root.children) {
+    if (!child || typeof child !== "object") continue;
+    const candidate = child as FakeNode;
+    if (candidate.tagName === tagName) found.push(candidate);
+    found.push(...findNodes(candidate, tagName));
+  }
+  return found;
 }
 
 function findNodeBySummary(root: FakeNode, text: string): FakeNode {

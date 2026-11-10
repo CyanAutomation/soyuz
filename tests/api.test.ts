@@ -640,6 +640,11 @@ describe("Soyuz Worker API", () => {
     expect(JSON.stringify(detail.body.data)).not.toContain("embedded-secret");
     expect(JSON.stringify(detail.body.data)).not.toContain("embedded-token");
 
+    await bindings.DB.prepare("UPDATE runs SET result_json = ? WHERE id = ?")
+      .bind(JSON.stringify({ summary: "Legacy result", publishedUrl: "javascript:alert(1)" }), runId).run();
+    const legacyDetail = await call(bindings, `/dashboard/api/runs/${runId}`, { token: accessToken });
+    expect(legacyDetail.body.data.publishedUrl).toBeNull();
+
     const events = await call(bindings, `/dashboard/api/runs/${runId}/events`, { token: accessToken });
     expect(events.response.status).toBe(200);
     expect(events.body.data.events).toEqual(expect.arrayContaining([
@@ -1825,9 +1830,10 @@ describe("Soyuz Worker API", () => {
       type: "stage.changed",
       stage: "execute",
       timestamp: now,
-      payload: { source: "pi-agent" },
+      payload: { source: "pi-agent", publishedUrl: "javascript:alert(1)" },
     };
-    await call(bindings, `/v1/worker/runs/${runId}/events`, { method: "POST", token: WORKER_TOKEN, body: eventBody });
+    const event = await call(bindings, `/v1/worker/runs/${runId}/events`, { method: "POST", token: WORKER_TOKEN, body: eventBody });
+    expect(event.body.data.payload.publishedUrl).toBeNull();
     const eventReplay = await call(bindings, `/v1/worker/runs/${runId}/events`, { method: "POST", token: WORKER_TOKEN, body: eventBody });
     expect(eventReplay.response.status).toBe(202);
     const reusedId = await call(bindings, `/v1/worker/runs/${runId}/events`, {
@@ -1841,6 +1847,7 @@ describe("Soyuz Worker API", () => {
     const eventList = await call(bindings, `/v1/runs/${runId}/events?limit=20`, { token: CLIENT_TOKEN });
     expect(eventList.response.status).toBe(200);
     expect(eventList.body.data.events.filter((entry: { eventId: string }) => entry.eventId === EVENT_ID)).toHaveLength(1);
+    expect(eventList.body.data.events.find((entry: { eventId: string }) => entry.eventId === EVENT_ID).payload.publishedUrl).toBeNull();
   });
 
   it("[WORKER-ARTIFACT-REPORT-01] stores bounded artifact delivery counts in the run timeline", async () => {
@@ -1900,7 +1907,14 @@ describe("Soyuz Worker API", () => {
       completedAt: now,
       exitCode: 0,
       summary: "Updated documentation.",
+      publishedUrl: "https://github.com/example/project/pull/7",
     };
+    const unsafeCompleted = await call(bindings, `/v1/worker/runs/${runId}/completed`, {
+      method: "POST", token: WORKER_TOKEN,
+      body: { ...completedBody, callbackId: "00000000-0000-4000-8000-000000000016", publishedUrl: "javascript:alert(1)" },
+    });
+    expect(unsafeCompleted.response.status).toBe(422);
+    expect(unsafeCompleted.body.error.code).toBe("INVALID_WORKER_CALLBACK");
     const completed = await call(bindings, `/v1/worker/runs/${runId}/completed`, {
       method: "POST", token: WORKER_TOKEN, body: completedBody,
     });
@@ -1910,7 +1924,14 @@ describe("Soyuz Worker API", () => {
     expect(completed.response.status).toBe(200);
     expect(completed.body.data.status).toBe("completed");
     expect(completed.body.data.result.summary).toBe("Updated documentation.");
+    expect(completed.body.data.result.publishedUrl).toBe("https://github.com/example/project/pull/7");
     expect(completedReplay.body.data.status).toBe("completed");
+
+    await bindings.DB.prepare("UPDATE run_events SET payload_json = ? WHERE run_id = ? AND type = 'run.completed'")
+      .bind(JSON.stringify({ publishedUrl: "javascript:alert(1)" }), runId).run();
+    const events = await call(bindings, `/v1/runs/${runId}/events?limit=20`, { token: CLIENT_TOKEN });
+    const completionEvent = events.body.data.events.find((event: { type: string }) => event.type === "run.completed");
+    expect(completionEvent.payload.publishedUrl).toBeNull();
 
     const lateStart = await call(bindings, `/v1/worker/runs/${runId}/started`, {
       method: "POST", token: WORKER_TOKEN, body: { ...startedBody, callbackId: "00000000-0000-4000-8000-000000000015" },
@@ -2415,8 +2436,12 @@ describe("Soyuz Worker API", () => {
     expect(listed.body.data.runs).toHaveLength(1);
     expect(listed.body.data.runs[0].id).toBe(runId);
 
+    await bindings.DB.prepare("UPDATE runs SET result_json = ? WHERE id = ?")
+      .bind(JSON.stringify({ publishedUrl: "javascript:alert(1)" }), runId).run();
+
     const read = await call(bindings, `/v1/runs/${runId}`, { token: CLIENT_TOKEN });
     expect(read.body.data.status).toBe("queued");
+    expect(read.body.data.result.publishedUrl).toBeNull();
     const missing = await call(bindings, "/v1/runs/00000000-0000-4000-8000-000000000099", { token: CLIENT_TOKEN });
     expect(missing.response.status).toBe(404);
     expect(missing.body.error.code).toBe("RUN_NOT_FOUND");

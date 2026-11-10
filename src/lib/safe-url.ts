@@ -11,3 +11,19 @@ export function safeUrlForDisplay(value: string): string {
     return "about:invalid";
   }
 }
+
+/** Accepts only web URLs, then removes credentials and request-specific data for display. */
+export function safeHttpUrlForDisplay(value: string): string | null {
+  if (!isHttpUrl(value)) return null;
+  return safeUrlForDisplay(value);
+}
+
+/** True when a value parses as an HTTP or HTTPS URL. */
+export function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}

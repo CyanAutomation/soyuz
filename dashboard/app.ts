@@ -4,6 +4,7 @@ import { renderAuthUi } from "./auth-ui.js";
 import { createSnackBarController } from "./snackbar.js";
 import { createDefinitionList, setButtonBusy, setNotice as renderNotice, type NoticeTone } from "./ui/components.js";
 import { createRunCard, type DashboardRunSummary } from "./run-card.js";
+import { safeHttpUrlForDisplay } from "./ui/safe-url.js";
 import {
   formatEventLabel,
   formatEventPayloadValue,
@@ -390,6 +391,7 @@ async function loadRunDetails(runId: string, details: HTMLDetailsElement, conten
 }
 
 function appendRunSummary(container: HTMLElement, detail: DashboardRunDetail): void {
+  const publishedUrl = typeof detail.publishedUrl === "string" ? safeHttpUrlForDisplay(detail.publishedUrl) : null;
   const section = document.createElement("section");
   section.className = "run-details__section";
   const heading = document.createElement("h3");
@@ -405,12 +407,12 @@ function appendRunSummary(container: HTMLElement, detail: DashboardRunDetail): v
     ["Changed files", detail.changedFileCount === null ? "Not reported" : String(detail.changedFileCount)],
     ["Exit code", detail.exitCode === null ? "Not reported" : String(detail.exitCode)],
     ["Failure class", formatMachineLabel(detail.failureClass)],
-    ["Published URL", detail.publishedUrl || "Not reported"],
+    ["Published URL", publishedUrl || "Not reported"],
   ], "data-list run-summary-facts");
   section.append(heading, summary, facts);
-  if (detail.publishedUrl) {
+  if (publishedUrl) {
     const link = document.createElement("a");
-    link.href = detail.publishedUrl;
+    link.href = publishedUrl;
     link.target = "_blank";
     link.rel = "noopener noreferrer";
     link.textContent = "Open published URL";
