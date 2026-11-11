@@ -3,6 +3,7 @@ import type { Env } from "../env";
 import { MAX_RETAINED_RUNS, parseResult } from "../db/runs";
 import type { RunRow } from "../db/runs";
 import { RunOutcomeSummarySchema, type RunOutcomeSummary } from "../contracts/run-outcome";
+import { safeUrlForDisplay } from "../lib/safe-url";
 import { errorResponse, successResponse } from "./http";
 
 export async function handleRunOutcomes(
@@ -90,7 +91,7 @@ function publicOutcomeRun(row: RunRow, outcome: RunOutcomeSummary | undefined) {
   return {
     id: row.id,
     displayId: row.display_id,
-    repoUrl: row.repo_url,
+    repoUrl: safeUrlForDisplay(row.repo_url),
     status: row.status,
     createdAt: row.created_at,
     completedAt: row.completed_at,
