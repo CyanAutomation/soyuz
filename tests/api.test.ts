@@ -1964,6 +1964,8 @@ describe("Soyuz Worker API", () => {
     expect(completed.body.data.result.outcomeSummary.scorecard).toMatchObject({ score: 87, grade: "B" });
     expect(completedReplay.body.data.status).toBe("completed");
 
+    await bindings.DB.prepare("UPDATE runs SET repo_url = ? WHERE id = ?")
+      .bind("https://user:secret@github.com/example/project?token=private#details", runId).run();
     const outcomes = await call(bindings, "/v1/run-outcomes", { token: CLIENT_TOKEN });
     expect(outcomes.response.status).toBe(200);
     expect(outcomes.body.data).toMatchObject({
@@ -1976,6 +1978,7 @@ describe("Soyuz Worker API", () => {
         { phase: "coding", count: 1, averageMs: 120000 },
         { phase: "validation", count: 1, averageMs: 30000 },
       ],
+      runs: [expect.objectContaining({ repoUrl: "https://github.com/example/project" })],
     });
 
     await bindings.DB.prepare("UPDATE run_events SET payload_json = ? WHERE run_id = ? AND type = 'run.completed'")
