@@ -5,6 +5,7 @@ import type { Env } from "../env";
 import { isUuid } from "../lib/uuid";
 import { safeHttpUrlForDisplay, safeUrlForDisplay } from "../lib/safe-url";
 import { handleClientArtifacts } from "../api/artifacts";
+import { handleRunOutcomes } from "../api/run-outcomes";
 import { errorResponse, rateLimitedResponse, requestIdFor, successResponse } from "../api/http";
 import { isAllowedGithubUser, SOYUZ_READ_SCOPE, type OAuthProps } from "./oauth-policy";
 
@@ -69,6 +70,10 @@ async function routeDashboardApiRequest(
 ): Promise<Response> {
   if (segments.length === 1 && segments[0] === "me") {
     return successResponse(requestId, { githubLogin: context.props.githubLogin });
+  }
+  if (segments.length === 1 && segments[0] === "outcomes") {
+    return await handleRunOutcomes(new Request(new URL("/v1/run-outcomes", url), request), env, requestId)
+      ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
   }
   if (segments.length === 1 && segments[0] === "runs") {
     return listDashboardRuns(env, url, requestId);

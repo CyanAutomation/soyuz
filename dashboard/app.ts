@@ -4,6 +4,7 @@ import { renderAuthUi } from "./auth-ui.js";
 import { createSnackBarController } from "./snackbar.js";
 import { createDefinitionList, setButtonBusy, setNotice as renderNotice, type NoticeTone } from "./ui/components.js";
 import { createRunCard, type DashboardRunSummary } from "./run-card.js";
+import { createOutcomeOverviewCard, type RunOutcomesOverview } from "./outcome-overview.js";
 import { safeHttpUrlForDisplay } from "./ui/safe-url.js";
 import {
   formatEventLabel,
@@ -64,6 +65,7 @@ interface DashboardRunEvent {
 
 const notice = requiredElement<HTMLElement>("#notice");
 const runsSection = requiredElement<HTMLElement>("#runs");
+const outcomeOverview = requiredElement<HTMLElement>("#outcome-overview");
 const runControls = requiredElement<HTMLElement>("#run-controls");
 const connectButton = requiredElement<HTMLButtonElement>("#connect");
 const accountLabel = requiredElement<HTMLElement>("#account");
@@ -198,6 +200,7 @@ async function signOut() {
   renderAuthUi(connectButton, accountLabel, "signing-out");
   stopRunRefresh();
   runsSection.replaceChildren();
+  outcomeOverview.replaceChildren();
   setDashboardVisible(false);
   setNotice("Signing out…", "info");
 
@@ -278,6 +281,7 @@ async function loadRuns(options: { reset: boolean; quiet?: boolean; refreshFirst
     for (const run of result.runs) runsById.set(run.runId, run);
     if (options.reset || cursor || options.refreshFirstPage) nextCursor = result.nextCursor;
     if (!(options.refreshFirstPage && expandedRunIds.size > 0)) renderRuns();
+    void loadOutcomeOverview(token);
     loadMoreButton.hidden = !nextCursor;
     updatedLabel.textContent = `Last refreshed ${new Date().toLocaleTimeString()}`;
     setNotice("", "info");
@@ -299,6 +303,16 @@ async function loadRuns(options: { reset: boolean; quiet?: boolean; refreshFirst
         void loadRuns({ reset: true });
       }
     }
+  }
+}
+
+async function loadOutcomeOverview(token: string): Promise<void> {
+  try {
+    const overview = await apiJson<RunOutcomesOverview>("/dashboard/api/outcomes");
+    if (token !== accessToken) return;
+    outcomeOverview.replaceChildren(createOutcomeOverviewCard(overview, document));
+  } catch {
+    // The run list remains useful if retained outcome data is temporarily unavailable.
   }
 }
 
@@ -567,6 +581,7 @@ function populateStatusFilter(): void {
 
 function setDashboardVisible(visible: boolean): void {
   runControls.hidden = !visible;
+  outcomeOverview.hidden = !visible;
   runsSection.hidden = !visible;
 }
 

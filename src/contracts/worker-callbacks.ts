@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { CONTRACT_VERSION } from "./queue-message";
 import { isHttpUrl } from "../lib/safe-url";
+import { RunOutcomeSummarySchema } from "./run-outcome";
 
 const CallbackBase = z.object({
   contractVersion: z.literal(CONTRACT_VERSION),
@@ -72,6 +73,7 @@ export const WorkerCompletedSchema = FencedCallbackBase.extend({
   summary: z.string().max(2_000).optional(),
   publishedUrl: z.string().url().max(2_048).refine(isHttpUrl, "publishedUrl must use HTTP or HTTPS").optional(),
   changedFileCount: z.number().int().min(0).max(100_000).optional(),
+  outcomeSummary: RunOutcomeSummarySchema.optional(),
 }).strict();
 
 export const WorkerFailedSchema = FencedCallbackBase.extend({
@@ -79,10 +81,12 @@ export const WorkerFailedSchema = FencedCallbackBase.extend({
   exitCode: z.number().int().optional(),
   failureClass: z.string().min(1).max(120),
   failureMessage: z.string().min(1).max(4_000),
+  outcomeSummary: RunOutcomeSummarySchema.optional(),
 }).strict();
 
 export const WorkerCancelledSchema = FencedCallbackBase.extend({
   completedAt: OptionalTimestamp,
   exitCode: z.number().int().optional(),
   reason: z.string().max(2_000).optional(),
+  outcomeSummary: RunOutcomeSummarySchema.optional(),
 }).strict();

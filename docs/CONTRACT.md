@@ -84,7 +84,7 @@ Every worker request uses `Authorization: Bearer <WORKER_API_TOKEN>`, distinct f
 - `POST /v1/worker/runs/:id/claim` body: `{ contractVersion, callbackId, workerId, leaseSeconds? }`. The default lease is 120 seconds (allowed range 30–300 seconds). A compare-and-set from `queued` to `claimed` selects one execution host.
 - `POST /v1/worker/runs/:id/started` body: `{ contractVersion, callbackId, workerId, claimCallbackId?, startedAt?, stage? }`.
 - `POST /v1/worker/runs/:id/events` body: `{ contractVersion, eventId, workerId, claimCallbackId?, type, stage?, step?, timestamp?, payload? }`. Event types are bounded operational events: stage/step changes, progress updates, heartbeat, validation completion, and publication completion. Each event is capped at 12 KB.
-- `POST /v1/worker/runs/:id/completed` body: `{ contractVersion, callbackId, workerId, claimCallbackId?, completedAt?, exitCode?: 0, summary?, publishedUrl?, changedFileCount? }`.
+- `POST /v1/worker/runs/:id/completed` body: `{ contractVersion, callbackId, workerId, claimCallbackId?, completedAt?, exitCode?: 0, summary?, publishedUrl?, changedFileCount?, outcomeSummary? }`. The optional version-1 outcome summary contains bounded scorecard values, aggregate evaluation labels/category counts, and phase durations; it cannot carry rationale, suggestions, prompts, or logs.
 - `POST /v1/worker/runs/:id/failed` body: `{ contractVersion, callbackId, workerId, claimCallbackId?, completedAt?, exitCode?, failureClass, failureMessage }`. It accepts an owned, live `claimed` run as well as an active run so Kaseki can persist a pre-execution admission failure without starting Docker.
 - `POST /v1/worker/runs/:id/cancelled` body: `{ contractVersion, callbackId, workerId, claimCallbackId?, completedAt?, exitCode?, reason? }`. It accepts an owned, live `claimed` run as well as an active run so a confirmed pre-start cancellation can be recorded.
 - `PUT /v1/worker/runs/:id/artifacts/:artifactId` streams an artifact with `Content-Length`, `X-Artifact-Name`, `X-Artifact-Kind`, `X-Soyuz-Worker-Id`, and `X-Soyuz-Claim-Callback-Id` headers. The worker ID and current claim ID must match the active run. Each file is limited to 25,000,000 bytes; a run can retain at most 100 artifacts.
@@ -105,6 +105,7 @@ Requirement IDs: `HEALTH-DB-01`, `RUN-READ-REST-01`, `CANCEL-QUEUED-01`, `CANCEL
 | `POST /v1/runs` | Client | Validate, persist, and enqueue |
 | `POST /v1/runs/:id/retry` | Client or scoped Kaseki | Retry a terminal run from the same origin with a new idempotency key |
 | `GET /v1/runs` | Client | Filtered, cursor-paginated history across the newest 30 runs; `limit` is 1–30 |
+| `GET /v1/run-outcomes` | Client | Sanitized aggregate outcomes and per-run projections for the newest 30 retained runs |
 | `GET /v1/runs/:id` | Client | Canonical run and normalized request |
 | `GET /v1/runs/:id/events` | Client | Append-only event history |
 | `GET /v1/runs/:id/artifacts` | Client | List retained artifact metadata |
@@ -122,9 +123,10 @@ Requirement IDs: `HEALTH-DB-01`, `RUN-READ-REST-01`, `CANCEL-QUEUED-01`, `CANCEL
 | `POST /dashboard/api/analysis/decisions` | OAuth `soyuz:read` | Get validated JEV answers for a server-owned profile and retained run UUID |
 | `POST /dashboard/api/analysis/feedback` | OAuth `soyuz:read` | Record or update a user's helpful/not-helpful rating for a retained run assessment |
 | `GET /dashboard/api/me` | OAuth `soyuz:read` | Current allowlisted GitHub account login |
+| `GET /dashboard/api/outcomes` | OAuth `soyuz:read` | Sanitized aggregate outcome overview for the newest 30 retained runs |
 | `GET /dashboard/api/**` | OAuth `soyuz:read` | Dashboard run/event/artifact reads |
 
-Run history is limited to the newest 30 runs across all statuses. Status filters and cursors apply within that window, and details, events, and artifacts for older runs are unavailable. Soyuz culls older run rows and their associated data during its minutely retention sweep.
+Run history is limited to the newest 30 runs across all statuses. Status filters and cursors apply within that window, and details, events, artifacts, and outcome projections for older runs are unavailable. Soyuz culls older run rows and their associated data during its minutely retention sweep. `GET /v1/run-outcomes` makes no claim about older Kaseki-local history.
 
 `POST /dashboard/api/analysis/generate`, `POST /dashboard/api/analysis/decisions`, and `POST /dashboard/api/analysis/feedback` are the only POST exceptions under the dashboard API. Generation accepts a bounded `{ "prompt": "...", "mode": "generate" | "edit", "existingProgram"?: "..." }` JSON request and streams OpenUI Lang as server-sent events. Decisions accepts `{ "profileId": "...", "runId": "..." }`; the profile determines the question map and the server constructs the bounded state projection. Feedback accepts `{ "profileId": "...", "runId": "...", "rating": "helpful" | "not_helpful" }` and stores no JEV answer. All require an authenticated, allowlisted `soyuz:read` token, use per-user rate limits, and cannot create or mutate runs. Other non-GET dashboard API methods return 405. Provider configuration, profile data boundaries, and the reusable JEV adapter are described in [OpenUI run analysis](OPENUI-ANALYSIS.md).
 

@@ -40,6 +40,7 @@ The [transport contract](docs/CONTRACT.md) documents request fields, responses, 
 GET  /health
 POST /v1/runs
 GET  /v1/runs?limit=30&status=queued
+GET  /v1/run-outcomes
 GET  /v1/runs/:id
 GET  /v1/runs/:id/events?after=0&limit=100
 GET  /v1/runs/:id/artifacts
@@ -52,6 +53,7 @@ GET  /v1/agent/runs/:id
 GET  /v1/agent/runs/:id/events?after=0&limit=100
 POST /v1/agent/runs/:id/cancel
 GET  /dashboard/ (GitHub OAuth, read-only)
+GET  /dashboard/api/outcomes (OAuth, retained outcome aggregates)
 ```
 
 Worker callbacks use a separate `Authorization: Bearer $WORKER_API_TOKEN`:
@@ -75,7 +77,7 @@ All Soyuz↔Kaseki messages carry `contractVersion: "1"`. AI clients discover th
 
 Client and worker keys are static bearer secrets; Soyuz does not assign them an automatic expiry time. Rotating or revoking a configured key makes earlier keys invalid. Authentication errors return 401 with guidance to use the current key; a missing server-side key returns 503 so it is distinguishable from a caller credential error.
 
-The dashboard continues to use its GitHub OAuth login, user-ID allowlist, sessions, and read-only analysis access. Cloudflare Access migration remains a separate future workstream.
+The recent-runs dashboard includes a sanitized outcome overview for the newest 30 retained runs. The dashboard continues to use its GitHub OAuth login, user-ID allowlist, sessions, and read-only analysis access. Cloudflare Access migration remains a separate future workstream.
 
 The dashboard's shared design tokens, page headers, toolbars, cards, badges, and DOM helpers are documented in the [dashboard UI foundation](docs/DASHBOARD-UI.md).
 
