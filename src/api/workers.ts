@@ -193,6 +193,7 @@ async function completed(request: Request, env: Env, runId: string, requestId: s
       ...(payload.data.summary ? { summary: payload.data.summary } : {}),
       ...(payload.data.publishedUrl ? { publishedUrl: payload.data.publishedUrl } : {}),
       ...(payload.data.changedFileCount !== undefined ? { changedFileCount: payload.data.changedFileCount } : {}),
+      ...(payload.data.outcomeSummary ? { outcomeSummary: payload.data.outcomeSummary } : {}),
     };
     await ensureCallbackIdAvailable(env, runId, payload.data.callbackId, "run.completed", payload.data.workerId, result);
     if (row.status === "completed") return successResponse(requestId, publicRun(row));
@@ -225,6 +226,7 @@ async function failed(request: Request, env: Env, runId: string, requestId: stri
       failureClass: payload.data.failureClass,
       failureMessage: payload.data.failureMessage,
       ...(payload.data.exitCode !== undefined ? { exitCode: payload.data.exitCode } : {}),
+      ...(payload.data.outcomeSummary ? { outcomeSummary: payload.data.outcomeSummary } : {}),
     };
     await ensureCallbackIdAvailable(env, runId, payload.data.callbackId, "run.failed", payload.data.workerId, eventPayload);
     if (row.status === "failed") return successResponse(requestId, publicRun(row));
@@ -235,6 +237,7 @@ async function failed(request: Request, env: Env, runId: string, requestId: stri
       exit_code: payload.data.exitCode ?? null,
       failure_class: payload.data.failureClass,
       failure_message: payload.data.failureMessage,
+      result_json: payload.data.outcomeSummary ? stableStringify({ outcomeSummary: payload.data.outcomeSummary }) : null,
     }, {
       eventId: payload.data.callbackId,
       type: "run.failed",
@@ -261,6 +264,7 @@ async function cancelled(request: Request, env: Env, runId: string, requestId: s
     const eventPayload = {
       ...(payload.data.reason ? { reason: payload.data.reason } : {}),
       ...(payload.data.exitCode !== undefined ? { exitCode: payload.data.exitCode } : {}),
+      ...(payload.data.outcomeSummary ? { outcomeSummary: payload.data.outcomeSummary } : {}),
     };
     await ensureCallbackIdAvailable(env, runId, payload.data.callbackId, "run.cancelled", payload.data.workerId, eventPayload);
     if (row.status === "cancelled") return successResponse(requestId, publicRun(row));
@@ -271,6 +275,7 @@ async function cancelled(request: Request, env: Env, runId: string, requestId: s
       exit_code: payload.data.exitCode ?? null,
       failure_class: "cancelled",
       failure_message: payload.data.reason ?? null,
+      result_json: payload.data.outcomeSummary ? stableStringify({ outcomeSummary: payload.data.outcomeSummary }) : null,
     }, {
       eventId: payload.data.callbackId,
       type: "run.cancelled",

@@ -2,6 +2,7 @@ import { hasBearerToken, isBearerTokenConfigured } from "./auth/bearer";
 import { getSoyuzOAuthProvider } from "./auth/oauth";
 import { handleAgentRuns } from "./api/agent-runs";
 import { handleClientRuns } from "./api/runs";
+import { handleRunOutcomes } from "./api/run-outcomes";
 import { handleClientArtifacts, purgeExpiredArtifacts } from "./api/artifacts";
 import { handleWorkerArtifacts } from "./api/worker-artifacts";
 import { errorResponse, jsonResponse, rateLimitedResponse, requestIdFor } from "./api/http";
@@ -279,6 +280,8 @@ async function handleClientRequest(
   }
   const artifactResponse = await handleClientArtifacts(request, env, url, requestId, context);
   if (artifactResponse) return artifactResponse;
+  const outcomeResponse = await handleRunOutcomes(request, env, requestId);
+  if (outcomeResponse) return outcomeResponse;
   const response = await handleClientRuns(request, env, url, requestId, origin);
   return response ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
 }

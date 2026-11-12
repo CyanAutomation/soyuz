@@ -543,6 +543,30 @@ describe("Soyuz Worker API", () => {
     ]));
   });
 
+  it("[OAUTH-08] exposes sanitized retained outcome aggregates to the authenticated dashboard", async () => {
+    const { bindings } = testEnv({ oauth: true });
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    await bindings.DB.prepare("UPDATE runs SET result_json = ? WHERE id = ?").bind(JSON.stringify({
+      outcomeSummary: {
+        schemaVersion: 1,
+        scorecard: { score: 87, grade: "B", rubricVersion: "v1", completeness: "complete", confidence: 90, scoredAt: "2026-10-18T12:00:00.000Z" },
+        evaluation: { assessment: "good", reviewerConfidence: "high", improvementCategories: [{ category: "validation", priority: "medium", count: 2 }] },
+        phaseDurationMs: { coding: 120_000 },
+      },
+    }), runId).run();
+    const accessToken = await createOAuthAccessToken(bindings);
+
+    const outcomes = await call(bindings, "/dashboard/api/outcomes", { token: accessToken });
+    expect(outcomes.response.status).toBe(200);
+    expect(outcomes.body.data).toMatchObject({
+      scope: { retainedRuns: 30, includedRuns: 1, runsWithOutcomeSummary: 1 },
+      byAssessment: { good: 1 }, byGrade: { B: 1 }, averageScore: 87,
+      improvementCategories: [{ category: "validation", priority: "medium", count: 2 }],
+    });
+    expect(JSON.stringify(outcomes.body.data)).not.toContain("prompt");
+  });
+
   it("[DASHBOARD-SECURITY-01] adds browser security headers to dashboard assets", async () => {
     const { bindings } = testEnv();
     bindings.ASSETS = { fetch: async () => new Response("dashboard", { headers: { "content-type": "text/html; charset=utf-8" } }) } as unknown as Env["ASSETS"];
@@ -1908,6 +1932,18 @@ describe("Soyuz Worker API", () => {
       exitCode: 0,
       summary: "Updated documentation.",
       publishedUrl: "https://github.com/example/project/pull/7",
+      outcomeSummary: {
+        schemaVersion: 1,
+        scorecard: {
+          score: 87, grade: "B", rubricVersion: "scorecard-v2", completeness: "complete",
+          confidence: 91, scoredAt: now,
+        },
+        evaluation: {
+          assessment: "good", reviewerConfidence: "high", taskCompletionScore: 4,
+          improvementCategories: [{ category: "validation", priority: "medium", count: 2 }],
+        },
+        phaseDurationMs: { coding: 120000, validation: 30000 },
+      },
     };
     const unsafeCompleted = await call(bindings, `/v1/worker/runs/${runId}/completed`, {
       method: "POST", token: WORKER_TOKEN,
@@ -1925,7 +1961,25 @@ describe("Soyuz Worker API", () => {
     expect(completed.body.data.status).toBe("completed");
     expect(completed.body.data.result.summary).toBe("Updated documentation.");
     expect(completed.body.data.result.publishedUrl).toBe("https://github.com/example/project/pull/7");
+    expect(completed.body.data.result.outcomeSummary.scorecard).toMatchObject({ score: 87, grade: "B" });
     expect(completedReplay.body.data.status).toBe("completed");
+
+    await bindings.DB.prepare("UPDATE runs SET repo_url = ? WHERE id = ?")
+      .bind("https://user:secret@github.com/example/project?token=private#details", runId).run();
+    const outcomes = await call(bindings, "/v1/run-outcomes", { token: CLIENT_TOKEN });
+    expect(outcomes.response.status).toBe(200);
+    expect(outcomes.body.data).toMatchObject({
+      scope: { retainedRuns: 30, includedRuns: 1, runsWithOutcomeSummary: 1 },
+      byAssessment: { good: 1 },
+      byGrade: { B: 1 },
+      averageScore: 87,
+      improvementCategories: [{ category: "validation", priority: "medium", count: 2 }],
+      phaseDurations: [
+        { phase: "coding", count: 1, averageMs: 120000 },
+        { phase: "validation", count: 1, averageMs: 30000 },
+      ],
+      runs: [expect.objectContaining({ repoUrl: "https://github.com/example/project" })],
+    });
 
     await bindings.DB.prepare("UPDATE run_events SET payload_json = ? WHERE run_id = ? AND type = 'run.completed'")
       .bind(JSON.stringify({ publishedUrl: "javascript:alert(1)" }), runId).run();

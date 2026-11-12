@@ -126,6 +126,13 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -.04em; }
 .card__body { min-width: 0; }
 .card__footer { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
 .run-card { margin: var(--space-4) 0; padding: var(--space-5); }
+.outcome-overview { margin: var(--space-4) 0 var(--space-5); }
+.outcome-overview__scope { margin: 0; }
+.outcome-overview__facts { margin-top: var(--space-4); }
+.outcome-overview__section { margin-top: var(--space-4); }
+.outcome-overview__section h3 { margin: 0 0 var(--space-2); font-size: .95rem; }
+.outcome-overview__section ul { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); margin: 0; padding-left: 1.25rem; }
+.outcome-overview__empty { margin: var(--space-4) 0 0; }
 .run-card .card__footer { display: grid; align-items: stretch; gap: var(--space-3); }
 .run-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
 .run-card__identity { min-width: 0; }
