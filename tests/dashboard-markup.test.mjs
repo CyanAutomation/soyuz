@@ -49,6 +49,15 @@ describe("dashboard page composition", () => {
     expect(toolbar.querySelector("#run-count").getAttribute("aria-live")).toBe("polite");
   });
 
+  it("places the retained outcome overview beside the recent run list", () => {
+    const document = readDashboardPage("public/dashboard/index.html");
+    const overview = document.querySelector("#outcome-overview");
+    const runs = document.querySelector("#runs");
+    expect(overview.getAttribute("aria-label")).toBe("Retained run outcome overview");
+    expect(overview.hasAttribute("hidden")).toBe(true);
+    expect(overview.nextElementSibling).toBe(runs);
+  });
+
   it("uses the shared padded-card primitive for analysis and advisory forms", () => {
     const document = readDashboardPage("public/dashboard/analysis/index.html");
 

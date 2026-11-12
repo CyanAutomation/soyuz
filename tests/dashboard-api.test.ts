@@ -200,6 +200,8 @@ describe("dashboard application flows", () => {
 
     expect(nodeAt(nodes, "#account")).toMatchObject({ hidden: false, textContent: "Signed in as @current-user" });
     expect(nodeAt(nodes, "#runs").children).toHaveLength(1);
+    await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/outcomes")).toBe(true));
+    expect(nodeAt(nodes, "#outcome-overview").children).toHaveLength(1);
     nodeAt(nodes, "#connect").dispatch("click");
 
     await vi.waitFor(() => expect(nodeAt(nodes, "#notice").textContent).toContain("couldn't confirm that your token was revoked"));
@@ -207,6 +209,8 @@ describe("dashboard application flows", () => {
     expect(nodeAt(nodes, "#account")).toMatchObject({ hidden: true, textContent: "" });
     expect(nodeAt(nodes, "#run-controls").hidden).toBe(true);
     expect(nodeAt(nodes, "#runs").children).toEqual([]);
+    expect(nodeAt(nodes, "#outcome-overview").hidden).toBe(true);
+    expect(nodeAt(nodes, "#outcome-overview").children).toEqual([]);
 
     const revocation = requests.at(-1);
     expect(revocation?.path).toBe("/oauth/token");
@@ -319,6 +323,7 @@ async function mountDashboard(publishedUrl = "https://github.com/example/project
   const nodes = new Map([
     ["#notice", createNode()],
     ["#runs", createNode()],
+    ["#outcome-overview", createNode()],
     ["#run-controls", createNode()],
     ["#connect", createNode()],
     ["#account", createNode()],
@@ -381,6 +386,11 @@ async function mountDashboard(publishedUrl = "https://github.com/example/project
       return jsonResponse({ access_token: "dashboard-access-token" });
     }
     if (path === "/dashboard/api/me") return jsonResponse({ githubLogin: "current-user" });
+    if (path === "/dashboard/api/outcomes") return jsonResponse({
+      scope: { retainedRuns: 30, includedRuns: 1, runsWithOutcomeSummary: 1 },
+      byAssessment: { good: 1 }, byReviewerConfidence: { high: 1 }, byGrade: { B: 1 }, averageScore: 87,
+      improvementCategories: [], phaseDurations: [],
+    });
     if (path === "/dashboard/api/runs?limit=30") return jsonResponse({ runs: [run], nextCursor: "cursor+/1" });
     if (path === `/dashboard/api/runs/${runId}`) return jsonResponse({
       ...run,
