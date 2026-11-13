@@ -31,7 +31,7 @@
     "@utcp/http": "^1.1.14",
     "@utcp/sdk": "^1.2.0",
     "esbuild": "^0.28.2",
-    "linkedom": "^0.18.14",
+    "linkedom": "^0.18.15",
     "typescript": "^7.0.2",
     "vitest": "^4.1.12",
     "wrangler": "^4.156.0"
