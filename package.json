@@ -33,7 +33,7 @@
     "esbuild": "^0.28.2",
     "linkedom": "^0.18.15",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.12",
+    "vitest": "^5.1.0",
     "wrangler": "^4.158.0"
   }
 }
