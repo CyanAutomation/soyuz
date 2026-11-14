@@ -399,6 +399,8 @@ async function mountDashboard(
     retryOf: null,
     operationalHealth: "healthy",
     lastHeartbeatAt: "2026-10-18T12:01:00.000Z",
+    failureClass: null,
+    failureMessage: null,
     ...runOverrides,
   };
   const fetcher = vi.fn(async (path: string, init: RequestInit = {}): Promise<FakeResponse> => {
