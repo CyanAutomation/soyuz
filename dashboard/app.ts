@@ -35,6 +35,7 @@ interface DashboardRunDetail extends DashboardRunSummary {
   publishedUrl: string | null;
   changedFileCount: number | null;
   failureClass: string | null;
+  failureMessage: string | null;
   exitCode: number | null;
 }
 
@@ -421,6 +422,7 @@ function appendRunSummary(container: HTMLElement, detail: DashboardRunDetail): v
     ["Changed files", detail.changedFileCount === null ? "Not reported" : String(detail.changedFileCount)],
     ["Exit code", detail.exitCode === null ? "Not reported" : String(detail.exitCode)],
     ["Failure class", formatMachineLabel(detail.failureClass)],
+    ["Failure details", detail.failureMessage ? detail.failureMessage.slice(0, 1_000) : "Not reported"],
     ["Published URL", publishedUrl || "Not reported"],
   ], "data-list run-summary-facts");
   section.append(heading, summary, facts);

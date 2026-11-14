@@ -196,6 +196,7 @@ function dashboardRunSummary(row: RunRow): Record<string, unknown> {
     stage: row.stage,
     operationalHealth: row.operational_health,
     failureClass: row.failure_class,
+    failureMessage: row.failure_message,
     lastHeartbeatAt: row.last_heartbeat_at,
     createdAt: row.created_at,
     queuedAt: row.queued_at,
