@@ -527,19 +527,22 @@ describe("Soyuz Worker API", () => {
     expect(oauthRegistrationLimiter.limit).not.toHaveBeenCalled();
   });
 
-  it("[OAUTH-07] includes run liveness fields in dashboard list summaries", async () => {
+  it("[OAUTH-07] includes run liveness and failure fields in dashboard list summaries", async () => {
     const { bindings } = testEnv({ oauth: true });
     const created = await submit(bindings);
     const runId = created.body.data.id as string;
     const heartbeat = "2026-10-18T12:00:00.000Z";
-    await bindings.DB.prepare("UPDATE runs SET operational_health = 'suspect_stalled', last_heartbeat_at = ? WHERE id = ?")
-      .bind(heartbeat, runId).run();
+    await bindings.DB.prepare(`UPDATE runs
+      SET operational_health = 'suspect_stalled', last_heartbeat_at = ?, status = 'failed',
+          failure_class = 'worker-container-startup', failure_message = ?, exit_code = 1
+      WHERE id = ?`)
+      .bind(heartbeat, "Worker image could not start.", runId).run();
     const accessToken = await createOAuthAccessToken(bindings);
 
     const response = await call(bindings, "/dashboard/api/runs?limit=30", { token: accessToken });
     expect(response.response.status).toBe(200);
     expect(response.body.data.runs).toEqual(expect.arrayContaining([
-      expect.objectContaining({ runId, displayId: created.body.data.displayId, stage: null, operationalHealth: "suspect_stalled", lastHeartbeatAt: heartbeat }),
+      expect.objectContaining({ runId, displayId: created.body.data.displayId, stage: null, operationalHealth: "suspect_stalled", lastHeartbeatAt: heartbeat, failureClass: "worker-container-startup", failureMessage: "Worker image could not start." }),
     ]));
   });
 
@@ -2451,6 +2454,10 @@ describe("Soyuz Worker API", () => {
       failure_class: "validation_failed",
       failure_message: failureBody.failureMessage,
     });
+    const list = await call(bindings, "/v1/runs?limit=30", { token: CLIENT_TOKEN });
+    expect(list.body.data.runs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: runId, failureClass: "validation_failed", failureMessage: failureBody.failureMessage }),
+    ]));
     expect(await countRunEvents(bindings, runId, "run.failed")).toBe(1);
   });
 

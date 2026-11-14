@@ -21,6 +21,8 @@ export interface DashboardRunSummary {
   stage: string | null;
   operationalHealth: "unknown" | "healthy" | "suspect_stalled";
   lastHeartbeatAt: string | null;
+  failureClass?: string | null;
+  failureMessage?: string | null;
 }
 
 export interface RunCardOptions {
@@ -96,6 +98,14 @@ export function createRunCard(run: DashboardRunSummary, options: RunCardOptions 
       ? `Finished · ${formatTimestamp(run.completedAt)}`
       : "Run finished";
   body.append(progress);
+
+  if (run.status === "failed") {
+    const failure = ownerDocument.createElement("p");
+    failure.className = "notice notice--danger run-card__failure";
+    const failureClass = run.failureClass ? `${formatMachineLabel(run.failureClass)}: ` : "";
+    failure.textContent = `${failureClass}${(run.failureMessage || "No failure details were reported.").slice(0, 500)}`;
+    body.append(failure);
+  }
 
   const health = ownerDocument.createElement("p");
   health.className = "notice notice--warning run-card__health";

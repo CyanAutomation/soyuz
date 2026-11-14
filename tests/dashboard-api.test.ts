@@ -283,6 +283,26 @@ describe("dashboard application flows", () => {
     expect(findNodes(nodeAt(nodes, "#runs"), "A")).toHaveLength(0);
   });
 
+  it("[DASHBOARD-FAILURE-01] shows a failed run's message in the list and details as text", async () => {
+    const reason = "Worker image could not start. <img src=x onerror=alert(1)>";
+    const { nodes, runId } = await mountDashboard(undefined, {
+      status: "failed",
+      failureClass: "worker-container-startup",
+      failureMessage: reason,
+    });
+
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Worker container startup");
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain(reason);
+    const details = findNodeBySummary(nodeAt(nodes, "#runs"), "View outcome, activity, and files");
+    details.open = true;
+    details.dispatch("toggle");
+
+    await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Failure details"));
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain(reason);
+    expect(findNodes(nodeAt(nodes, "#runs"), "IMG")).toHaveLength(0);
+    expect(runId).toBeTruthy();
+  });
+
   it("[DASHBOARD-RUN-LIST-FLOW-01] pauses hidden refreshes and supports pagination and status filtering", async () => {
     const { nodes, requests, intervalCallbacks, documentStub } = await mountDashboard();
 
@@ -319,7 +339,10 @@ describe("dashboard application flows", () => {
   });
 });
 
-async function mountDashboard(publishedUrl = "https://github.com/example/project/pull/7") {
+async function mountDashboard(
+  publishedUrl: string | undefined = "https://github.com/example/project/pull/7",
+  runOverrides: Record<string, unknown> = {},
+) {
   const nodes = new Map([
     ["#notice", createNode()],
     ["#runs", createNode()],
@@ -376,6 +399,9 @@ async function mountDashboard(publishedUrl = "https://github.com/example/project
     retryOf: null,
     operationalHealth: "healthy",
     lastHeartbeatAt: "2026-10-18T12:01:00.000Z",
+    failureClass: null,
+    failureMessage: null,
+    ...runOverrides,
   };
   const fetcher = vi.fn(async (path: string, init: RequestInit = {}): Promise<FakeResponse> => {
     requests.push({ path, init });
@@ -399,7 +425,8 @@ async function mountDashboard(publishedUrl = "https://github.com/example/project
       publishMode: "pr",
       publishedUrl,
       changedFileCount: 2,
-      failureClass: null,
+      failureClass: run.failureClass ?? null,
+      failureMessage: run.failureMessage ?? null,
       exitCode: 0,
     });
     if (path === `/dashboard/api/runs/${runId}/artifacts`) return jsonResponse({ artifacts: [] });

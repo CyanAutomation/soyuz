@@ -188,5 +188,6 @@ function publicRunSummary(row: RunRow): Record<string, unknown> {
     retryOf: row.retry_of,
     exitCode: row.exit_code,
     failureClass: row.failure_class,
+    failureMessage: row.failure_message,
   };
 }
