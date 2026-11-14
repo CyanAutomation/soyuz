@@ -4,7 +4,7 @@ import test from "node:test";
 
 const ci = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
 const codeql = await readFile(new URL("../.github/workflows/codeql.yml", import.meta.url), "utf8");
-const scorecard = await readFile(new URL("../.github/workflows/scorecard.yml", import.meta.url), "utf8").catch(() => "");
+const scorecard = await readFile(new URL("../.github/workflows/scorecard.yml", import.meta.url), "utf8");
 const packageLock = JSON.parse(await readFile(new URL("../package-lock.json", import.meta.url), "utf8"));
 const deploymentDocs = await readFile(new URL("../docs/DEPLOYMENT.md", import.meta.url), "utf8");
 
