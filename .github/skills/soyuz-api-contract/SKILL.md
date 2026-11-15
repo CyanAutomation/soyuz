@@ -9,8 +9,9 @@ Keep the public REST API, UTCP manual, agent HTTP adapter, shared application op
 
 ## Locate the right layer
 
-- Request and callback schemas live in `src/contracts/`.
+- Request, callback, run outcome, and agent tool schemas live in `src/contracts/`.
 - REST routing and response translation live in `src/api/`.
+- The read-only outcome projection lives in `src/api/run-outcomes.ts`; its schema is in `src/contracts/run-outcome.ts`.
 - Shared admission, reads, retries, and cancellation live in `src/application/runs.ts`.
 - D1 persistence lives in `src/db/runs.ts`.
 - UTCP input/output contracts live in `src/contracts/agent-tools.ts`; discovery is in `src/utcp/manual.ts`; agent routes and safe projections live in `src/api/agent-runs.ts`.
@@ -31,7 +32,7 @@ Keep business rules and persistence in the shared application layer. REST and UT
 
 ## Update implementation and evidence together
 
-When behavior changes, update the relevant schema, shared operation, adapter, public projection, and contract documentation as one change. For UTCP, also check the official manual schema, HTTP method/path/query/body mappings, client bearer auth metadata, response envelopes, pagination bounds, and safe data projection with the official TypeScript client.
+When behavior changes, update the relevant schema, shared operation, adapter, public projection, and contract documentation as one change. Keep outcome projections read-only and allowlisted. For UTCP, also check the official manual schema, HTTP method/path/query/body mappings, client bearer auth metadata, response envelopes, pagination bounds, and safe data projection with the official TypeScript client. For dashboard analysis and Senku decision contracts, follow `soyuz-openui-analysis` and `soyuz-senku-integration` as well as the relevant sections of `docs/OPENUI-ANALYSIS.md` and `docs/SENKU-INTEGRATION.md`.
 
 Add or update focused tests in `tests/api.test.ts`, `tests/utcp.test.ts`, or the relevant contract tests. If the change establishes or alters a user-visible requirement, update its entry in `docs/TEST-REQUIREMENTS.md` and link it to the contract section. Check error, retry, duplicate-request, and unauthorized paths as appropriate; a success-only test is not sufficient for a boundary change.
 
