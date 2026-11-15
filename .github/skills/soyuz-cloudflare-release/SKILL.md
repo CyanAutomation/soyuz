@@ -5,7 +5,7 @@ description: Use when changing Soyuz's GitHub Actions workflow, Wrangler configu
 
 # Change or operate the Soyuz release path
 
-Read `.github/workflows/ci.yml`, `wrangler.jsonc`, and the GitHub Actions and production sections of `docs/DEPLOYMENT.md` before editing release behavior.
+Read every workflow under `.github/workflows/`, `wrangler.jsonc`, and the GitHub Actions and production sections of `docs/DEPLOYMENT.md` before editing release behavior. CodeQL and Scorecard have separate workflows and controls from `ci.yml`.
 
 ## Understand the current pipeline
 
@@ -14,11 +14,12 @@ Read `.github/workflows/ci.yml`, `wrangler.jsonc`, and the GitHub Actions and pr
 - Before deployment, the production D1 preflight checks the configured database identity and applied migration names with a D1 read-only token.
 - Production D1 migrations are a separate manual operation. CI deploy credentials must not receive D1 Edit access, and deployment must not bypass the preflight.
 - The deployed Worker health check verifies required D1 schema as well as connectivity.
+- The health check does not exercise the Senku Service Binding or JEV provider path. For changes to that integration, follow `soyuz-senku-integration` and verify Senku readiness, binding target, matching machine identity, and the bounded post-deploy assessment procedure in `docs/SENKU-INTEGRATION.md`.
 
 ## Keep workflow changes constrained
 
 - Retain least-privilege job permissions, production environment scoping, serialization of production jobs, and `persist-credentials: false` on checkout steps.
-- Pin GitHub Actions to reviewed commit SHAs with version comments. Keep actionlint and zizmor checks in the validation job when adding or changing workflow files.
+- Pin GitHub Actions to reviewed commit SHAs with version comments. Keep actionlint and zizmor checks in the validation job when adding or changing workflow files, and preserve the separate CodeQL and Scorecard workflows and their permissions.
 - Keep D1 migration preflight read-only. Never add a production migration command to CI or grant its tokens D1 Edit.
 - Do not place Cloudflare or Worker secrets in files, workflow output, shell arguments, or logs. Use the existing secret manager and GitHub environment secrets described in the deployment guide.
 - Treat `npm run deploy` as a real Cloudflare deployment. Use `wrangler deploy --dry-run` to validate a bundle; do not deploy unless the task explicitly calls for a deployment.

@@ -13,6 +13,7 @@ Read `docs/ARCHITECTURE.md`, the relevant sections of `docs/CONTRACT.md`, and th
 - Numbered migrations already on the base branch are immutable. Never edit, rename, or delete one; correct the schema with a later migration.
 - Keep application code compatible with the deployment order. Update reads and writes, indexes, retention jobs, health schema checks, and any data projections that depend on the changed columns.
 - Treat D1 as the canonical run store. Preserve atomic compare-and-set transitions, idempotency and retry lineage, append-only event history, and private artifact indexing where relevant.
+- Check retention and privacy consequences across related data: the newest-30 run window and request redaction, 30-day artifact metadata and deletion outbox, and JEV feedback in migration `0008_jev_feedback.sql`. JEV feedback stores ratings, not model answers; preserve its run/user/profile uniqueness and allowlisted user identity.
 - Account for existing data and deployed Worker versions. A migration should be safe to apply before code starts relying on the new schema; use additive or staged changes when a direct change would break a running version.
 - The CI migration impact check detects edits and deletions of existing numbered files. Production preflight compares migration names and order; it does not verify SQL file contents.
 
