@@ -540,11 +540,15 @@ async function findSavedWorkerEvent(db: D1Database, runId: string, input: RunEve
 }
 
 async function recordWorkerHeartbeat(db: D1Database, runId: string, input: RunEventInput): Promise<void> {
+  const operationalHealth = input.payload.executionActive === false || input.payload.hostHealthy === false
+    ? "suspect_stalled"
+    : "healthy";
   const claimGuard = input.claimCallbackId
     ? " AND ? = (SELECT event_id FROM run_events WHERE run_id = ? AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1)"
     : "";
   const parameters: Array<string | null> = [
     input.recordedAt,
+    operationalHealth,
     input.recordedAt,
     runId,
     input.workerId ?? "",
@@ -552,7 +556,7 @@ async function recordWorkerHeartbeat(db: D1Database, runId: string, input: RunEv
   ];
   if (input.claimCallbackId) parameters.push(input.claimCallbackId, runId);
   await db.prepare(`
-    UPDATE runs SET last_heartbeat_at = ?, operational_health = 'healthy', updated_at = ?
+    UPDATE runs SET last_heartbeat_at = ?, operational_health = ?, updated_at = ?
     WHERE id = ? AND worker_id = ? AND status IN ('running', 'cancel_requested')
       AND (last_heartbeat_at IS NULL OR julianday(last_heartbeat_at) <= julianday(?))
     ${claimGuard}
