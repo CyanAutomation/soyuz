@@ -2767,6 +2767,41 @@ describe("Soyuz Worker API", () => {
     expect(recovered?.last_heartbeat_at).toBeTruthy();
   });
 
+  it("[RUN-LIVENESS-02] keeps a run suspect when its worker reports no active execution", async () => {
+    const { bindings } = testEnv();
+    const submitted = await submit(bindings, {}, "00000000-0000-4000-8000-000000000065");
+    const runId = submitted.body.data.id as string;
+    await claimRun(bindings, runId, "docker-host-idle");
+    const started = await call(bindings, `/v1/worker/runs/${runId}/started`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        callbackId: "00000000-0000-4000-8000-000000000066",
+        workerId: "docker-host-idle",
+      },
+    });
+    expect(started.response.status).toBe(200);
+
+    const heartbeat = await call(bindings, `/v1/worker/runs/${runId}/events`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        eventId: "00000000-0000-4000-8000-000000000067",
+        workerId: "docker-host-idle",
+        type: "worker.heartbeat",
+        payload: { hostHealthy: true, executionActive: false },
+      },
+    });
+
+    expect(heartbeat.response.status).toBe(202);
+    expect(await getRun(bindings.DB, runId)).toMatchObject({
+      status: "running",
+      operational_health: "suspect_stalled",
+    });
+  });
+
   it("[WORKER-PRESTART-FAIL-01] records a live claimed worker failure without starting execution", async () => {
     const { bindings } = testEnv();
     const submitted = await submit(bindings, {}, "00000000-0000-4000-8000-000000000063");
