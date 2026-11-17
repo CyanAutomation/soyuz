@@ -24,7 +24,7 @@ Kaseki sends bounded stage-change and heartbeat events; it does not upload promp
 
 `GET /v1/run-outcomes` exposes the newest 30 retained runs and aggregates only valid outcome projections. The OAuth-protected dashboard exposes the same view at `/dashboard/api/outcomes` and displays assessment, confidence, score, improvement-category, and phase-duration summaries with the retained-window scope. Soyuz still does not provide long-term retention parity with Kaseki's local history, so Kaseki's local scorecard/improvements history remains available for standalone operation and recovery.
 
-For rollout, deploy Senku's new Kaseki profiles first, then deploy this optional outcome-summary callback contract and aggregate read route, then update Kaseki hosts. The direct Kaseki local submission route remains available during all three steps.
+For rollout, deploy Senku's new Kaseki profiles first, then deploy this optional outcome-summary callback contract and aggregate read route, then update Kaseki hosts. Kaseki's explicit direct-local submission route is a permanent operator-selected fallback and remains available during all three steps and after migration; normal Soyuz submission never switches to it automatically.
 
 Kaseki polls canonical status while an execution is active. It applies `cancel_requested` through its existing cancellation path and sends `/cancelled` after local cleanup finalizes. If completion wins the race, the completion callback is retained.
 

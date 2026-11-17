@@ -4,29 +4,29 @@
 
 Soyuz is the canonical control plane and history for every accepted Kaseki execution, regardless of where the request originates. Kaseki remains the execution host: it owns readiness checks that require the host, Docker, repository access, agent execution, validation, and publication. Soyuz owns canonical run identity, admission, queueing, lifecycle state, cancellation intent, and the dashboard history.
 
-The request may originate in Soyuz, Kaseki's API, Kaseki's CLI, or another approved caller. Every production path must create or resolve the canonical Soyuz run before Kaseki starts work. Kaseki's existing Queue consumer and callback integration remain the execution path.
+The request may originate in Soyuz, Kaseki's API, Kaseki's CLI, or another approved caller. Every normal managed-mode path must create or resolve the canonical Soyuz run before Kaseki starts work. Keep Kaseki's explicit `POST /api/v1/runs/local` path as a permanent, operator-selected outage/standalone route; it must remain visible and must never activate as a network-error fallback. Kaseki's existing Queue consumer and callback integration remain the execution path for canonical Soyuz runs.
 
 ## Current gap and constraints
 
 - Soyuz accepts run requests, writes the canonical row to D1, publishes to the `soyuz-runs` Queue, and reads the dashboard from D1.
-- The Kaseki Soyuz adapter is opt-in. Kaseki's API and CLI can still create local `kaseki-N` runs without a Soyuz row.
+- The Kaseki Soyuz adapter and normal API submission routing are opt-in. `POST /api/v1/runs/local` always creates a direct local run; in optional submission mode, `POST /api/v1/runs` and legacy local-run retries can also use the local scheduler.
 - The Kaseki adapter already deduplicates Queue deliveries by Soyuz run ID, persists a local mapping, gates Docker start on Soyuz authorization, reports callbacks through a durable outbox, and applies cancellation from canonical state.
 - Soyuz's current request contract intentionally does not include Kaseki webhook secrets. Kaseki-specific safety admission and host checks remain necessary.
 - Kaseki callers may depend on local IDs and local status endpoints. The migration must preserve a documented compatibility path while moving the canonical ID to Soyuz.
 
 ## Kaseki repository assessment
 
-Reviewed the public `main` branch at commit [`1fba31bf196c5206cdbfb26ed5e7cbc43a1ff097`](https://github.com/CyanAutomation/kaseki-agent/commit/1fba31bf196c5206cdbfb26ed5e7cbc43a1ff097) through the GitHub connector.
+Reviewed Kaseki `origin/main` at [`a25e249dfda35388aa5b98e0fb7c8d10137d0ebc`](https://github.com/CyanAutomation/kaseki-agent/commit/a25e249dfda35388aa5b98e0fb7c8d10137d0ebc) and the current working changes for required submission mode.
 
-- **The CLI has no separate execution bypass.** [`src/cli/commands/RunCommand.ts`](https://github.com/CyanAutomation/kaseki-agent/blob/1fba31bf196c5206cdbfb26ed5e7cbc43a1ff097/src/cli/commands/RunCommand.ts) calls its API client's `createRun`; the `--local-direct` flag is explicitly rejected. Once the Kaseki API is routed through Soyuz, this CLI path follows it without replacing the CLI's execution model.
-- **The Kaseki API is the main local-run bypass.** In [`src/kaseki-api-routes.ts`](https://github.com/CyanAutomation/kaseki-agent/blob/1fba31bf196c5206cdbfb26ed5e7cbc43a1ff097/src/kaseki-api-routes.ts), `POST /api/v1/runs` performs Kaseki request, publish/template, and task-safety checks, uses a local `IdempotencyStore`, then calls `scheduler.submitJob`. `POST /api/v1/runs/:id/retry` also creates work with `scheduler.submitJob`. These are the two production submission paths to migrate first.
-- **There is already a useful execution adapter.** [`src/integrations/soyuz/SoyuzAdapter.ts`](https://github.com/CyanAutomation/kaseki-agent/blob/1fba31bf196c5206cdbfb26ed5e7cbc43a1ff097/src/integrations/soyuz/SoyuzAdapter.ts) pulls Soyuz Queue messages, checks Kaseki readiness/template/publish/safety, claims the canonical run, persists the external-to-local mapping, and gates local execution on Soyuz's `started` callback. On Kaseki admission rejection it calls `recordSoyuzAdmissionFailure` and queues the terminal callback. This can remain the single execution path.
-- **Kaseki IDs are also local container/job identities.** The scheduler continues to use `kaseki-N` IDs for local jobs, result paths, and Docker cleanup; Soyuz IDs are stored as `externalRunId`. Do not replace the scheduler's internal ID. Make the Soyuz ID the public canonical ID in managed-mode responses, retain `localRunId` as a compatibility/detail field, and let Kaseki read routes resolve canonical IDs even before the local Queue consumer has created its job.
-- **Kaseki's request contract is wider than Soyuz's.** [`src/kaseki-api-types.ts`](https://github.com/CyanAutomation/kaseki-agent/blob/1fba31bf196c5206cdbfb26ed5e7cbc43a1ff097/src/kaseki-api-types.ts) accepts `webhookConfig` (including an optional secret); Soyuz's strict run request does not. Managed mode needs an explicit rejection or separate webhook migration for such requests.
-- **Kaseki currently runs publish/template and task-safety checks before local idempotency and scheduling.** The Queue adapter repeats those checks for Soyuz work. In managed mode, make the adapter the authoritative execution-time gate so checks are not duplicated and can be evaluated against the host that will execute the work. Keep `/api/v1/validate` available for synchronous preflight. This changes create-route behavior for execution-time rejection: valid requests can be accepted into Soyuz, then finish with a canonical admission failure without Docker starting.
+- **The CLI has no separate execution bypass.** [`src/cli/commands/RunCommand.ts`](https://github.com/CyanAutomation/kaseki-agent/blob/a25e249dfda35388aa5b98e0fb7c8d10137d0ebc/src/cli/commands/RunCommand.ts) calls its API client's `createRun`; the `--local-direct` flag is explicitly rejected. Its routing follows the Kaseki API submission mode without replacing the CLI's execution model.
+- **The API already has both canonical and explicit local submission paths.** With submission routing enabled, `POST /api/v1/runs` and retries of mapped/canonical Soyuz runs use Soyuz's scoped submission identity; `POST /api/v1/runs/local` always schedules locally. In optional mode, a normal create or legacy local-run retry can still create Kaseki-only work. The current working changes add required mode to make the normal route fail closed and reject retries of unmapped local history while preserving `/runs/local`.
+- **There is already a useful execution adapter.** [`src/integrations/soyuz/SoyuzAdapter.ts`](https://github.com/CyanAutomation/kaseki-agent/blob/a25e249dfda35388aa5b98e0fb7c8d10137d0ebc/src/integrations/soyuz/SoyuzAdapter.ts) pulls Soyuz Queue messages, checks Kaseki readiness/template/publish/safety, claims the canonical run, persists the external-to-local mapping, and gates local execution on Soyuz's `started` callback. On Kaseki admission rejection it calls `recordSoyuzAdmissionFailure` and queues the terminal callback. This remains the canonical execution path.
+- **Kaseki IDs are also local container/job identities.** The scheduler continues to use `kaseki-N` IDs for local jobs, result paths, and Docker cleanup; Soyuz IDs are stored as `externalRunId`. Do not replace the scheduler's internal ID. The API already returns the Soyuz ID for routed submissions and resolves canonical status/detail before local Queue handoff. The local run-list endpoint remains host-local; cross-host listing belongs in Soyuz.
+- **Kaseki's request contract is wider than Soyuz's.** [`src/kaseki-api-types.ts`](https://github.com/CyanAutomation/kaseki-agent/blob/a25e249dfda35388aa5b98e0fb7c8d10137d0ebc/src/kaseki-api-types.ts) accepts `webhookConfig` (including an optional secret); Soyuz's strict run request does not. Kaseki rejects webhook-bearing requests when Soyuz routing is enabled; a separate secret custody and delivery design is needed before migrating those requests.
+- **Managed admission now runs on the execution host.** Soyuz-routed API creates validate the request contract and idempotency, then the Queue adapter performs host readiness, template/publish/credential, and task-safety checks. Accepted requests rejected there become canonical terminal admission failures. Keep `/api/v1/validate` for synchronous preflight and preserve immediate admission checks for explicit local submissions.
 - **Historical detail is bounded.** The Kaseki jobs index defaults to 1,000 terminal entries, while artifact/result retention is separately pruned. A backfill can only promise the records and fields still retained when the importer runs; capture an export before cutover and report missing artifact/detail data.
 
-This assessment narrows Phase 0: it still needs a deployment-specific caller/config inventory, but the repository entry-point inventory identifies API create and retry as the core paths and the CLI as an API client.
+Phase 0's deployment-specific caller/config inventory is still open. Repository inspection identifies API create/retry and the CLI's API client as normal submission paths, plus the permanent explicit local API route. No production caller telemetry or deployment configuration was available in this source review.
 
 ## Recommended decisions
 
@@ -36,6 +36,7 @@ This assessment narrows Phase 0: it still needs a deployment-specific caller/con
 4. **Keep execution safety in Kaseki.** Soyuz performs contract validation, authorization, canonical persistence, and queue admission. Kaseki keeps its safety, credential, template, host readiness, and publication checks. Reuse the adapter's existing terminal admission-failure callback when those checks reject a queued run.
 5. **Treat old Kaseki history as read-only archive data.** Import it separately from active Soyuz lifecycle rows, with the original Kaseki ID and timestamps preserved. Do not make historical runs cancellable or retryable as if Soyuz had admitted them.
 6. **Keep secret-bearing integrations out of the first cutover.** Requests with Kaseki webhook configuration need an explicit secret custody and delivery design. Until then, reject them clearly in managed mode or migrate webhook ownership separately; never silently drop configuration.
+7. **Keep direct local submission explicit and permanent.** The operator may choose Kaseki's local API when Soyuz is unavailable. Do not use it automatically after a timeout or uncertain Soyuz response; check canonical state first.
 
 ## Target flow
 
@@ -52,35 +53,29 @@ flowchart LR
 
 ## Delivery phases
 
-### Phase 0 — Inventory and contract decisions
+### Phase 0 — Production caller and configuration inventory
 
-Before changing either repository:
+Repository review establishes that the CLI uses Kaseki's API, canonical API submissions can be proxied to Soyuz, and the console's explicit local form uses `/api/v1/runs/local`. It cannot establish which external clients use these paths, whether production jobs call the scheduler directly, or which hosts have each setting enabled.
 
-- Inventory every Kaseki execution entry point: API create/retry routes, CLI commands, scheduled or webhook-triggered work, internal automation, and any direct scheduler calls. Identify callers, their authentication, their expected response shape, and how they poll, cancel, or retry.
-- Confirm whether scheduled, webhook, or internal automation paths call `POST /api/v1/runs` or invoke `JobScheduler` directly. The reviewed CLI uses the API, and `--local-direct` is unsupported.
-- Compare each accepted Kaseki request against Soyuz `RunRequestSchema`, including defaults, validation and publish modes, startup checks, timeout behavior, and unsupported fields such as webhook configuration.
-- Document which Kaseki checks can run before Soyuz admission and which happen only after Queue delivery. Define how accepted requests rejected by Kaseki safety checks are recorded canonically. Invalid or unauthorized HTTP requests need not become run records; accepted jobs that fail Kaseki admission must be visible as terminal outcomes.
-- Adopt the managed-mode boundary: malformed, unauthorized, or contract-invalid submissions remain synchronous API errors without a run row; valid submissions are admitted to Soyuz, and Kaseki execution-time safety/template/publish rejection is reported as a canonical terminal admission failure. Keep `/api/v1/validate` for callers needing synchronous diagnostics. This avoids duplicate evaluations and makes accepted rejected work visible in Soyuz.
-- Confirm what Kaseki stores durably today for idempotency, local run IDs, pending work, and API restarts. Confirm which API clients require `kaseki-N` IDs and local detail routes.
-- Decide which environments can retain explicit standalone execution. Production should use required-Soyuz mode after cutover.
+Before changing production settings:
 
-**Exit:** approved source/actor vocabulary, request mapping table, safety-rejection semantics, ID compatibility strategy, and a list of every path that must be routed through Soyuz.
+- Inventory API, CLI, scheduled, webhook, and internal callers, including authentication, response expectations, status polling, cancellation, and retry behavior.
+- Check production host configurations and confirm whether deployments combine API submission and Queue consumption or split those roles.
+- Confirm the accepted request mapping and unsupported `webhookConfig` handling. It contains secret-bearing fields and is rejected when Soyuz routing is enabled.
+- Preserve the managed-mode contract: invalid requests remain synchronous errors; Kaseki execution-time admission failures on accepted Soyuz runs become canonical terminal outcomes. Keep `/api/v1/validate` and the explicit local submit route.
+- Keep `SOYUZ_SUBMISSION_MODE=optional` until the inventory and canary are complete. Required mode is an operator rollout setting, not a new default.
 
-### Phase 1 — Extend Soyuz provenance and machine authorization
+**Exit:** production callers and role-specific configuration are documented, and the canary and rollback plan is agreed.
 
-Make additive changes in Soyuz:
+### Phase 1 — Verify Soyuz provenance and machine authorization
 
-- Add trusted run provenance to the persisted run model, such as `originSystem`, `originEntryPoint`, and optional `originActor` or `originRequestId`. Derive `originSystem=Kaseki` from its machine identity. Record a finer entry point only when backed by a named API identity or other trusted context; current Kaseki API keys are a shared list and cannot reliably distinguish CLI callers from other API clients.
-- Populate provenance from the authenticated caller/service principal. Add a dedicated Kaseki submission identity with only the permissions needed to create runs and resolve idempotent submissions. Keep worker claim/callback credentials separate from submission credentials.
-- Preserve the current idempotent admission behavior. Kaseki must send a stable `Idempotency-Key`; retries with identical content resolve to the same Soyuz ID, and conflicting content returns a clear conflict.
-- Add the minimum database migration and expose trusted provenance in list/detail/dashboard responses. Existing rows should default to a clear Soyuz/API origin. Do not infer origin from run ID format.
-- Version the Queue/callback contract only if the new provenance or safety-rejection semantics require wire changes. Deploy additive readers before writers and record a Kaseki/Soyuz compatibility matrix.
+Soyuz `origin/main` already includes the scoped submission identity, trusted provenance, origin-scoped idempotent create, canonical retry/cancel, run outcome summaries, and dashboard provenance. Verify the deployed Worker, schema migrations, token scopes, and Kaseki/Soyuz compatibility before routing production traffic. Provenance must continue to come from authenticated identity; Kaseki's shared API keys do not distinguish CLI callers from other API clients.
 
-**Exit:** a Kaseki service identity can create one canonical Soyuz run idempotently, and dashboard/API responses identify its source without trusting caller-supplied labels.
+**Exit:** deployed API and schema match the current repository contract, and a Kaseki submission is idempotent and visibly attributed without trusting request-body origin labels.
 
-### Phase 2 — Route Kaseki-originated requests through Soyuz
+### Phase 2 — Make managed Kaseki submissions fail closed
 
-Change Kaseki's API submission layer so all entry points share one `submitCanonicalRun` path. The existing CLI already calls the Kaseki API; keep that route and move its server-side destination from the local scheduler to Soyuz:
+Kaseki `origin/main` already routes normal create/retry/cancel operations through Soyuz when enabled and keeps the explicit direct endpoint. The current implementation adds an optional/required submission mode: optional remains the default during rollout; required validates the configured submission client and prevents normal create or legacy local retry from silently starting a local run. Keep the CLI on its existing API path. Verify the implementation and deployment-specific API/worker roles:
 
 1. Validate request shape and authenticate the Kaseki caller. Preserve Kaseki's API access checks and local schema normalization.
 2. Persist a local submission intent with the stable idempotency key before calling Soyuz. This intent is not executable work.
@@ -89,27 +84,26 @@ Change Kaseki's API submission layer so all entry points share one `submitCanoni
 5. Let the existing Queue consumer claim and schedule the canonical run. It must continue to persist the Soyuz-to-local mapping, wait for `started` authorization before Docker, deduplicate redelivery, and use the durable callback outbox.
 6. Ensure retries, Kaseki API restart recovery, cancellation, and terminal reporting use the canonical Soyuz ID. A local pending intent must never become a second execution if Soyuz already accepted the request.
 
-For Queue-time Kaseki safety/template/publish rejection, reuse the existing adapter path that claims the canonical row, persists a local admission-failure job, and sends its terminal callback without starting Docker. Keep this outcome distinct from agent execution failure. The current API route evaluates task safety before local scheduling; in managed mode, avoid repeating that evaluation in the API and adapter. Preserve `/api/v1/validate` for synchronous checks. Invalid or unauthorized submissions can remain API errors without becoming run rows; decide separately if rejected attempts need a security audit event.
+For Queue-time Kaseki safety/template/publish rejection, reuse the existing adapter path that claims the canonical row, persists a local admission-failure job, and sends its terminal callback without starting Docker. Managed submissions validate the request contract at the API, then leave host readiness, credentials, template/publish compatibility, and task safety to the execution host. Direct-local submissions keep synchronous host checks. Preserve `/api/v1/validate` for synchronous preflight. Invalid or unauthorized submissions can remain API errors without becoming run rows; decide separately if rejected attempts need a security audit event.
 
-Migrate `POST /api/v1/runs/:id/retry` explicitly. Soyuz currently has no canonical retry endpoint, while Kaseki retries only a terminal local job with a fresh UUID key and records `retryOf`. Add a Soyuz retry operation (or equivalent server-validated create operation) that verifies the source is terminal, clones the accepted request, uses a new idempotency key, and records a `retryOf` link. During transition, a retry of a pre-cutover Kaseki-only record may create a new Soyuz run referencing the archived `kaseki-N`; it must not recreate the old run as active history.
+Migrate `POST /api/v1/runs/:id/retry` explicitly. Soyuz already has a canonical retry operation that verifies terminal state, origin ownership, and idempotency, then records `retryOf`. Kaseki routes mapped/canonical retries through it. Required mode must prevent a legacy Kaseki-only retry from starting a new local run; cross-system retries of archived `kaseki-N` records need a separate source-reference contract before implementation.
 
 Preserve the Kaseki `IdempotencyStore` only as a durable submission-response/mapping cache if needed. Soyuz remains authoritative for idempotent admission. If a Soyuz request times out after possible acceptance, Kaseki must retain an uncertain/pending intent and resolve it by retrying the same key; it must not release the key and create a local job.
 
 Kaseki status, list, event, retry, cancel, and detail APIs need an explicit compatibility contract. For canonical UUIDs, return Soyuz state as the lifecycle source and join local execution detail when available. For old `kaseki-N` IDs, continue serving retained local/history data. Artifacts and raw logs remain host-local unless their current retention and Soyuz upload contracts provide them.
 
-Use separate settings for **Queue consumption** and **submission policy**. The existing `SOYUZ_ENABLED` controls the adapter; it should not silently mean both “consume Soyuz work” and “all direct submissions require Soyuz.” Introduce an explicit mode such as `SOYUZ_SUBMISSION_MODE=required|standalone`, keep standalone for development and explicitly approved emergency use, and make required mode the production default after canary. Validate configuration by deployment role: a submission role in required mode must have a usable Soyuz endpoint and submit credential; an execution role must have the Soyuz Queue consumer enabled and its worker credentials configured. Readiness/health reporting must expose a misconfigured or disconnected role, and required mode must never silently fall back to local scheduling. This supports split API/worker deployments without allowing a deployment that accepts Soyuz submissions but has no configured Kaseki consumer to appear healthy.
+Use separate settings for **Queue consumption** and **submission policy**. `SOYUZ_ENABLED` controls the adapter; it does not mean both “consume Soyuz work” and “all normal submissions require Soyuz.” `SOYUZ_SUBMISSION_MODE=optional|required` controls whether normal API create/retry may use standalone behavior or must use Soyuz. Keep the explicit `/api/v1/runs/local` path available in either mode. Validate configuration by deployment role: a submission role in required mode must have a usable Soyuz endpoint and submit credential; an execution role must have the Soyuz Queue consumer enabled and its worker credentials configured. Readiness/health reporting must expose a misconfigured or disconnected role, and required mode must never silently fall back to local scheduling. This supports split API/worker deployments without allowing a deployment that accepts Soyuz submissions but has no configured Kaseki consumer to appear healthy.
 
 **Exit:** every accepted API, CLI, retry, and automated Kaseki request produces one Soyuz row before any execution; Kaseki local state contains a durable mapping, not an independent canonical run.
 
-### Phase 3 — Dashboard and run history
+### Phase 3 — Retain host-local history and reconcile canonical outcomes
 
-- Show an origin badge and, when available, the originating entry point/actor in dashboard summaries and details. Keep source metadata sanitized and avoid exposing prompts, credentials, or raw logs.
-- Add an origin filter only if it helps operators; the default view should show all canonical runs newest first.
-- Keep run status, cancellation, and terminal state sourced from Soyuz. Kaseki's dashboard/API may link to the canonical Soyuz run while retaining local diagnostic views.
-- For historical Kaseki runs, build a one-time, resumable importer into a read-only archive table or equivalent historical read model. Preserve Kaseki IDs and original timestamps, deduplicate on `(originSystem, originRunId)`, and clearly label these records as imported history. Do not fabricate prompts, events, worker claims, or artifacts that Kaseki no longer retains. Keep archived rows out of cancellation, retry, and worker callback routes. Snapshot the paginated Kaseki run index before cutover; it retains at most 1,000 terminal entries by default, and result files have independent retention.
-- Decide the historical import boundary: all retained Kaseki history, a date range, or only the most recent operational window. Record import counts and missing fields.
+- Soyuz's dashboard already shows trusted origins and canonical lifecycle state. Kaseki retains its local job history, logs, and artifacts for diagnostics; do not remove those when enabling shared submission.
+- Soyuz's cross-origin outcome summary retains only the newest 30 runs. Keep Kaseki's history as the long-lived host record unless a verified retention and archive contract replaces it.
+- Do not import old Kaseki rows into active canonical lifecycle state. If a unified historical archive is still needed, scope it separately as read-only, preserve original IDs/timestamps, and avoid inventing missing prompts, events, claims, or artifacts.
+- Confirm production retention and backup settings before reducing any Kaseki local history or result retention.
 
-**Exit:** new Kaseki-originated runs appear in the same Soyuz list as Soyuz-originated runs, with source visible; imported history is distinguishable and read-only.
+**Exit:** new Kaseki-originated runs appear in the same Soyuz list as Soyuz-originated runs, with source visible; any separately approved archive is read-only.
 
 ### Phase 4 — Verification and controlled rollout
 
@@ -128,20 +122,20 @@ Verify in a non-production environment before enabling required mode:
 
 Roll out in this order:
 
-1. Apply the additive Soyuz migration and deploy a Worker compatible with both existing and new Kaseki clients, following the separate production migration procedure in `DEPLOYMENT.md`.
+1. Verify the production Soyuz Worker and schema are compatible with current Kaseki submission/Queue contracts; apply any pending migration only through the separate production migration procedure in `DEPLOYMENT.md`.
 2. Deploy Kaseki submission support with required mode disabled. Route a small, controlled canary cohort through Soyuz on a non-production Queue/repository first; do not execute both the old and new path as a shadow run.
 3. Confirm successful completion, controlled failure, cancellation, duplicate delivery, API restart, and callback retry before increasing traffic.
 4. Enable `SOYUZ_SUBMISSION_MODE=required` for production API/CLI entry points in stages. Monitor until direct local-only production starts are zero.
-5. Import historical records as a separate job after new-run cutover is stable.
-6. Remove the production direct scheduler bypass after the compatibility window. Keep standalone mode available only in explicitly managed non-production or documented emergency procedures.
+5. Keep Kaseki's retained local history. Run a separate read-only archive project only if a product requirement and retention plan justify it.
+6. Retire implicit local scheduling for normal submissions after the compatibility window. Keep the explicit `POST /api/v1/runs/local` path permanently as the visible outage/standalone option.
 
 ## Operational safeguards
 
-- **Availability:** Soyuz outage means no new Kaseki execution in required mode. Keep submission intents durable and retryable. Do not automatically fall back to local-only execution.
+- **Availability:** Soyuz outage means normal submission fails closed in required mode. Keep submission intents durable and retryable. The operator may explicitly submit through `/api/v1/runs/local`; do not switch to that route automatically.
 - **No duplicate work:** stable idempotency keys across every retry; canonical Soyuz ID is the Kaseki deduplication key; keep the existing claim fencing, Queue at-least-once handling, and callback outbox.
 - **Security:** separate submit and worker credentials; derive source from identity; never store credentials in run metadata; decide prompt retention explicitly; exclude Kaseki webhook secrets until a separate design exists.
 - **Reconciliation:** expose counts for Kaseki submissions accepted by Soyuz, pending submission intents, local jobs without a Soyuz mapping, callback backlog, and imported rows. Alert on any production execution without a canonical run mapping, sustained pending submissions, callback backlog growth, or Queue/DLQ failures.
-- **Rollback:** stop new Kaseki submissions or restore the previous API deployment only after confirming no accepted Soyuz Queue messages can be duplicated. Preserve local mappings/outbox. Any emergency direct run must be explicitly marked and later imported/reconciled; never make fallback invisible.
+- **Rollback:** stop new Kaseki submissions or restore the previous API deployment only after confirming no accepted Soyuz Queue messages can be duplicated. Preserve local mappings/outbox. Keep every direct-local run visibly local in Kaseki's retained job history; never make fallback invisible.
 
 ## Completion criteria
 
@@ -158,33 +152,31 @@ The outcome is complete when:
 
 | Area | Soyuz changes | Kaseki changes |
 | --- | --- | --- |
-| Provenance/auth | D1 migration, authenticated source metadata, scoped submit identity, response fields | Store submit credential securely; provide trusted caller context |
-| Admission | Preserve idempotent create/queue; define pre-execution rejection outcome | Route all run entry points through Soyuz; persist/retry submission intent |
-| Identity | Canonical origin and optional external reference fields | Map Soyuz ID to local scheduler job; support legacy ID lookup during migration |
+| Provenance/auth | Current main has scoped submit identity and trusted source metadata; verify production token/schema rollout | Current main stores submit credentials separately and maps Soyuz IDs to local jobs |
+| Admission | Current main has idempotent create/retry and canonical outcomes | Required mode closes implicit local fallback; host checks run before execution; `/runs/local` remains explicit |
+| Identity | Soyuz IDs, origin, retry lineage, and callbacks are canonical | Preserve local IDs/history for logs, artifacts, and standalone operation |
 | Execution | Existing Queue, claim fencing, callbacks, cancellation, artifacts | Existing worker adapter remains execution path; no Docker before canonical start authorization |
-| Dashboard/history | Origin labels/filter; optional read-only archive model/import | Provide paginated historical export and local-to-canonical references |
-| Operations | Alerts and reconciliation visibility | Required/standalone mode, submission metrics, durable intents, operator recovery docs |
+| Dashboard/history | Current dashboard presents trusted origins and bounded history | Keep host-local diagnostics and history; no mandatory archive import |
+| Operations | Deployment verification and reconciliation alerts remain | Caller inventory, canary, role readiness, and recovery procedures remain rollout work |
 
 ## Repository ownership and dependency order
 
 ### Soyuz work
 
-- Add canonical machine-to-machine admission for Kaseki: scoped submit identity, idempotent create/resolve behavior, and persisted trusted provenance.
-- Add a canonical retry operation that validates a terminal source run and records `retryOf`; Kaseki cannot move its retry route until this is available.
-- Expose canonical lifecycle state and origin through the API and dashboard, and provide reconciliation visibility for accepted, pending, unmapped, and callback-delayed work.
-- Add a read-only archive model/import path only if retained Kaseki history should appear in Soyuz; this is separate from live lifecycle records.
+- Current `origin/main` provides scoped Kaseki submission, origin-scoped idempotency, trusted provenance, canonical retry/cancel, outcome summaries, and dashboard history.
+- Remaining work is deployment verification and operational reconciliation for pending submissions, unmapped local execution, callback backlog, and Queue/DLQ failures.
+- Keep any future historical archive read-only and separate from active lifecycle rows; no import is required to enable canonical submissions.
 
 ### Kaseki-agent work
 
-- Route API create and retry through a Soyuz submission client with a durable intent, stable idempotency key, and Soyuz-to-local ID mapping. The existing CLI follows the API path.
-- Keep the current Soyuz Queue adapter as the execution path; ensure no direct scheduler path starts Docker in required mode, and preserve Kaseki safety checks, local diagnostics, and legacy `kaseki-N` lookups.
-- Update Kaseki status/list/detail/cancel behavior to resolve Soyuz canonical IDs while returning local execution details when available. Reject or separately migrate webhook-secret requests.
-- Add submission/consumer role configuration checks, metrics, run-index export, and operator recovery guidance.
+- Current `origin/main` has the Soyuz submission proxy, durable idempotency/mapping, the Queue adapter, canonical status/retry/cancel, and an explicit local submission API/UI route.
+- This change adds `SOYUZ_SUBMISSION_MODE=optional|required`; optional stays the compatibility default, while required fails closed for ordinary create/retry and leaves `/api/v1/runs/local` available by explicit choice.
+- Keep Kaseki local history and artifacts. Production caller inventory, role-specific readiness, alerting, and recovery procedures remain rollout tasks; do not switch production defaults before those are checked.
 
 ### Can either side go first?
 
-Yes, with a dependency boundary. Contract decisions and repository work can proceed in parallel. Soyuz's additive identity, admission, idempotency, provenance, and retry contracts must be agreed early; Kaseki can implement against that stable contract and a test stub while Soyuz work is underway. Deploy the compatible Soyuz API and Queue path before enabling Kaseki's required mode or routing production submissions. Kaseki's canonical retry route must wait for Soyuz retry support, though create integration can be built independently. Take the retained-history snapshot before cutover; run the optional archive import after live canonical submission is stable.
+Soyuz's canonical submit/retry contracts are already present on `origin/main`, so repository implementation can proceed against them. Verify the deployed API and Queue compatibility before enabling Kaseki required mode. Inventory production callers, preserve the retained-history snapshot, and use a canary before changing production settings. An archive importer is optional and remains separate from the live cutover.
 
 ## Planning note
 
-This is a design and rollout plan only. It does not change implementation, run tests, apply production migrations, deploy Workers, alter Kaseki configuration, or submit executable work.
+This document records the current repository contracts and the remaining rollout plan. It does not authorize production migrations, deployment, production configuration changes, or executable submissions.
