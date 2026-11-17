@@ -229,6 +229,62 @@ describe("vanilla OpenUI DOM renderer", () => {
     runtime.dispose();
   });
 
+  it("[OPENUI-RENDER-04] sorts run rows in the reusable table without mutating query data", async () => {
+    const { document, window } = parseHTML("<html><body><div id='output'></div></body></html>");
+    vi.stubGlobal("document", document);
+    vi.stubGlobal("window", window);
+    vi.stubGlobal("AbortController", window.AbortController);
+    const container = document.querySelector<HTMLElement>("#output")!;
+    const olderRun = {
+      runId: "00000000-0000-4000-8000-000000000001",
+      displayId: "1",
+      status: "completed",
+      operationalHealth: "healthy",
+      stage: null,
+      repoUrl: "https://github.com/example/repo",
+      ref: "main",
+      failureClass: null,
+      createdAt: "2026-10-01T10:00:00.000Z",
+      queuedAt: "2026-10-01T10:00:00.000Z",
+      startedAt: null,
+      completedAt: null,
+    };
+    const newerRun = {
+      ...olderRun,
+      runId: "00000000-0000-4000-8000-000000000002",
+      displayId: "2",
+      createdAt: "2026-10-02T10:00:00.000Z",
+    };
+    const fetcher: typeof fetch = vi.fn(async () => new Response(JSON.stringify({ data: {
+      runs: [olderRun, newerRun],
+      nextCursor: null,
+    } }), { headers: { "content-type": "application/json" } }));
+    const program = [
+      '$runStatus = "all"',
+      'runs = Query("list_runs", { limit: 30, status: $runStatus }, { runs: [], nextCursor: null })',
+      'root = Stack([RunTable(runs.runs, "Recent runs")])',
+    ].join("\n");
+    const parsed = validateGeneratedProgram(program);
+    expect(parsed.ok).toBe(true);
+    const runtime = createSoyuzOpenUIRuntime("analysis-token", fetcher);
+    const renderer = new OpenUIDOMRenderer(container, soyuzOpenUILibrary, soyuzComponentRenderers, { maxDepth: 8, maxComponents: 100 });
+    runtime.setProgram(parsed.result!);
+    await vi.waitFor(() => expect(runtime.queryManager.isAnyLoading()).toBe(false));
+
+    const rootChildren = runtime.getRoot()?.props.children as Array<{ typeName: string; props: Record<string, unknown> }>;
+    const table = rootChildren.find((child) => child.typeName === "RunTable");
+    const rows = table?.props.rows as Array<{ runId: string }>;
+    expect(rows.map((row) => row.runId)).toEqual([olderRun.runId, newerRun.runId]);
+
+    renderer.render(runtime.getRoot()!, { store: runtime.store, queryManager: runtime.queryManager, dispatchAction: () => undefined });
+    expect(Array.from(container.querySelectorAll<HTMLTableRowElement>("tbody tr"), (row) => row.dataset.itemKey))
+      .toEqual([newerRun.runId, olderRun.runId]);
+    expect(rows.map((row) => row.runId)).toEqual([olderRun.runId, newerRun.runId]);
+
+    renderer.dispose();
+    runtime.dispose();
+  });
+
   it("[OPENUI-RENDER-01] renders nested components with textContent and preserves stable instances on updates", () => {
     const { document, window } = parseHTML("<html><body><div id='output'></div></body></html>");
     vi.stubGlobal("document", document);

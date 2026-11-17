@@ -89,7 +89,7 @@ export const soyuzComponentRenderers: Record<string, NativeComponentRenderer> = 
     const filtered = rows.filter((row) => stateStatus === "all" || !STATUS_OPTIONS.includes(stateStatus as typeof STATUS_OPTIONS[number]) || row.status === stateStatus);
     const healthFilter = enumValue(props.healthFilter, ["all", "healthy", "suspect_stalled", "unknown"], "all");
     const healthyRows = filtered.filter((row) => healthFilter === "all" || row.operationalHealth === healthFilter);
-    const sorted = [...healthyRows].sort((a, b) => compareRunRows(a, b, sortKey));
+    const sorted = healthyRows.toSorted((a, b) => compareRunRows(a, b, sortKey));
     reconcileRunRows(tbody, sorted, String(selectedRunId ?? ""), props.selectable !== false, context);
     return element;
   },

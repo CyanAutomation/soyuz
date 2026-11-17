@@ -110,4 +110,4 @@ The opt-in Queue consumer and callback client are implemented in [`kaseki-agent`
 
 ## Development and support
 
-Run `npm run typecheck` to generate Wrangler types and check TypeScript, `npm test` to run the Worker runtime test suite, and `npm run build` to compile the browser dashboard. The [CI workflow](.github/workflows/ci.yml) also validates the deployment bundle. See the [license](LICENSE) for reuse terms and [GitHub Issues](https://github.com/CyanAutomation/soyuz/issues) to report a problem.
+Run `npm run typecheck` to generate Wrangler types and check TypeScript, `npm test` to run the Worker runtime test suite, and `npm run build` to compile the browser dashboard. The dashboard build targets ES2023-capable browsers. The [CI workflow](.github/workflows/ci.yml) also validates the deployment bundle. See the [license](LICENSE) for reuse terms and [GitHub Issues](https://github.com/CyanAutomation/soyuz/issues) to report a problem.
