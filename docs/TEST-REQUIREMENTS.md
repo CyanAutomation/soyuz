@@ -30,6 +30,7 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `OAUTH-05` | The protected dashboard identity endpoint returns the allowlisted user's GitHub login and enforces the existing OAuth access policy. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |
 | `OAUTH-06` | RFC 7009 revocation invalidates the dashboard's OAuth access token. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |
 | `OAUTH-07` | Dashboard run-list summaries include operational health and last-heartbeat fields. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `OAUTH-08` | The authenticated dashboard receives sanitized retained outcome aggregates without prompt data. | [Dashboard endpoints](CONTRACT.md#public-endpoints); [Kaseki callback and outcome behavior](KASEKI-INTEGRATION.md#callback-and-cancellation-behavior) |
 | `OAUTH-01` | Dashboard data is available only to an allowlisted GitHub user. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints); [deployment: OAuth configuration](DEPLOYMENT.md#one-time-cloudflare-bootstrap) |
 | `OAUTH-02` | Dashboard endpoints are read-only except the allowlisted OpenUI generation, JEV decision, and JEV feedback POSTs, which require an authenticated `soyuz:read` token; OAuth tokens do not authenticate agent HTTP operations. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints); [UTCP authentication](UTCP.md#authentication); [OpenUI run analysis](OPENUI-ANALYSIS.md) |
 | `OAUTH-ORIGIN-01` | The configured public OAuth origin is accepted only as a canonical HTTPS origin without a path or embedded credentials. | [Deployment: OAuth configuration](DEPLOYMENT.md) |
@@ -39,7 +40,11 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `OPENUI-QUERY-01` | The analysis runtime queries only the four approved bounded read tools, reuses results, and refetches on state dependency changes or explicit refresh. | [OpenUI run analysis](OPENUI-ANALYSIS.md#request-and-rendering-flow) |
 | `OPENUI-ACTION-01` | Generated actions are accepted only from the explicit read-only action allowlist and require validated parameters. | [OpenUI run analysis](OPENUI-ANALYSIS.md#security-and-limits) |
 | `OPENUI-RENDER-01` | The native renderer safely renders nested components, preserves stable instances, enforces limits, exposes accessible controls, and disposes listeners. | [OpenUI run analysis](OPENUI-ANALYSIS.md#component-and-tool-registration) |
+| `OPENUI-RENDER-02` | Event history and payload details stay collapsed until the user requests them. | [OpenUI run analysis](OPENUI-ANALYSIS.md#component-and-tool-registration) |
+| `OPENUI-RENDER-03` | The run table is a named region reachable by keyboard navigation. | [OpenUI run analysis](OPENUI-ANALYSIS.md#component-and-tool-registration) |
+| `OPENUI-RENDER-04` | Sorting the reusable run table does not mutate query data. | [OpenUI run analysis](OPENUI-ANALYSIS.md#component-and-tool-registration) |
 | `OPENUI-GENERATION-01` | Generation streams through a configured server-side provider, uses deterministic local fixtures, and reports invalid or missing configuration safely. | [OpenUI run analysis](OPENUI-ANALYSIS.md#local-and-provider-configuration) |
+| `OPENUI-GENERATION-02` | Provider credentials remain server-side while chat-completion responses stream to the dashboard. | [OpenUI run analysis](OPENUI-ANALYSIS.md#local-and-provider-configuration) |
 | `JEV-ADAPTER-01` | The Senku client sends the approved profile ID, schema version, exact server-built input, and machine token through the Service Binding. | [OpenUI run analysis](OPENUI-ANALYSIS.md#senku-decision-client-and-profile-mapping) |
 | `JEV-ADAPTER-02` | The Senku client rejects malformed or oversized responses, invalid answer shapes, wrong profile metadata, and remote errors without exposing response bodies. | [OpenUI run analysis](OPENUI-ANALYSIS.md#senku-decision-client-and-profile-mapping) |
 | `JEV-ADAPTER-06` | The Senku client accepts explicit null confidence values and validates supported NouL, choice, and score answers. | [OpenUI run analysis](OPENUI-ANALYSIS.md#senku-decision-client-and-profile-mapping) |
@@ -56,6 +61,15 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `HEALTH-DB-01` | Health and run history report D1 unavailability safely. | [Transport contract: public endpoints and errors](CONTRACT.md#public-endpoints) |
 | `HEALTH-SCHEMA-01` | Health reports unavailable when the current Worker requires D1 columns that are missing from the deployed schema. | [Deployment: Worker configuration and health check](DEPLOYMENT.md#worker-configuration) |
 | `DASHBOARD-SECURITY-01` | Dashboard assets receive the configured browser security headers. | [Deployment: Worker configuration](DEPLOYMENT.md#worker-configuration) |
+| `DASHBOARD-CACHE-01` | Stable dashboard assets use a short browser cache lifetime. | [Deployment: Worker configuration](DEPLOYMENT.md#worker-configuration) |
+| `DASHBOARD-CACHE-02` | Partial dashboard asset responses do not receive the full asset cache policy. | [Deployment: Worker configuration](DEPLOYMENT.md#worker-configuration) |
+| `DASHBOARD-PAGE-SEMANTICS-01` | Each dashboard page has one described heading inside the main landmark, and navigation identifies the current destination. | [Dashboard page patterns](DASHBOARD-UI.md#page-patterns) |
+| `DASHBOARD-RUN-CONTROLS-01` | Recent-run search, sorting, filtering, and actions use labelled native controls; result-count updates are announced politely. | [Dashboard page patterns](DASHBOARD-UI.md#page-patterns) |
+| `DASHBOARD-ANALYSIS-FORM-01` | Analysis and JEV inputs have visible labels and associated help; required inputs remain native form controls. | [Dashboard page patterns](DASHBOARD-UI.md#page-patterns); [OpenUI run analysis](OPENUI-ANALYSIS.md#request-and-rendering-flow) |
+| `DASHBOARD-OUTCOME-OVERVIEW-01` | Signed-in users can read retained outcome aggregates, including an explicit empty state when no outcome summaries exist. | [Dashboard page patterns](DASHBOARD-UI.md#page-patterns); [Dashboard endpoints](CONTRACT.md#public-endpoints) |
+| `DASHBOARD-RUN-CARD-METADATA-01` | Run creation time stays visible while technical identifiers and detailed timestamps start collapsed in a disclosure. | [Dashboard page patterns](DASHBOARD-UI.md#page-patterns) |
+| `DASHBOARD-PUBLISHED-URL-01` | Dashboard run details create published links only from validated HTTP(S) destinations. | [Dashboard DOM components](DASHBOARD-UI.md#dom-components); [Dashboard endpoints](CONTRACT.md#public-endpoints) |
+| `DASHBOARD-FAILURE-01` | Run failure messages appear in list and detail views as text. | [Dashboard DOM components](DASHBOARD-UI.md#dom-components); [Dashboard endpoint projections](CONTRACT.md#public-endpoints) |
 | `RUN-EVENT-PAGE-01` | Dashboard event pages indicate whether more events remain and provide a forward cursor. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |
 | `RETENTION-REQUEST-01` | Old terminal run prompts are redacted while run identity and idempotency history remain available. | [Deployment: Worker configuration](DEPLOYMENT.md#worker-configuration) |
 | `RUN-VALIDATE-01` | REST run requests are structurally validated before admission. | [Transport contract: run request](CONTRACT.md#run-request) |
@@ -92,6 +106,7 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `CANCEL-CAS-01` | A stale claimed-state cancellation cannot overwrite a run that has started. | [Architecture: run lifecycle](ARCHITECTURE.md#run-lifecycle) |
 | `RUN-READ-REST-01` | REST history, detail, and unknown-run behavior are stable. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |
 | `RUN-LIVENESS-01` | A stale heartbeat marks an active run suspect without changing lifecycle state or requeueing it; a later heartbeat restores healthy status. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks); [Kaseki heartbeat policy](KASEKI-INTEGRATION.md#heartbeat-and-suspected-stalled-runs) |
+| `RUN-LIVENESS-02` | A heartbeat reporting no active execution keeps the running run marked suspect. | [Kaseki heartbeat policy](KASEKI-INTEGRATION.md#heartbeat-and-suspected-stalled-runs) |
 | `QUEUE-RECONCILE-01` | A stale admission is retried with the original run ID. | [Transport contract: run request](CONTRACT.md#run-request) |
 | `WORKER-CLAIM-RECOVERY-01` | An abandoned claim expires and republishes the original run ID. | [Architecture: run lifecycle](ARCHITECTURE.md#run-lifecycle) |
 | `LIFECYCLE-RACE-01` | Competing terminal outcomes commit only one terminal event. | [Architecture: run lifecycle](ARCHITECTURE.md#run-lifecycle) |
@@ -140,7 +155,14 @@ These tests protect implementation helpers and direct callers, but they do not r
 | `DASHBOARD-PRESENTATION-02` | Dashboard event, status, and run values are presented as readable labels. | [Run lifecycle](ARCHITECTURE.md#run-lifecycle) |
 | `DASHBOARD-RUN-LIST-FLOW-01` | The dashboard pauses background refresh while hidden and supports cursor pagination and status filtering. | [Dashboard endpoints](CONTRACT.md#public-endpoints) |
 | `DASHBOARD-RUN-EVENTS-01` | Expanding a run loads its details and supports cursor-based event history. | [Dashboard endpoints](CONTRACT.md#public-endpoints) |
+| `DASHBOARD-URL-PRIMITIVE-01` | The dashboard URL helper strips credentials and request data, and accepts only HTTP(S) destinations. | [Dashboard DOM components](DASHBOARD-UI.md#dom-components) |
 | `OAUTH-REVOKE-FORM-01` | Dashboard revocation submits the access token and public client ID to the provider endpoint. |
+| `DASHBOARD-NOTICE-01` | The shared notice helper displays non-empty messages and clears the message when hidden. | [Dashboard DOM components](DASHBOARD-UI.md#dom-components) |
+| `DASHBOARD-BUSY-CONTROL-01` | A busy button is disabled and uses its action label, then restores its idle label when complete. | [Dashboard DOM components](DASHBOARD-UI.md#dom-components) |
+| `DASHBOARD-STATUS-TEXT-01` | Status labels are inserted as text rather than parsed as markup. | [Dashboard DOM components](DASHBOARD-UI.md#dom-components) |
+| `DASHBOARD-CARD-SEMANTICS-01` | The shared card builder exposes article content through header, body, and footer sections. | [Dashboard DOM components](DASHBOARD-UI.md#dom-components) |
+| `DASHBOARD-FACTS-SEMANTICS-01` | Labelled facts are represented as definition terms and descriptions. | [Dashboard DOM components](DASHBOARD-UI.md#dom-components) |
+| `DASHBOARD-FIELD-A11Y-01` | Shared fields associate controls with visible labels, help text, and validation recovery text. | [Dashboard DOM components](DASHBOARD-UI.md#dom-components) |
 | `UUID-VALIDATION-01` | The shared UUID validator accepts RFC UUID versions 1 through 8 with the RFC variant and rejects malformed values. | [Transport contract: run request](CONTRACT.md#run-request) |
 | `DEPLOY-MIGRATION-IMPACT-01` | The pull request migration report identifies numbered changes and distinguishes new migrations, immutable-file edits, and no-change cases. | [Deployment: GitHub Actions deployment](DEPLOYMENT.md#github-actions-deployment) |
 | `DEPLOY-SMOKE-CLI-01` | The production smoke CLI rejects invalid arguments, returns an exit code for the result, and reports failures without exposing unexpected upstream details. | [Authorized live acceptance check](DEPLOYMENT.md#authorized-live-acceptance-check) |
