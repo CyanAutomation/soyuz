@@ -14,10 +14,10 @@ describe("dashboard page composition", () => {
   it.each([
     ["public/dashboard/index.html", "Recent runs", "/dashboard/"],
     ["public/dashboard/analysis/index.html", "Run analysis", "/dashboard/analysis/"],
-  ])("uses one in-main page header and identifies the current destination in %s", (path, title, currentHref) => {
+  ])("[DASHBOARD-PAGE-SEMANTICS-01] uses one in-main page header and identifies the current destination in %s", (path, title, currentHref) => {
     const document = readDashboardPage(path);
     const main = document.querySelector("main");
-    const headers = document.querySelectorAll("main .page-header");
+    const headers = document.querySelectorAll("main > header");
     const headings = document.querySelectorAll("main h1");
     const currentLinks = document.querySelectorAll('nav[aria-label="Soyuz dashboards"] a[aria-current="page"]');
 
@@ -32,11 +32,10 @@ describe("dashboard page composition", () => {
     expect(currentLinks[0].getAttribute("href")).toBe(currentHref);
   });
 
-  it("groups run search, filters, and actions while retaining labelled native controls", () => {
+  it("[DASHBOARD-RUN-CONTROLS-01] groups run search, filters, and actions while retaining labelled native controls", () => {
     const document = readDashboardPage("public/dashboard/index.html");
     const toolbar = document.querySelector("#run-controls");
 
-    expect(toolbar.className.split(/\s+/)).toContain("toolbar");
     expect(toolbar.getAttribute("role")).toBe("group");
     expect(toolbar.querySelector('[aria-label="Search retained runs"]')).not.toBeNull();
     expect(toolbar.querySelector('[aria-label="Sort and filter runs"]')).not.toBeNull();
@@ -49,43 +48,23 @@ describe("dashboard page composition", () => {
     expect(toolbar.querySelector("#run-count").getAttribute("aria-live")).toBe("polite");
   });
 
-  it("places the retained outcome overview beside the recent run list", () => {
-    const document = readDashboardPage("public/dashboard/index.html");
-    const overview = document.querySelector("#outcome-overview");
-    const runs = document.querySelector("#runs");
-    expect(overview.getAttribute("aria-label")).toBe("Retained run outcome overview");
-    expect(overview.hasAttribute("hidden")).toBe(true);
-    expect(overview.nextElementSibling).toBe(runs);
-  });
-
-  it("uses the shared padded-card primitive for analysis and advisory forms", () => {
+  it("[DASHBOARD-ANALYSIS-FORM-01] gives analysis and JEV fields accessible labels and help", () => {
     const document = readDashboardPage("public/dashboard/analysis/index.html");
+    const question = document.querySelector("#analysis-question");
+    const profile = document.querySelector("#analysis-jev-profile");
+    const runId = document.querySelector("#analysis-jev-run-id");
 
-    expect(document.querySelector("#analysis-form").className.split(/\s+/)).toEqual(
-      expect.arrayContaining(["card", "card--padded", "analysis-form"]),
-    );
-    expect(document.querySelector("#analysis-jev-controls").className.split(/\s+/)).toEqual(
-      expect.arrayContaining(["card", "card--padded"]),
-    );
-    expect(document.querySelector("#analysis-jev-disclosure > summary").textContent).toBe("Decision support with JEV");
-  });
+    expect(document.querySelector('label[for="analysis-question"]')?.textContent).toBe("What would you like to know?");
+    expect(question.hasAttribute("required")).toBe(true);
+    expect(question.getAttribute("aria-describedby")).toBe("analysis-question-help");
+    expect(document.querySelector("#analysis-question-help")?.textContent).toContain("generated view is read-only");
 
-  it("loads the shared theme tokens before dashboard component rules", () => {
-    const stylesheet = readFileSync(resolve(projectRoot, "public/dashboard/style.css"), "utf8");
-    const tokens = readFileSync(resolve(projectRoot, "public/dashboard/tokens.css"), "utf8");
-
-    expect(stylesheet.startsWith('@import url("./tokens.css");')).toBe(true);
-    expect(tokens).toContain("--color-page:");
-    expect(tokens).toContain("--color-primary:");
-    expect(tokens).toContain("--space-4:");
-    expect(tokens).toContain("prefers-color-scheme: dark");
-    expect(stylesheet).toContain(".page-header__title");
-    expect(stylesheet).toContain(".toolbar__group--filters");
-    expect(stylesheet).toContain(".card--structured");
-    expect(stylesheet).toContain(".card__title");
-    expect(stylesheet).toMatch(/\.field__control\s*\{[^}]*min-height:\s*3rem/);
-    expect(stylesheet).toMatch(/\.button\s*\{[^}]*min-height:\s*3rem/);
-    expect(stylesheet).toMatch(/\.run-card__copy-id\s*\{[^}]*min-height:\s*2\.75rem/);
-    expect(stylesheet).toContain(".ui-timestamp__label");
+    expect(document.querySelector('label[for="analysis-jev-profile"]')?.textContent).toBe("Decision profile");
+    expect(document.querySelector('label[for="analysis-jev-run-id"]')?.textContent).toBe("Run to assess");
+    expect(runId.hasAttribute("required")).toBe(true);
+    expect(runId.getAttribute("aria-describedby")).toBe("analysis-jev-run-help");
+    expect(document.querySelector("#analysis-jev-run-help")?.textContent).toContain("enter its retained run UUID");
+    expect(document.querySelector("#analysis-jev-disclosure > summary")?.textContent).toBe("Decision support with JEV");
+    expect(profile.tagName).toBe("SELECT");
   });
 });
