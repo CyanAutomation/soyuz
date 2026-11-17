@@ -57,14 +57,13 @@ export async function requestSenkuDecision(
     throw new SenkuDecisionError("INVALID_REQUEST");
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const signal = AbortSignal.timeout(timeoutMs);
   const request = new Request(
     SENKU_INTERNAL_ORIGIN + "/v1/profiles/" + profileId + "/evaluate",
     {
       method: "POST",
       redirect: "manual",
-      signal: controller.signal,
+      signal,
       headers: {
         authorization: "Bearer " + token,
         "content-type": "application/json",
@@ -74,27 +73,23 @@ export async function requestSenkuDecision(
     },
   );
 
+  let response: Response;
   try {
-    let response: Response;
-    try {
-      response = await binding.fetch(request);
-    } catch {
-      throw new SenkuDecisionError(controller.signal.aborted ? "PROVIDER_TIMEOUT" : "PROVIDER_UNAVAILABLE");
-    }
-
-    let payload: unknown;
-    try {
-      payload = await readBoundedJson(response, controller.signal);
-    } catch (error) {
-      if (response.ok) throw error;
-      throw errorForSenkuResponse(response.status, undefined);
-    }
-    if (!response.ok) throw errorForSenkuResponse(response.status, payload);
-
-    return validateSenkuResponse(payload, profileId);
-  } finally {
-    clearTimeout(timeout);
+    response = await binding.fetch(request);
+  } catch {
+    throw new SenkuDecisionError(signal.aborted ? "PROVIDER_TIMEOUT" : "PROVIDER_UNAVAILABLE");
   }
+
+  let payload: unknown;
+  try {
+    payload = await readBoundedJson(response, signal);
+  } catch (error) {
+    if (response.ok) throw error;
+    throw errorForSenkuResponse(response.status, undefined);
+  }
+  if (!response.ok) throw errorForSenkuResponse(response.status, payload);
+
+  return validateSenkuResponse(payload, profileId);
 }
 
 function errorForSenkuResponse(status: number, payload: unknown): SenkuDecisionError {
@@ -288,7 +283,7 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[])
 
 function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
   const actual = Object.keys(value).sort();
-  const keys = [...expected].sort();
+  const keys = expected.toSorted();
   return actual.length === keys.length && actual.every((key, index) => key === keys[index]);
 }
 
