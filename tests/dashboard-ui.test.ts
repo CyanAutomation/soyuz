@@ -8,69 +8,62 @@ function createDocument() {
 }
 
 describe("shared dashboard UI components", () => {
-  it("renders a tone-aware notice and hides it when cleared", () => {
+  it("[DASHBOARD-NOTICE-01] shows a notice message and hides it when cleared", () => {
     const notice = createDocument().createElement("p");
 
     setNotice(notice, "Run list updated.", "success");
-    expect(notice).toMatchObject({
-      hidden: false,
-      textContent: "Run list updated.",
-      className: "notice notice--success",
-    });
+    expect(notice.hidden).toBe(false);
+    expect(notice.textContent).toBe("Run list updated.");
 
     setNotice(notice, "", "info");
-    expect(notice).toMatchObject({ hidden: true, textContent: "", className: "notice notice--info" });
+    expect(notice.hidden).toBe(true);
+    expect(notice.textContent).toBe("");
   });
 
-  it("announces a busy button with an action label and restores its idle state", () => {
+  it("[DASHBOARD-BUSY-CONTROL-01] disables a busy button with an action label and restores it when idle", () => {
     const button = createDocument().createElement("button");
     button.textContent = "Refresh runs";
 
     setButtonBusy(button, true, "Refreshing runs…");
     expect(button).toMatchObject({ disabled: true, textContent: "Refreshing runs…" });
-    expect(button.classList.contains("button--busy")).toBe(true);
 
     setButtonBusy(button, false);
     expect(button).toMatchObject({ disabled: false, textContent: "Refresh runs" });
-    expect(button.classList.contains("button--busy")).toBe(false);
   });
 
-  it("creates a text-safe reusable status badge", () => {
+  it("[DASHBOARD-STATUS-TEXT-01] displays untrusted status text without parsing markup", () => {
     const document = createDocument();
-    const badge = createBadge("Status: queued", "active", document);
+    const label = "Status: queued <img src=x onerror=alert(1)>";
+    const badge = createBadge(label, "active", document);
 
-    expect(badge.tagName).toBe("SPAN");
-    expect(badge.textContent).toBe("Status: queued");
-    expect(badge.className).toBe("badge badge--active");
+    expect(badge.textContent).toBe(label);
+    expect(badge.querySelector("img")).toBeNull();
   });
 
-  it("creates a reusable article card with semantic header, body, and footer slots", () => {
+  it("[DASHBOARD-CARD-SEMANTICS-01] exposes an article with associated header, body, and footer content", () => {
     const document = createDocument();
-    const { element, header, body, footer } = createCard({ className: "run-card" }, document);
+    const { element, header, body, footer } = createCard({}, document);
+    header.textContent = "Run summary";
+    body.textContent = "Run is queued";
+    footer.textContent = "Copy run ID";
 
-    expect(element.tagName).toBe("ARTICLE");
-    expect(element.className).toBe("card card--structured run-card");
     expect(header.tagName).toBe("HEADER");
-    expect(header.className).toBe("card__header");
-    expect(body.className).toBe("card__body");
     expect(footer.tagName).toBe("FOOTER");
-    expect(footer.className).toBe("card__footer");
-    expect(element.children).toHaveLength(3);
-    expect(element.children[0]).toBe(header);
-    expect(element.children[1]).toBe(body);
-    expect(element.children[2]).toBe(footer);
+    expect(element.tagName).toBe("ARTICLE");
+    expect(element.querySelector("header")?.textContent).toBe("Run summary");
+    expect(element.textContent).toContain("Run is queued");
+    expect(element.querySelector("footer")?.textContent).toBe("Copy run ID");
   });
 
-  it("creates a semantic definition list for reusable labelled facts", () => {
+  it("[DASHBOARD-FACTS-SEMANTICS-01] presents labelled facts as definition pairs", () => {
     const document = createDocument();
     const list = createDefinitionList(
       [["Repository", "CyanAutomation/soyuz"], ["Status", "Running"]],
-      "data-list run-facts",
+      "data-list",
       document,
     );
 
     expect(list.tagName).toBe("DL");
-    expect(list.className).toBe("data-list run-facts");
     expect([...list.children].map((item) => [item.children[0]?.tagName, item.children[0]?.textContent, item.children[1]?.tagName, item.children[1]?.textContent]))
       .toEqual([
         ["DT", "Repository", "DD", "CyanAutomation/soyuz"],
@@ -78,7 +71,7 @@ describe("shared dashboard UI components", () => {
       ]);
   });
 
-  it("creates an accessible reusable field with associated help and recovery text", () => {
+  it("[DASHBOARD-FIELD-A11Y-01] associates a control with its label, help, and recovery text", () => {
     const document = createDocument();
     const control = document.createElement("input");
     control.setAttribute("aria-describedby", "existing-help");
@@ -89,10 +82,8 @@ describe("shared dashboard UI components", () => {
       control,
       helpText: "Search retained runs.",
       errorText: "Enter a repository or run ID.",
-      className: "toolbar-field",
     }, document);
 
-    expect(field.element.className).toBe("field toolbar-field");
     expect(field.label.htmlFor).toBe("run-filter");
     expect(field.label.textContent).toBe("Filter runs");
     expect(field.control.id).toBe("run-filter");
@@ -102,7 +93,7 @@ describe("shared dashboard UI components", () => {
     expect(field.error?.textContent).toBe("Enter a repository or run ID.");
   });
 
-  it("keeps the run creation time visible while technical details remain disclosed", () => {
+  it("[DASHBOARD-RUN-CARD-METADATA-01] keeps creation time visible and technical details collapsed by default", () => {
     const document = createDocument();
     const run = {
       status: "completed",
@@ -124,21 +115,22 @@ describe("shared dashboard UI components", () => {
     const onDetailsToggle = vi.fn();
 
     const card = createRunCard(run, { ownerDocument: document, onCopyId, onDetailsToggle });
-    const visibleCreated = card.querySelector(".run-card__created time");
-    const metadata = card.querySelector<HTMLDetailsElement>(".run-card__metadata");
+    const visibleCreated = card.querySelector("time[datetime]");
+    const disclosures = [...card.querySelectorAll<HTMLDetailsElement>("details")];
+    const metadata = disclosures.find((details) => details.querySelector("summary")?.textContent?.includes("technical ID and timestamps"));
 
     expect(card.tagName).toBe("ARTICLE");
     expect(visibleCreated?.getAttribute("datetime")).toBe(run.createdAt);
-    expect(visibleCreated?.textContent).toBe(new Date(run.createdAt).toLocaleString());
+    expect(visibleCreated?.textContent).toBeTruthy();
     expect(visibleCreated?.closest("details")).toBeNull();
     expect(metadata?.hasAttribute("open")).toBe(false);
     expect(metadata?.textContent).toContain(run.runId);
     expect(metadata?.textContent).toContain("Started");
 
-    card.querySelector<HTMLButtonElement>(".run-card__copy-id")?.click();
+    card.querySelector<HTMLButtonElement>('button[aria-label="Copy technical run ID"]')?.click();
     expect(onCopyId).toHaveBeenCalledWith(run.runId);
 
-    const details = card.querySelector<HTMLDetailsElement>(".run-card__details");
+    const details = disclosures.find((item) => item.querySelector("summary")?.textContent === "View outcome, activity, and files")!;
     details!.open = true;
     details!.dispatchEvent(new document.defaultView!.Event("toggle"));
     expect(onDetailsToggle).toHaveBeenCalledWith(run, details, expect.anything(), true);

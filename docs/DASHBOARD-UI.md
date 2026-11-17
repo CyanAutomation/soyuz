@@ -47,6 +47,10 @@ entire surface clickable; actions remain independent controls.
 - `createBadge`, `setNotice`, and `setButtonBusy` share status and loading
   presentation across dashboard views.
 
+Render run, event, and status values as text. Create a link from a persisted
+destination only after validating it as HTTP(S), and remove credentials and
+request-specific data before displaying it.
+
 Use `createCard` for a related content unit and its slots. Keep larger dynamic
 views application-owned. The reusable run-card component lives in
 `dashboard/run-card.ts`; the dashboard owns its data fetching and clipboard
@@ -61,6 +65,15 @@ revisit a sidebar and shell layout. The Recent runs page keeps its newest-first
 run cards and native disclosure sections; the toolbar groups search, sorting,
 status filtering, refresh, and result count. The Run analysis page uses the same
 page header and padded card primitive for its prompt and JEV controls.
+
+Each dashboard destination has one page heading inside main, and navigation
+identifies the current destination. Run controls use native labelled inputs and
+selects, with result-count changes announced politely. Analysis prompts and JEV
+inputs have visible labels and associated help text. The retained outcome
+overview is shown with the signed-in dashboard when aggregate data is available;
+it explains when no outcome summaries exist. A run card keeps its creation time
+visible while its technical identifiers and detailed timestamps remain inside
+a disclosure that starts collapsed.
 
 Soyuz retains at most 30 runs and the dashboard requests that full page on its
 initial load. Search therefore covers the retained history in normal use; the

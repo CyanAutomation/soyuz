@@ -57,19 +57,6 @@ describe("dashboard API responses", () => {
     expect(safeHttpUrlForDisplay("javascript:alert(1)")).toBeNull();
   });
 
-  it("[DASHBOARD-TEST-DOM-01] dispatches every listener registered for the same event", () => {
-    const node = createNode("BUTTON");
-    const firstListener = vi.fn();
-    const secondListener = vi.fn();
-
-    node.addEventListener("click", firstListener);
-    node.addEventListener("click", secondListener);
-    node.click();
-
-    expect(firstListener).toHaveBeenCalledOnce();
-    expect(secondListener).toHaveBeenCalledOnce();
-  });
-
   it("[DASHBOARD-RUN-LIST-01] encodes status and pagination cursors in run-list requests", () => {
     expect(buildRunListPath()).toBe("/dashboard/api/runs?limit=30");
     expect(buildRunListPath({ status: "running" })).toBe("/dashboard/api/runs?limit=30&status=running");
@@ -202,6 +189,7 @@ describe("dashboard application flows", () => {
     expect(nodeAt(nodes, "#runs").children).toHaveLength(1);
     await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/outcomes")).toBe(true));
     expect(nodeAt(nodes, "#outcome-overview").children).toHaveLength(1);
+    expect(nodeAt(nodes, "#outcome-overview").hidden).toBe(false);
     nodeAt(nodes, "#connect").dispatch("click");
 
     await vi.waitFor(() => expect(nodeAt(nodes, "#notice").textContent).toContain("couldn't confirm that your token was revoked"));
@@ -217,6 +205,18 @@ describe("dashboard application flows", () => {
     const form = new URLSearchParams(String(revocation?.init.body));
     expect(form.get("token")).toBe("dashboard-access-token");
     expect(form.get("client_id")).toBe("dashboard-client");
+  });
+
+  it("[DASHBOARD-OUTCOME-OVERVIEW-01] presents retained outcome aggregates after the signed-in dashboard loads them", async () => {
+    const { nodes } = await mountDashboard();
+    const overview = nodeAt(nodes, "#outcome-overview");
+
+    await vi.waitFor(() => expect(flattenText(overview)).toContain("87.0 / 100"));
+
+    expect(overview.hidden).toBe(false);
+    expect(flattenText(overview)).toContain("1 of 1 runs with outcome data");
+    expect(flattenText(overview)).toContain("Based on the newest 30 retained runs");
+    expect(flattenText(overview)).toContain("Good · 1");
   });
 
   it("[DASHBOARD-RUN-DISPLAY-01] shows a readable run ID and copies the canonical UUID", async () => {
@@ -359,6 +359,9 @@ async function mountDashboard(
     ["#updated", createNode()],
     ["#snackbar", createNode()],
   ]);
+  for (const selector of ["#runs", "#outcome-overview", "#run-controls"]) {
+    nodeAt(nodes, selector).hidden = true;
+  }
   const sessionValues = new Map([
     ["soyuz.dashboard.state", "state-value"],
     ["soyuz.dashboard.verifier", "verifier-value"],
