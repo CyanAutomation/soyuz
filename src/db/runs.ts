@@ -579,6 +579,10 @@ export async function listStaleRunningRuns(
   return rows.results;
 }
 
+export function calculateStaleDurationMs(heartbeatAt: string, observedAt: string): number {
+  return Math.max(0, Date.parse(observedAt) - Date.parse(heartbeatAt));
+}
+
 /** Mark stale liveness as a health classification without changing lifecycle status or requeueing. */
 export async function markRunSuspectedStalled(
   db: D1Database,
@@ -592,6 +596,7 @@ export async function markRunSuspectedStalled(
     lastHeartbeatAt: row.last_heartbeat_at,
     startedAt: row.started_at,
     observedAt,
+    staleForMs: calculateStaleDurationMs(heartbeatAt, observedAt),
     automaticRetry: false,
   });
   const results = await db.batch([

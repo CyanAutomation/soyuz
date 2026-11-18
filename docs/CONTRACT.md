@@ -93,7 +93,7 @@ The claim request's `callbackId` is also the per-attempt fencing token. New Kase
 
 `artifacts.uploaded` is a bounded terminal event containing only `status` (`complete` or `partial`), `uploadedCount`, `failedCount`, and `skippedCount`. The Kaseki adapter persists the report and its event ID before delivery, so retrying the terminal callback replays the same report safely. It does not include artifact contents or local filesystem paths.
 
-`worker.heartbeat` updates `lastHeartbeatAt` and restores `operationalHealth: "healthy"`. Soyuz's five-minute stale-run reconciler changes only the health classification to `suspect_stalled` and appends `run.suspected_stalled`; it never changes lifecycle status or republishes work. A later heartbeat can restore health. See the [Kaseki integration policy](KASEKI-INTEGRATION.md#heartbeat-and-suspected-stalled-runs).
+`worker.heartbeat` updates `lastHeartbeatAt` and restores `operationalHealth: "healthy"`. Soyuz's five-minute stale-run reconciler changes only the health classification to `suspect_stalled` and appends `run.suspected_stalled` with the observed heartbeat timestamps and `staleForMs`; it never changes lifecycle status or republishes work. A later heartbeat can restore health. See the [Kaseki integration policy](KASEKI-INTEGRATION.md#heartbeat-and-suspected-stalled-runs).
 
 ## Public endpoints
 

@@ -55,7 +55,13 @@ export function createRunCard(run: DashboardRunSummary, options: RunCardOptions 
 
   const statusPresentation = getRunStatusPresentation(run.status);
   const status = createBadge(`Status: ${statusPresentation.label}`, statusPresentation.tone, ownerDocument);
-  header.append(identity, status);
+  const statuses = ownerDocument.createElement("div");
+  statuses.className = "run-card__statuses";
+  statuses.append(status);
+  if (run.operationalHealth === "suspect_stalled") {
+    statuses.append(createBadge("Health: Suspect stalled", "warning", ownerDocument));
+  }
+  header.append(identity, statuses);
 
   const identifiers = ownerDocument.createElement("div");
   identifiers.className = "run-card__identifiers";
@@ -109,9 +115,12 @@ export function createRunCard(run: DashboardRunSummary, options: RunCardOptions 
 
   const health = ownerDocument.createElement("p");
   health.className = "notice notice--warning run-card__health";
-  health.textContent = run.lastHeartbeatAt
-    ? `The worker hasn't checked in recently. Last check-in: ${formatTimestamp(run.lastHeartbeatAt)}.`
-    : "The worker hasn't checked in recently. This run may be stalled.";
+  const lastHeartbeat = run.lastHeartbeatAt
+    ? `No worker heartbeat since ${formatTimestamp(run.lastHeartbeatAt)}.`
+    : "No worker heartbeat has been recorded.";
+  health.textContent = run.operationalHealth === "suspect_stalled"
+    ? `${lastHeartbeat} Soyuz still records this run as ${statusPresentation.label.toLowerCase()} because no terminal callback is recorded. Check Kaseki's local job and callback outbox. Confirm execution has stopped before retrying a blocked callback or attempting recovery.`
+    : lastHeartbeat;
   health.hidden = run.operationalHealth !== "suspect_stalled";
   body.append(health);
 
