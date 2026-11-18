@@ -135,4 +135,35 @@ describe("shared dashboard UI components", () => {
     details!.dispatchEvent(new document.defaultView!.Event("toggle"));
     expect(onDetailsToggle).toHaveBeenCalledWith(run, details, expect.anything(), true);
   });
+
+  it("[DASHBOARD-RUN-HEALTH-01] distinguishes suspect liveness from lifecycle and explains safe callback recovery", () => {
+    const document = createDocument();
+    const run = {
+      status: "running",
+      runId: "00000000-0000-4000-8000-000000000013",
+      displayId: "soyuz-13",
+      repoUrl: "https://github.com/cyan/Orion",
+      ref: "main",
+      origin: { type: "api_client", id: "client-api" },
+      retryOf: null,
+      createdAt: "2026-11-03T12:00:00.000Z",
+      queuedAt: "2026-11-03T12:00:05.000Z",
+      startedAt: "2026-11-03T12:01:00.000Z",
+      completedAt: null,
+      stage: null,
+      operationalHealth: "suspect_stalled" as const,
+      lastHeartbeatAt: "2026-11-03T12:02:00.000Z",
+    };
+
+    const card = createRunCard(run, { ownerDocument: document });
+    const badges = [...card.querySelectorAll(".badge")].map((badge) => badge.textContent);
+    const warning = card.querySelector<HTMLElement>(".run-card__health");
+
+    expect(badges).toContain("Status: Running");
+    expect(badges).toContain("Health: Suspect stalled");
+    expect(warning?.hidden).toBe(false);
+    expect(warning?.textContent).toContain("Soyuz still records this run as running because no terminal callback is recorded.");
+    expect(warning?.textContent).toContain("Check Kaseki's local job and callback outbox.");
+    expect(warning?.textContent).toContain("Confirm execution has stopped before retrying a blocked callback or attempting recovery.");
+  });
 });

@@ -2743,9 +2743,17 @@ describe("Soyuz Worker API", () => {
     expect(suspect?.operational_health).toBe("suspect_stalled");
     expect(sent).toHaveLength(1);
     const stalledEvent = await bindings.DB.prepare(
-      "SELECT type FROM run_events WHERE run_id = ? AND type = 'run.suspected_stalled'",
-    ).bind(runId).first<{ type: string }>();
+      "SELECT type, payload_json FROM run_events WHERE run_id = ? AND type = 'run.suspected_stalled'",
+    ).bind(runId).first<{ type: string; payload_json: string }>();
     expect(stalledEvent?.type).toBe("run.suspected_stalled");
+    const stalledPayload = JSON.parse(stalledEvent!.payload_json) as {
+      observedAt: string;
+      lastHeartbeatAt: string | null;
+      startedAt: string | null;
+      staleForMs: number;
+    };
+    const livenessAt = stalledPayload.lastHeartbeatAt ?? stalledPayload.startedAt!;
+    expect(stalledPayload.staleForMs).toBe(Date.parse(stalledPayload.observedAt) - Date.parse(livenessAt));
     expect(await countRunEvents(bindings, runId, "run.suspected_stalled")).toBe(1);
 
     const heartbeat = await call(bindings, `/v1/worker/runs/${runId}/events`, {

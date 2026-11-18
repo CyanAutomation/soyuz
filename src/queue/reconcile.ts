@@ -143,6 +143,7 @@ export async function reconcileStalledRuns(env: Env, at = new Date()): Promise<v
           runId: row.id,
           workerId: row.worker_id,
           lastHeartbeatAt: row.last_heartbeat_at,
+          staleForMs: Math.max(0, at.getTime() - Date.parse(row.last_heartbeat_at ?? row.started_at ?? at.toISOString())),
           action: "operator_review_required_no_automatic_retry",
         }));
       }
