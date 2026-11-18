@@ -30,7 +30,9 @@ Kaseki polls canonical status while an execution is active. It applies `cancel_r
 
 ## Heartbeat and suspected stalled runs
 
-Contract version 1 exposes `lastHeartbeatAt` and `operationalHealth` on worker and client run reads, and exposes the current claim token on worker reads only. Heartbeats refresh a dedicated D1 timestamp and mark health `healthy`; they do not change lifecycle state. A five-minute cron threshold marks an active run `suspect_stalled` and emits one bounded `run.suspected_stalled` event/log for the stale heartbeat. Recovery by a later heartbeat restores `healthy`.
+Contract version 1 exposes `lastHeartbeatAt` and `operationalHealth` on worker and client run reads, and exposes the current claim token on worker reads only. Heartbeats refresh a dedicated D1 timestamp and mark health `healthy`; they do not change lifecycle state. A five-minute cron threshold marks an active run `suspect_stalled` and emits one bounded `run.suspected_stalled` event/log for the stale heartbeat, including `staleForMs`. Recovery by a later heartbeat restores `healthy`.
+
+The recent-runs dashboard shows `Health: Suspect stalled` separately from the lifecycle badge and gives the last heartbeat time plus callback recovery guidance. For investigation, compare the canonical run with the matching Kaseki job and inspect `GET /api/v1/soyuz/callbacks/blocked`; fix the reported error before using the callback retry endpoint. A stale heartbeat alone is not proof the worker stopped, so verify execution state before retrying or recovering.
 
 `operationalHealth` is separate from lifecycle status. A suspect run remains `running` or `cancel_requested`; Soyuz never automatically requeues it. This protects against duplicate execution when a Kaseki controller or network is unavailable but its Docker process is still running. The Kaseki API restart path reports `api_restart` through its outbox once the persistent host is back. A permanently lost host with lost local state requires an operator to verify execution has stopped and follow a separately approved recovery procedure; contract v1 does not provide automatic takeover of a running execution.
 

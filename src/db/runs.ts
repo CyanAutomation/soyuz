@@ -592,6 +592,7 @@ export async function markRunSuspectedStalled(
     lastHeartbeatAt: row.last_heartbeat_at,
     startedAt: row.started_at,
     observedAt,
+    staleForMs: Math.max(0, Date.parse(observedAt) - Date.parse(heartbeatAt)),
     automaticRetry: false,
   });
   const results = await db.batch([
