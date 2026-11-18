@@ -1,5 +1,5 @@
 import { CONTRACT_VERSION, type QueuedRun } from "../contracts/queue-message";
-import { listExpiredClaims, listStaleAdmissions, listStaleQueuedRuns, listStaleRunningRuns, markRunSuspectedStalled, parseRequest, reserveAdmissionRetry, reserveQueuedRunRecovery, transitionRun } from "../db/runs";
+import { calculateStaleDurationMs, listExpiredClaims, listStaleAdmissions, listStaleQueuedRuns, listStaleRunningRuns, markRunSuspectedStalled, parseRequest, reserveAdmissionRetry, reserveQueuedRunRecovery, transitionRun } from "../db/runs";
 import type { Env } from "../env";
 
 const RETRY_AFTER_MS = 60_000;
@@ -135,15 +135,16 @@ async function publishQueuedRun(env: Env, message: QueuedRun): Promise<void> {
 export async function reconcileStalledRuns(env: Env, at = new Date()): Promise<void> {
   const cutoff = new Date(at.getTime() - STALE_RUNNING_HEARTBEAT_MS).toISOString();
   const stale = await listStaleRunningRuns(env.DB, cutoff, RECONCILE_BATCH_SIZE);
+  const observedAt = at.toISOString();
   for (const row of stale) {
     try {
-      if (await markRunSuspectedStalled(env.DB, row, at.toISOString())) {
+      if (await markRunSuspectedStalled(env.DB, row, observedAt)) {
         console.warn(JSON.stringify({
           event: "soyuz_run_suspected_stalled",
           runId: row.id,
           workerId: row.worker_id,
           lastHeartbeatAt: row.last_heartbeat_at,
-          staleForMs: Math.max(0, at.getTime() - Date.parse(row.last_heartbeat_at ?? row.started_at ?? at.toISOString())),
+          staleForMs: calculateStaleDurationMs(row.last_heartbeat_at ?? row.started_at ?? observedAt, observedAt),
           action: "operator_review_required_no_automatic_retry",
         }));
       }
