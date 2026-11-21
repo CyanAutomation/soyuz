@@ -199,9 +199,9 @@ describe("Soyuz UTCP discovery and agent API", () => {
         },
       });
       const parsed = AgentCreateRunOutputSchema.parse(created);
-      expect(parsed.data).toMatchObject({ status: "queued", publishMode: "none", displayId: expect.stringMatching(/^soyuz-\d+$/) });
+      expect(parsed.data).toMatchObject({ status: "queued", publishMode: "pr", displayId: expect.stringMatching(/^soyuz-\d+$/) });
       expect(sent).toHaveLength(1);
-      expect(sent[0].request.publishMode).toBe("none");
+      expect(sent[0].request.publishMode).toBe("pr");
       expect(requests[0].url).toBe("https://soyuz.test/utcp");
       expect(requests[1]).toMatchObject({ method: "GET", url: "https://soyuz.test/v1/agent/runs?limit=5", authorization: `Bearer ${CLIENT_TOKEN}` });
       expect(requests[2]).toMatchObject({
@@ -252,11 +252,11 @@ describe("Soyuz UTCP discovery and agent API", () => {
     });
     expect(first.response.status).toBe(202);
     const created = AgentCreateRunOutputSchema.parse(first.body).data;
-    expect(created.publishMode).toBe("none");
+    expect(created.publishMode).toBe("pr");
     expect(created.repoUrl).toBe("https://github.com/example/private-project");
     expect(JSON.stringify(created)).not.toContain("embedded-secret");
     expect(JSON.stringify(created)).not.toContain("embedded-token");
-    expect(sent[0].request.publishMode).toBe("none");
+    expect(sent[0].request.publishMode).toBe("pr");
 
     const replay = await createAgentRun(bindings, {
       repoUrl: "https://clone-user:embedded-secret@github.com/example/private-project?access_token=embedded-token#fragment",
