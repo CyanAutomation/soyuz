@@ -124,14 +124,13 @@ export const RunRequestSchema = z.preprocess(
 );
 
 // Agent callers receive a smaller input surface than general REST clients.
-// Validators are shared with RunRequestShape so limits and accepted values
-// stay in sync while publication can retain the safer agent-specific default.
+// Validators and publication defaults remain aligned with normal run policy.
 export const AgentCreateRunInputSchema = z.object({
   repoUrl: RepoUrlSchema.describe("Absolute HTTPS repository URL. Credentials, query parameters, and fragments are removed from Soyuz read responses."),
   taskPrompt: TaskPromptSchema.describe("Work Kaseki should perform. Must contain 10–32,000 characters."),
   ref: RefSchema.optional().describe("Git reference to check out. Defaults to main."),
   taskMode: TaskModeSchema.optional().describe("patch edits the repository; inspect performs analysis without edits. Defaults to patch."),
-  publishMode: PublishModeSchema.optional().describe("Publication behavior. Defaults to none for agent-created work; choose branch or pr only when publication is intended."),
+  publishMode: PublishModeSchema.default("pr").describe("Publication behavior. Defaults to pr. Use another mode only for a narrowly scoped, explicitly authorized test."),
   validationCommands: ValidationCommandsSchema.optional().describe("Validation commands Kaseki should run after the task."),
   timeoutSeconds: OptionalTimeout.describe("Execution timeout from 60 to 10,800 seconds."),
   idempotencyKey: IdempotencyKeySchema.optional().describe("UUID to prevent duplicate admission. Reuse it with the same request after an uncertain response."),

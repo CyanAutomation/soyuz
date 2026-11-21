@@ -57,7 +57,7 @@ As of 2026-10-17, the production check found migrations `0001`–`0003` applied,
 | Submission routing enabled | Worker with migration `0004` and `KASEKI_SUBMISSION_API_TOKEN` | Soyuz UUIDs are canonical, provenance is authenticated, and retries record `retryOf`. |
 | Submission routing enabled | Worker without migration `0004` or scoped token | Incompatible; keep submission routing disabled. |
 
-Roll out the compatible Soyuz Worker only after its D1 migrations are applied and verified. Deploy Kaseki with claim fencing and submission routing disabled, configure the dedicated token, prove the contract in a non-production environment, then enable production routing separately. Verify a `publishMode: none` completion and failure, a cancellation, duplicate delivery, callback retry and restart reconciliation before enabling routine intake. A production smoke submission creates executable work; use an explicitly authorized disposable repository and Queue. See [deployment and local smoke-test guidance](DEPLOYMENT.md).
+Roll out the compatible Soyuz Worker only after its D1 migrations are applied and verified. Deploy Kaseki with claim fencing and submission routing disabled, configure the dedicated token, prove the contract in a non-production environment, then enable production routing separately. As a narrowly scoped test-only exception, verify a `publishMode: none` completion and failure, a cancellation, duplicate delivery, callback retry and restart reconciliation before enabling routine intake; normal runs default to `pr`. A production smoke submission creates executable work; use an explicitly authorized disposable repository and Queue. See [deployment and local smoke-test guidance](DEPLOYMENT.md).
 
 ## Local protocol simulation
 

@@ -103,7 +103,7 @@ For an authorized production migration, first verify the target database name an
 
 ## Authorized live acceptance check
 
-Submitting a run creates executable work that an enabled Kaseki host may immediately consume. Do this only after explicit authorization for the live run and its resource costs, and use a disposable repository, `publishMode: none`, a non-production Queue where available, a short timeout, and a bounded task. Do not use the Soyuz or Kaseki source repositories as the smoke-test target.
+Submitting a run creates executable work that an enabled Kaseki host may immediately consume. Do this only after explicit authorization for the live run and its resource costs, and use a disposable repository, the explicit test-only exception `publishMode: none`, a non-production Queue where available, a short timeout, and a bounded task. Ordinary runs default to `pr`; do not use a non-PR mode to mask missing credentials or avoid normal publication behavior. Do not use the Soyuz or Kaseki source repositories as the smoke-test target.
 
 Use the production smoke helper for a repeatable preflight and run check. It verifies `/health`, checks for active canonical runs, confirms an HTTP pull consumer has a DLQ, and peeks at the Queue without leasing messages. By default it performs only those read-only checks:
 
