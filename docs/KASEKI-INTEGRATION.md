@@ -1,6 +1,6 @@
 # Kaseki integration
 
-Milestones 2–4 implement the opt-in Kaseki host adapter in [`kaseki-agent`](https://github.com/CyanAutomation/kaseki-agent/tree/main/src/integrations/soyuz). Kaseki owns execution, safety admission, Docker, repository access, validation, artifacts, and publication. Soyuz remains the control plane and canonical run history.
+Milestones 2–4 implement the opt-in Kaseki host adapter in [`kaseki-agent`](https://github.com/CyanAutomation/kaseki-agent/tree/main/src/integrations/soyuz). Kaseki owns execution, safety admission, Docker, repository access, validation, and artifacts. Existing Kaseki runs may continue direct GitHub publication during migration; the new optional path lets Soyuz own an independent Kirisame publication lifecycle after execution completes. Soyuz remains the control plane and canonical run history.
 
 See the Kaseki [host setup and operations guide](https://github.com/CyanAutomation/kaseki-agent/blob/main/docs/SOYUZ_INTEGRATION.md) for environment variables, secret files, failure recovery, metrics, and the controlled smoke-test procedure. This repository documents the cross-service behavior and the additional Soyuz liveness change.
 
@@ -24,6 +24,12 @@ Kaseki sends bounded stage-change and heartbeat events; it does not upload promp
 
 `GET /v1/run-outcomes` exposes the newest 30 retained runs and aggregates only valid outcome projections. The OAuth-protected dashboard exposes the same view at `/dashboard/api/outcomes` and displays assessment, confidence, score, improvement-category, and phase-duration summaries with the retained-window scope. Soyuz still does not provide long-term retention parity with Kaseki's local history, so Kaseki's local scorecard/improvements history remains available for standalone operation and recovery.
 
+## Optional Kirisame publication lifecycle
+
+Current Kaseki versions do not upload a Kirisame v1 manifest or validation evidence. The additive Soyuz contract is ready to accept them from a trusted Worker host under the current `claimCallbackId`, but this phase does not change Kaseki-Agent or its current direct publisher. Soyuz requires a private manifest upload, a matching authenticated `validation.completed` evidence event, and an exact destination/base/mode rule before it registers an intent. A completed run with a legacy `publishedUrl` is explicitly excluded from the Kirisame ledger, so `publishMode: "pr"` by itself never creates another PR.
+
+When a future Kaseki host adopts this flow, it must keep `WORKER_API_TOKEN` out of coding containers, report validation evidence only after host-controlled checks finish, upload the immutable manifest before terminal completion, and stop direct-publishing that new-style run. Soyuz creates a separate publication record only after successful execution; a GitHub failure never changes run status or requeues coding work. See [Kirisame publication lifecycle](KIRISAME-PUBLICATION.md) for evidence fields, state transitions, retention pins, retry recovery, and the Phase 2C gate.
+
 For rollout, deploy Senku's new Kaseki profiles first, then deploy this optional outcome-summary callback contract and aggregate read route, then update Kaseki hosts. Kaseki's explicit direct-local submission route is a permanent operator-selected fallback and remains available during all three steps and after migration; normal Soyuz submission never switches to it automatically.
 
 Kaseki polls canonical status while an execution is active. It applies `cancel_requested` through its existing cancellation path and sends `/cancelled` after local cleanup finalizes. If completion wins the race, the completion callback is retained.
@@ -45,6 +51,8 @@ Current Queue HTTP pull request fields use `visibility_timeout_ms` and `batch_si
 ## Database migration and rollout
 
 The schema includes `0002_run_liveness.sql` for heartbeat and operational health, `0003_run_artifacts.sql` for artifact metadata and the per-run cap, `0004_run_origin_retry.sql` for authenticated provenance, origin-scoped idempotency and canonical retry lineage, `0005_request_payload_retention.sql` for request redaction, `0006_run_retention_outboxes.sql` for durable deduplication and artifact deletion, and `0007_run_display_ids.sql` for stable human-facing Soyuz run IDs. It keeps contract version 1 and does not add a new canonical lifecycle state. Apply pending remote migrations through the separately authorized production migration procedure before deploying code that reads the new tables.
+
+Migration `0009_durable_publications.sql` adds a manifest registry, claim-fenced intents, an independent publication ledger, and event history without adding run states or foreign keys to `runs`. Local tests apply it after the existing history. Production must apply `0009` through the separately authorized migration procedure before deploying Worker code that reads the new tables; health fails closed if the required publication schema is absent. This change does not apply production migrations or enable dispatch.
 
 As of 2026-10-17, the production check found migrations `0001`–`0003` applied, `/health` healthy, the Worker bound to D1 and the `soyuz-runs` producer Queue, and an HTTP pull consumer with `max_retries=3`, a DLQ, and a 30-second visibility timeout. Queue peek was empty and two canonical runs were failed; no active or completed run was present. The Queue retains messages for 24 hours. This is infrastructure readiness only, not a successful Kaseki handoff. Migration `0004` and the scoped submission credential must be deployed before submission routing is enabled.
 

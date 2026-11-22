@@ -136,6 +136,16 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `JEV-RATE-LIMIT-01` | Combined JEV decisions and feedback are capped at 5 requests per allowlisted GitHub user per minute. | [Architecture: ownership boundary](ARCHITECTURE.md#ownership-boundary) |
 | `RATE-LIMIT-FAIL-CLOSED-01` | OAuth registration, OpenUI generation, JEV decisions, and JEV feedback return unavailable rather than bypassing throttling if their rate limiter fails. | [Architecture: ownership boundary](ARCHITECTURE.md#ownership-boundary) |
 | `ERRORS-01` | Invalid run requests return a stable 422 error response. | [Transport contract: errors](CONTRACT.md#errors) |
+| `PUBLICATION-INTENT-01` | New publication intents require the current authenticated worker and claim, a verified private manifest, matching host validation evidence, and an exact destination/base/mode allowlist. | [Kirisame publication lifecycle](KIRISAME-PUBLICATION.md#manifest-provenance-and-authorization) |
+| `PUBLICATION-IMMUTABILITY-01` | Identical intent replay returns one stable publication ID; changed artifact, destination, mode, title, or body conflicts. | [Kirisame publication lifecycle](KIRISAME-PUBLICATION.md#immutable-request-identity) |
+| `PUBLICATION-LEGACY-01` | A legacy completion with `publishedUrl`, a failed run, or a cancelled run never creates a Kirisame publication. | [Kirisame publication lifecycle](KIRISAME-PUBLICATION.md#legacy-publication-compatibility) |
+| `PUBLICATION-STATE-01` | Publication failure and retry do not change a successful execution from `completed`. | [Kirisame publication lifecycle](KIRISAME-PUBLICATION.md#state-model-and-attempt-fencing) |
+| `PUBLICATION-CAS-01` | One D1 fenced attempt owns dispatch; stale results cannot overwrite a newer attempt or terminal result. | [Kirisame publication lifecycle](KIRISAME-PUBLICATION.md#state-model-and-attempt-fencing) |
+| `PUBLICATION-RETRY-01` | Uncertain outcomes retry the same immutable RPC; retryable errors back off and permanent conflicts block. | [Kirisame publication lifecycle](KIRISAME-PUBLICATION.md#retry-and-failure-classification) |
+| `PUBLICATION-RPC-01` | Publisher responses must match the v1 schema, publication identity, repository, mode, and deterministic branch; PR success requires an open PR. | [Kirisame publication lifecycle](KIRISAME-PUBLICATION.md#mock-publisher-and-contract-compatibility) |
+| `PUBLICATION-RETENTION-01` | Active/blocked publication manifests survive expiry and run culling; terminal artifacts remain at least 30 additional days and deletion retries. | [Kirisame publication lifecycle](KIRISAME-PUBLICATION.md#artifact-retention-and-run-culling) |
+| `PUBLICATION-STATUS-01` | Client status is authenticated and bounded; it excludes manifest bytes and storage keys while preserving legacy `publishedUrl`. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |
+| `PUBLICATION-MIGRATION-01` | Migration `0009` is additive, applies after the prior history locally, and gates Worker release until production is separately migrated. | [Deployment: Worker configuration](DEPLOYMENT.md#worker-configuration) |
 
 ## Internal helper invariants
 

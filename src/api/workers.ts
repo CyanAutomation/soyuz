@@ -26,6 +26,7 @@ import { isUuid } from "../lib/uuid";
 import { ApiError, errorResponse, parseJsonBody, successResponse, validationDetails } from "./http";
 import { publicEvent } from "./public-event";
 import { publicRun } from "./runs";
+import { reconcilePublicationEligibility } from "../publication/lifecycle";
 
 type CallbackParseResult<T> =
   | { success: true; data: T }
@@ -190,7 +191,9 @@ async function event(request: Request, env: Env, runId: string, requestId: strin
       step: payload.data.step ?? null,
       occurredAt: payload.data.timestamp ?? now,
       recordedAt: now,
-      payload: payload.data.payload,
+      payload: payload.data.type === "validation.completed" && payload.data.payload.publicationEvidence !== undefined
+        ? { ...payload.data.payload, claimCallbackId: payload.data.claimCallbackId }
+        : payload.data.payload,
     };
     const saved = await recordWorkerEvent(env.DB, runId, eventInput);
     return successResponse(requestId, publicEvent(saved), 202);
@@ -207,7 +210,10 @@ async function completed(request: Request, env: Env, runId: string, requestId: s
     const row = await requireActiveWorker(env, runId, payload.data.workerId, payload.data.claimCallbackId);
     const result = terminalOutcomeResult(payload.data);
     await ensureCallbackIdAvailable(env, runId, payload.data.callbackId, "run.completed", payload.data.workerId, result);
-    if (row.status === "completed") return successResponse(requestId, publicRun(row));
+    if (row.status === "completed") {
+      await reconcilePublicationEligibility(env, runId).catch(() => undefined);
+      return successResponse(requestId, publicRun(row));
+    }
     const now = new Date().toISOString();
     const updated = await transitionRun(env.DB, runId, "completed", {
       completed_at: payload.data.completedAt ?? now,
@@ -221,6 +227,7 @@ async function completed(request: Request, env: Env, runId: string, requestId: s
       recordedAt: now,
       payload: result,
     }, { ...(payload.data.claimCallbackId ? { claimCallbackId: payload.data.claimCallbackId } : {}) });
+    await reconcilePublicationEligibility(env, runId).catch(() => undefined);
     return successResponse(requestId, publicRun(updated));
   } catch (error) {
     return callbackError(error, requestId);
@@ -261,6 +268,7 @@ async function failed(request: Request, env: Env, runId: string, requestId: stri
       ...(row.status === "claimed" ? { claimOwner: payload.data.workerId, claimNotExpiredAt: now } : {}),
       ...(payload.data.claimCallbackId ? { claimCallbackId: payload.data.claimCallbackId } : {}),
     });
+    await reconcilePublicationEligibility(env, runId).catch(() => undefined);
     return successResponse(requestId, publicRun(updated));
   } catch (error) {
     return callbackError(error, requestId);
@@ -300,6 +308,7 @@ async function cancelled(request: Request, env: Env, runId: string, requestId: s
       ...(row.status === "claimed" ? { claimOwner: payload.data.workerId, claimNotExpiredAt: now } : {}),
       ...(payload.data.claimCallbackId ? { claimCallbackId: payload.data.claimCallbackId } : {}),
     });
+    await reconcilePublicationEligibility(env, runId).catch(() => undefined);
     return successResponse(requestId, publicRun(updated));
   } catch (error) {
     return callbackError(error, requestId);

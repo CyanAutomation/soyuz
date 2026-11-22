@@ -5,13 +5,15 @@ import { handleClientRuns } from "./api/runs";
 import { handleRunOutcomes } from "./api/run-outcomes";
 import { handleClientArtifacts, purgeExpiredArtifacts } from "./api/artifacts";
 import { handleWorkerArtifacts } from "./api/worker-artifacts";
+import { handleWorkerPublication, handleClientPublicationStatus } from "./api/publications";
 import { errorResponse, jsonResponse, rateLimitedResponse, requestIdFor } from "./api/http";
 import { handleWorkerCallbacks } from "./api/workers";
-import { purgeExpiredRunRequests, purgeOldRuns } from "./api/retention";
+import { purgeExpiredPublicationManifests, purgeExpiredRunRequests, purgeOldRuns } from "./api/retention";
 import type { Env } from "./env";
 import { DEFAULT_RUN_ORIGIN, type RunOrigin } from "./application/runs";
 import { createUtcpManual } from "./utcp/manual";
 import { reconcileAdmissions, reconcileStalledRuns } from "./queue/reconcile";
+import { reconcilePublications } from "./publication/lifecycle";
 
 export async function handleRequest(request: Request, env: Env, context?: ExecutionContext): Promise<Response> {
   const requestId = requestIdFor(request);
@@ -101,6 +103,9 @@ async function handleHealth(requestId: string, env: Env): Promise<Response> {
       SELECT object_key, queued_at, last_attempt_at
       FROM artifact_deletion_queue LIMIT 0
     `).first();
+    await env.DB.prepare("SELECT publication_id, state FROM publications LIMIT 0").first();
+    await env.DB.prepare("SELECT artifact_id, object_key FROM publication_manifest_artifacts LIMIT 0").first();
+    await env.DB.prepare("SELECT publication_id, event_id FROM publication_events LIMIT 0").first();
     return jsonResponse(200, { status: "ok", contractVersion: "1", requestId });
   } catch {
     return jsonResponse(503, {
@@ -235,6 +240,8 @@ async function handleWorkerRequest(request: Request, env: Env, url: URL, request
   }
   const artifactResponse = await handleWorkerArtifacts(request, env, url, requestId);
   if (artifactResponse) return artifactResponse;
+  const publicationResponse = await handleWorkerPublication(request, env, url, requestId);
+  if (publicationResponse) return publicationResponse;
   const response = await handleWorkerCallbacks(request, env, url, requestId);
   return response ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
 }
@@ -280,6 +287,8 @@ async function handleClientRequest(
   }
   const artifactResponse = await handleClientArtifacts(request, env, url, requestId, context);
   if (artifactResponse) return artifactResponse;
+  const publicationResponse = await handleClientPublicationStatus(request, env, url, requestId);
+  if (publicationResponse) return publicationResponse;
   const outcomeResponse = await handleRunOutcomes(request, env, requestId);
   if (outcomeResponse) return outcomeResponse;
   const response = await handleClientRuns(request, env, url, requestId, origin);
@@ -296,9 +305,10 @@ export default {
     return handleRequest(request, env, context);
   },
   scheduled(controller: ScheduledController, env: Env, context: ExecutionContext): void {
-    const work = [reconcileAdmissions(env), reconcileStalledRuns(env), purgeOldRuns(env).then(() => undefined)];
+    const work = [reconcileAdmissions(env), reconcileStalledRuns(env), reconcilePublications(env).then(() => undefined), purgeOldRuns(env).then(() => undefined)];
     if (controller.cron === "0 3 * * *") {
       work.push(purgeExpiredArtifacts(env));
+      work.push(purgeExpiredPublicationManifests(env).then(() => undefined));
       work.push(purgeExpiredRunRequests(env).then(() => undefined));
       const provider = getSoyuzOAuthProvider(env);
       if (provider && env.OAUTH_KV) work.push(purgeOAuthData(provider, env));

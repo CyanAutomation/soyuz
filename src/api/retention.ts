@@ -73,6 +73,7 @@ export async function purgeOldRuns(env: Env): Promise<number> {
 
   let deleted = 0;
   for (const { id } of candidates) {
+    const pinCheckAt = new Date().toISOString();
     const retainedRunPredicate = `id = ? AND id NOT IN (
       SELECT id FROM runs ORDER BY created_at DESC, id DESC LIMIT ?
     )`;
@@ -80,13 +81,21 @@ export async function purgeOldRuns(env: Env): Promise<number> {
       env.DB.prepare(`
         INSERT OR IGNORE INTO artifact_deletion_queue (object_key, queued_at)
         SELECT object_key, ? FROM run_artifacts
-        WHERE run_id = ? AND EXISTS (
+        WHERE run_id = ? AND NOT EXISTS (
+          SELECT 1 FROM publication_intents i LEFT JOIN publications p ON p.publication_id = i.publication_id
+          WHERE i.artifact_object_key = run_artifacts.object_key AND (
+            i.state = 'authorized'
+            OR (i.state = 'abandoned' AND (i.retained_until IS NULL OR i.retained_until > ?))
+            OR p.state IN ('pending', 'publishing', 'retryable_failure')
+            OR (p.state IN ('published', 'blocked') AND (p.retained_until IS NULL OR p.retained_until > ?))
+          )
+        ) AND EXISTS (
           SELECT 1 FROM runs AS candidate
           WHERE candidate.id = ? AND candidate.id NOT IN (
             SELECT id FROM runs ORDER BY created_at DESC, id DESC LIMIT ?
           )
         )
-      `).bind(new Date().toISOString(), id, id, MAX_RETAINED_RUNS),
+      `).bind(pinCheckAt, id, pinCheckAt, pinCheckAt, id, MAX_RETAINED_RUNS),
       env.DB.prepare(`DELETE FROM run_events WHERE run_id = ? AND run_id NOT IN (
         SELECT id FROM runs ORDER BY created_at DESC, id DESC LIMIT ?
       )`).bind(id, MAX_RETAINED_RUNS),
@@ -109,10 +118,20 @@ async function purgeQueuedArtifactObjects(env: Env): Promise<void> {
   for (let batch = 0; batch < ARTIFACT_DELETION_BATCHES_PER_SWEEP; batch += 1) {
     const rows = await env.DB.prepare(`
       SELECT object_key FROM artifact_deletion_queue
-      WHERE last_attempt_at IS NULL OR last_attempt_at < ?
+      WHERE (last_attempt_at IS NULL OR last_attempt_at < ?)
+        AND NOT EXISTS (
+          SELECT 1 FROM publication_intents i LEFT JOIN publications p ON p.publication_id = i.publication_id
+          WHERE i.artifact_object_key = artifact_deletion_queue.object_key AND (
+            i.state = 'authorized'
+            OR (i.state = 'abandoned' AND (i.retained_until IS NULL OR i.retained_until > ?))
+            OR p.state IN ('pending', 'publishing', 'retryable_failure')
+            OR (p.state = 'published' AND (p.retained_until IS NULL OR p.retained_until > ?))
+            OR (p.state = 'blocked' AND (p.retained_until IS NULL OR p.retained_until > ?))
+          )
+        )
       ORDER BY last_attempt_at ASC, queued_at ASC, object_key ASC
       LIMIT ?
-    `).bind(sweepAt, ARTIFACT_DELETION_BATCH_SIZE).all<{ object_key: string }>();
+    `).bind(sweepAt, sweepAt, sweepAt, sweepAt, ARTIFACT_DELETION_BATCH_SIZE).all<{ object_key: string }>();
     const objectKeys = (rows.results ?? []).map((row) => row.object_key);
     if (!objectKeys.length) return;
     const placeholders = objectKeys.map(() => "?").join(", ");
@@ -129,6 +148,63 @@ async function purgeQueuedArtifactObjects(env: Env): Promise<void> {
 
     await env.DB.prepare(`
       DELETE FROM artifact_deletion_queue WHERE object_key IN (${placeholders})
-    `).bind(...objectKeys).run();
+        AND NOT EXISTS (
+          SELECT 1 FROM publication_intents i LEFT JOIN publications p ON p.publication_id = i.publication_id
+          WHERE i.artifact_object_key = artifact_deletion_queue.object_key AND (
+            i.state = 'authorized'
+            OR (i.state = 'abandoned' AND (i.retained_until IS NULL OR i.retained_until > ?))
+            OR p.state IN ('pending', 'publishing', 'retryable_failure')
+            OR (p.state = 'published' AND (p.retained_until IS NULL OR p.retained_until > ?))
+            OR (p.state = 'blocked' AND (p.retained_until IS NULL OR p.retained_until > ?))
+          )
+        )
+    `).bind(...objectKeys, sweepAt, sweepAt, sweepAt).run();
   }
+}
+
+/** Queue expired publication manifests only after their active or operator-review pin ends. */
+export async function purgeExpiredPublicationManifests(env: Env, at = new Date()): Promise<number> {
+  const now = at.toISOString();
+  const rows = await env.DB.prepare(`
+    SELECT a.artifact_id, a.object_key FROM publication_manifest_artifacts a
+    WHERE a.expires_at <= ? AND NOT EXISTS (
+      SELECT 1 FROM publication_intents i LEFT JOIN publications p ON p.publication_id = i.publication_id
+      WHERE i.artifact_id = a.artifact_id AND (
+        i.state = 'authorized'
+        OR (i.state = 'abandoned' AND (i.retained_until IS NULL OR i.retained_until > ?))
+        OR p.state IN ('pending', 'publishing', 'retryable_failure')
+        OR (p.state = 'published' AND (p.retained_until IS NULL OR p.retained_until > ?))
+        OR (p.state = 'blocked' AND (p.retained_until IS NULL OR p.retained_until > ?))
+      )
+    ) ORDER BY a.expires_at, a.artifact_id LIMIT 100
+  `).bind(now, now, now, now).all<{ artifact_id: string; object_key: string }>();
+  for (const artifact of rows.results ?? []) {
+    await env.DB.batch([
+      env.DB.prepare(`INSERT OR IGNORE INTO artifact_deletion_queue (object_key, queued_at)
+        SELECT ?, ? WHERE NOT EXISTS (
+          SELECT 1 FROM publication_intents i LEFT JOIN publications p ON p.publication_id = i.publication_id
+          WHERE i.artifact_id = ? AND (
+            i.state = 'authorized'
+            OR (i.state = 'abandoned' AND (i.retained_until IS NULL OR i.retained_until > ?))
+            OR p.state IN ('pending', 'publishing', 'retryable_failure')
+            OR (p.state = 'published' AND (p.retained_until IS NULL OR p.retained_until > ?))
+            OR (p.state = 'blocked' AND (p.retained_until IS NULL OR p.retained_until > ?))
+          )
+        )`).bind(artifact.object_key, now, artifact.artifact_id, now, now, now),
+      env.DB.prepare(`DELETE FROM publications WHERE publication_id IN (
+        SELECT publication_id FROM publication_intents WHERE artifact_id = ? AND state IN ('consumed', 'abandoned')
+          AND retained_until IS NOT NULL AND retained_until <= ?
+      )`).bind(artifact.artifact_id, now),
+      env.DB.prepare(`DELETE FROM publication_events WHERE publication_id IN (
+        SELECT publication_id FROM publication_intents WHERE artifact_id = ? AND state IN ('consumed', 'abandoned')
+          AND retained_until IS NOT NULL AND retained_until <= ?
+      )`).bind(artifact.artifact_id, now),
+      env.DB.prepare(`DELETE FROM publication_intents WHERE artifact_id = ? AND state IN ('consumed', 'abandoned')
+        AND retained_until IS NOT NULL AND retained_until <= ?`).bind(artifact.artifact_id, now),
+      env.DB.prepare(`DELETE FROM publication_manifest_artifacts WHERE artifact_id = ? AND expires_at <= ?
+        AND NOT EXISTS (SELECT 1 FROM publication_intents WHERE artifact_id = ?)`)
+        .bind(artifact.artifact_id, now, artifact.artifact_id),
+    ]);
+  }
+  return rows.results?.length ?? 0;
 }
