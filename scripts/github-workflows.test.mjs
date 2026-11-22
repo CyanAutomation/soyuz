@@ -5,7 +5,6 @@ import test from "node:test";
 const ci = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
 const codeql = await readFile(new URL("../.github/workflows/codeql.yml", import.meta.url), "utf8");
 const scorecard = await readFile(new URL("../.github/workflows/scorecard.yml", import.meta.url), "utf8");
-const packageLock = JSON.parse(await readFile(new URL("../package-lock.json", import.meta.url), "utf8"));
 const deploymentDocs = await readFile(new URL("../docs/DEPLOYMENT.md", import.meta.url), "utf8");
 
 function jobBlock(workflow, name) {
@@ -33,12 +32,19 @@ test("all workflow jobs use a fixed Ubuntu runner image", () => {
   }
 });
 
-test("CI reports high-severity dependency advisories and matches Wrangler versions", () => {
+test("CI reports high-severity dependency advisories and deploys the locked Wrangler version", () => {
   const validate = jobBlock(ci, "validate");
   assert.match(validate, /npm audit --audit-level=high/);
   assert.match(validate, /Report dependency advisories[\s\S]*?continue-on-error:\s*true/);
-  const deployWranglerVersion = ci.match(/wranglerVersion:\s*["']([^"']+)["']/)?.[1];
-  assert.equal(deployWranglerVersion, packageLock.packages["node_modules/wrangler"].version);
+  const deploy = jobBlock(ci, "deploy");
+  assert.match(
+    deploy,
+    /- name: Read Wrangler version from package-lock\n\s+id: wrangler-version\n\s+run: node scripts\/wrangler-version\.mjs >> "\$GITHUB_OUTPUT"/,
+  );
+  assert.match(
+    deploy,
+    /wranglerVersion:\s*\$\{\{\s*steps\.wrangler-version\.outputs\.version\s*\}\}/,
+  );
 });
 
 test("the deploy artifact is attested after main validation and verified before extraction", () => {
