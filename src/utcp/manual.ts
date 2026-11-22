@@ -107,7 +107,7 @@ export function createUtcpManual(env: Pick<Env, "SOYUZ_PUBLIC_URL" | "SOYUZ_ENVI
     tools: [
       tool(
         "create_run",
-        "Submit asynchronous work to Soyuz for a Kaseki host to execute later. A successful response means Soyuz admitted or replayed the request; it does not mean the task has completed. Supply an idempotencyKey and reuse it with the same request after timeouts or uncertain responses to prevent duplicate work. Omitted publishMode defaults to none. Explicit branch or pr publication can create a branch or pull request. Show displayId to people and use canonical runId for Soyuz API calls. Requires the client bearer credential configured by the UTCP client as CLIENT_API_TOKEN.",
+        "Submit asynchronous work to Soyuz for a Kaseki host to execute later. A successful response means Soyuz admitted or replayed the request; it does not mean the task has completed. Supply an idempotencyKey and reuse it with the same request after timeouts or uncertain responses to prevent duplicate work. Omitted publishMode defaults to pr. Use another mode only for a narrowly scoped, explicitly authorized test. Show displayId to people and use canonical runId for Soyuz API calls. Requires the client bearer credential configured by the UTCP client as CLIENT_API_TOKEN.",
         AgentCreateRunToolInputSchema,
         AgentCreateRunOutputSchema,
         "POST",

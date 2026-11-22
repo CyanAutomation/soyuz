@@ -47,7 +47,7 @@ The five agent HTTP routes accept the current client credential and the existing
 
 `create_run` submits work asynchronously. A successful HTTP response means Soyuz admitted or replayed the request; Kaseki executes it later on an available host. It is not a completion signal. Poll `get_run` or `get_run_events` using the returned canonical `runId`.
 
-Agent-created work defaults an omitted `publishMode` to `none`. A valid explicit mode (`auto`, `none`, `branch`, or `pr`) is honored. Explicit branch or pull-request publication may create those GitHub resources. The human-facing `displayId` is for people; use the UUID `runId` for tool calls.
+Agent-created work defaults an omitted `publishMode` to `pr`, matching the general REST API and Kaseki. Explicit `auto`, `none`, or `branch` modes are reserved for narrowly scoped, explicitly authorized test cases; they are not routine operating modes. In particular, do not select `auto` or `none` to mask missing GitHub credentials. The human-facing `displayId` is for people; use the UUID `runId` for tool calls.
 
 Supply a UUID `idempotencyKey` for each intended create and reuse it with an equivalent request after a timeout or uncertain response. Soyuz uses its existing origin-scoped idempotency ledger; UTCP has no separate ledger. Agent routes use the stable server-derived `api_client/utcp-agent` origin. This preserves run ownership and keeps agent idempotency keys separate from the general client API's `api_client/client-api` namespace. Equivalent retained work replays; reusing a key for different work within the same origin conflicts. If Queue publication is uncertain, Soyuz preserves the run and tells the caller to retry with the same key while reconciliation proceeds.
 

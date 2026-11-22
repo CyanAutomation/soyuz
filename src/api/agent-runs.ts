@@ -73,7 +73,7 @@ async function submitAgentRun(request: Request, env: Env, requestId: string): Pr
     }
     const admission = await createRun(env, {
       ...parsed.data,
-      publishMode: parsed.data.publishMode ?? "none",
+      publishMode: parsed.data.publishMode,
     }, requestId, request.headers.get("idempotency-key"), AGENT_RUN_ORIGIN);
     return agentSuccessResponse(requestId, AgentCreateRunOutputSchema, agentRunSummary(admission.row), admission.statusCode);
   } catch (error) {

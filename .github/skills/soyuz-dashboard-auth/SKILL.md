@@ -5,7 +5,7 @@ description: Use when changing the private run dashboard, its GitHub OAuth flow,
 
 # Change the private dashboard and OAuth flow
 
-Read the dashboard and OAuth sections in `docs/DEPLOYMENT.md`, `docs/ARCHITECTURE.md`, and `docs/CONTRACT.md`. Run and worker operations are unavailable from the dashboard. Its narrowly scoped analysis generation, JEV decision, and feedback endpoints are authenticated POSTs that do not create or mutate runs. For their model and rendering boundaries, also read `docs/OPENUI-ANALYSIS.md` and follow `soyuz-openui-analysis` and `soyuz-senku-integration`.
+Read the dashboard and OAuth sections in `docs/DEPLOYMENT.md`, `docs/ARCHITECTURE.md`, and `docs/CONTRACT.md`. Run and worker operations are unavailable from the dashboard. Its narrowly scoped analysis generation, JEV decision, and feedback endpoints are authenticated POSTs that do not create or mutate runs. For cross-cutting credential roles, rotation, or origin authorization, also follow `soyuz-auth-boundaries`. For model and rendering boundaries, read `docs/OPENUI-ANALYSIS.md` and follow `soyuz-openui-analysis` and `soyuz-senku-integration`.
 
 ## Find the implementation
 

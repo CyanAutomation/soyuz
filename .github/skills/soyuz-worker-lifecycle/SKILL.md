@@ -5,7 +5,7 @@ description: Use when changing run state transitions, queue reconciliation, work
 
 # Change the worker lifecycle safely
 
-Soyuz and Kaseki communicate through an at-least-once Queue and authenticated callbacks. Read the lifecycle and admission sections in `docs/ARCHITECTURE.md`, the worker callback sections in `docs/CONTRACT.md`, and the relevant Kaseki guidance in `docs/KASEKI-INTEGRATION.md` before changing lifecycle behavior.
+Soyuz and Kaseki communicate through an at-least-once Queue and authenticated callbacks. Read the lifecycle and admission sections in `docs/ARCHITECTURE.md`, the worker callback sections in `docs/CONTRACT.md`, and the relevant Kaseki guidance in `docs/KASEKI-INTEGRATION.md` before changing lifecycle behavior. For Kaseki host handoff, Queue consumer, or rollout compatibility changes, also follow `soyuz-kaseki-integration`.
 
 ## Trace the full transition
 

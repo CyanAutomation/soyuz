@@ -15,6 +15,7 @@
     "test:kaseki": "vitest run tests/kaseki-protocol.test.ts",
     "test:cross-worker": "node --test scripts/senku-cross-worker.test.ts",
     "test:unit": "vitest run --config vitest.unit.config.ts",
+    "skills:check": "node scripts/validate-skill-references.mjs",
     "cf:types": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply soyuz-runs --local",
     "db:migrate:remote": "wrangler d1 migrations apply soyuz-runs --remote",
@@ -22,7 +23,7 @@
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^1.2.4",
-    "@openuidev/lang-core": "^1.1.0",
+    "@openuidev/lang-core": "^1.1.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
