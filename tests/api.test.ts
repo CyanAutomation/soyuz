@@ -2029,20 +2029,32 @@ describe("Soyuz Worker API", () => {
     const request = await call(bindings, `/v1/runs/${runId}/cancel`, { method: "POST", token: CLIENT_TOKEN });
     expect(request.body.data.status).toBe("cancel_requested");
 
+    const cancellationBody = {
+      contractVersion: "1",
+      callbackId: "00000000-0000-4000-8000-000000000016",
+      workerId,
+      reason: "Cancellation observed by the execution host",
+      summary: "The worker stopped after cancellation was applied.",
+      publishedUrl: "https://github.com/example/project/pull/7",
+      changedFileCount: 3,
+    };
     const confirmed = await call(bindings, `/v1/worker/runs/${runId}/cancelled`, {
       method: "POST", token: WORKER_TOKEN,
-      body: {
-        contractVersion: "1",
-        callbackId: "00000000-0000-4000-8000-000000000016",
-        workerId,
-        reason: "Cancellation observed by the execution host",
-        summary: "The worker stopped after cancellation was applied.",
-        publishedUrl: "https://github.com/example/project/pull/7",
-        changedFileCount: 3,
-      },
+      body: cancellationBody,
     });
     expect(confirmed.response.status).toBe(200);
     expect(confirmed.body.data.status).toBe("cancelled");
+    expect(confirmed.body.data.result).toMatchObject({
+      summary: cancellationBody.summary,
+      publishedUrl: cancellationBody.publishedUrl,
+      changedFileCount: cancellationBody.changedFileCount,
+    });
+    const stored = await getRun(bindings.DB, runId);
+    expect(JSON.parse(stored?.result_json ?? "null")).toMatchObject({
+      summary: cancellationBody.summary,
+      publishedUrl: cancellationBody.publishedUrl,
+      changedFileCount: cancellationBody.changedFileCount,
+    });
   });
 
   it("[ARTIFACTS-01] lets an owned running worker upload an artifact for authenticated client download", async () => {
@@ -2453,12 +2465,27 @@ describe("Soyuz Worker API", () => {
     expect(failure.response.status).toBe(200);
     expect(failure.body.data.status).toBe("failed");
     expect(failure.body.data.failureClass).toBe("validation_failed");
+    expect(failure.body.data.result).toMatchObject({
+      summary: failureBody.summary,
+      publishedUrl: failureBody.publishedUrl,
+      changedFileCount: failureBody.changedFileCount,
+    });
     expect(retry.body.data.status).toBe("failed");
+    expect(retry.body.data.result).toMatchObject({
+      summary: failureBody.summary,
+      publishedUrl: failureBody.publishedUrl,
+      changedFileCount: failureBody.changedFileCount,
+    });
     expect(stored).toMatchObject({
       status: "failed",
       exit_code: 1,
       failure_class: "validation_failed",
       failure_message: failureBody.failureMessage,
+    });
+    expect(JSON.parse(stored?.result_json ?? "null")).toMatchObject({
+      summary: failureBody.summary,
+      publishedUrl: failureBody.publishedUrl,
+      changedFileCount: failureBody.changedFileCount,
     });
     const list = await call(bindings, "/v1/runs?limit=30", { token: CLIENT_TOKEN });
     expect(list.body.data.runs).toEqual(expect.arrayContaining([
