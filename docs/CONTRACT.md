@@ -118,8 +118,8 @@ Requirement IDs: `HEALTH-DB-01`, `RUN-READ-REST-01`, `CANCEL-QUEUED-01`, `CANCEL
 | `GET /v1/agent/runs/:id/events` | Client | Read bounded, sanitized operational events |
 | `POST /v1/agent/runs/:id/cancel` | Client | Cancel queued work or record running cancellation intent |
 | `GET /dashboard/` | Browser | Private read-only dashboard; requires OAuth for its API |
-| `GET /dashboard/analysis/` | Browser | Optional OpenUI run-analysis page |
-| `POST /dashboard/api/analysis/generate` | OAuth `soyuz:read` | Stream a generated OpenUI Lang program; does not change run state |
+| `GET /dashboard/analysis/` | Browser | Optional A2UI run-analysis page |
+| `POST /dashboard/api/analysis/generate` | OAuth `soyuz:read` | Stream validated A2UI v1.0 messages; does not change run state |
 | `POST /dashboard/api/analysis/decisions` | OAuth `soyuz:read` | Get validated JEV answers for a server-owned profile and retained run UUID |
 | `POST /dashboard/api/analysis/feedback` | OAuth `soyuz:read` | Record or update a user's helpful/not-helpful rating for a retained run assessment |
 | `GET /dashboard/api/me` | OAuth `soyuz:read` | Current allowlisted GitHub account login |
@@ -130,7 +130,7 @@ Run history is limited to the newest 30 runs across all statuses. Status filters
 
 `GET /v1/runs` summaries and the OAuth dashboard's run summaries include the stored `failureClass` and `failureMessage` when a run failed, so operators can triage from run history. Dashboard cards show at most 500 characters and the detail view shows at most 1,000; both render the message as text. The sanitized UTCP agent projections continue to omit `failureMessage`.
 
-`POST /dashboard/api/analysis/generate`, `POST /dashboard/api/analysis/decisions`, and `POST /dashboard/api/analysis/feedback` are the only POST exceptions under the dashboard API. Generation accepts a bounded `{ "prompt": "...", "mode": "generate" | "edit", "existingProgram"?: "..." }` JSON request and streams OpenUI Lang as server-sent events. Decisions accepts `{ "profileId": "...", "runId": "..." }`; the profile determines the question map and the server constructs the bounded state projection. Feedback accepts `{ "profileId": "...", "runId": "...", "rating": "helpful" | "not_helpful" }` and stores no JEV answer. All require an authenticated, allowlisted `soyuz:read` token, use per-user rate limits, and cannot create or mutate runs. Other non-GET dashboard API methods return 405. Provider configuration, profile data boundaries, and the reusable JEV adapter are described in [OpenUI run analysis](OPENUI-ANALYSIS.md).
+`POST /dashboard/api/analysis/generate`, `POST /dashboard/api/analysis/decisions`, and `POST /dashboard/api/analysis/feedback` are the only POST exceptions under the dashboard API. Generation accepts a bounded `{ "prompt": "...", "mode": "generate" | "edit", "existingSurface"?: "..." }` JSON request and streams validated A2UI v1.0 messages as server-sent events. Decisions accepts `{ "profileId": "...", "runId": "..." }`; the profile determines the question map and the server constructs the bounded state projection. Feedback accepts `{ "profileId": "...", "runId": "...", "rating": "helpful" | "not_helpful" }` and stores no JEV answer. All require an authenticated, allowlisted `soyuz:read` token, use per-user rate limits, and cannot create or mutate runs. Other non-GET dashboard API methods return 405. Provider configuration, protocol limits, profile data boundaries, and the JEV adapter are described in [A2UI run analysis](A2UI-ANALYSIS.md).
 
 The dashboards display the authenticated GitHub login after verifying it through `/dashboard/api/me`. Sign-out revokes the dashboard's active OAuth access token through the OAuth token endpoint and clears the displayed run data. This ends the Soyuz dashboard session; it does not sign the user out of GitHub. The browser keeps the access token in memory, so reloading the page requires signing in again.
 

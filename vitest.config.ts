@@ -27,7 +27,6 @@ export default defineConfig({
   ],
   test: {
     include: ["tests/**/*.test.ts"],
-    exclude: ["tests/openui.test.ts"],
     setupFiles: ["./tests/apply-migrations.ts"],
     testTimeout: 15_000,
     hookTimeout: 15_000,

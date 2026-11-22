@@ -1,64 +1,50 @@
-import {
-  createStreamingParser,
-  mergeStatements,
-  type ElementNode,
-  type ParseResult,
-} from "@openuidev/lang-core";
 import { fetchJson, HttpError } from "../api.js";
 import { revokeAccessToken } from "../auth-api.js";
 import { renderAuthUi } from "../auth-ui.js";
 import { createSnackBarController } from "../snackbar.js";
 import { setButtonBusy, setNotice as renderNotice } from "../ui/components.js";
-import { OpenUIDOMRenderer, isElementNode, type OpenUIAction } from "../../openui/dom-renderer";
-import {
-  OPENUI_MAX_COMPONENTS,
-  OPENUI_MAX_DEPTH,
-  OPENUI_MAX_PROGRAM_CHARS,
-  soyuzOpenUILibrary,
-  validateSoyuzAction,
-} from "../../openui/library";
-import { createSoyuzOpenUIRuntime, validateGeneratedProgram, type SoyuzOpenUIRuntime } from "../../openui/runtime";
-import { soyuzComponentRenderers } from "./components";
+import { A2UI_MAX_STREAM_CHARS, validateA2uiMessages } from "../../a2ui/protocol";
+import { A2uiDomRenderer, type AnalysisAction } from "./a2ui-renderer";
+import { JEV_PROFILE_VIEWS, renderJevResult, type JevProfileId } from "./jev-renderer";
 import { suggestedJevProfile } from "./jev-selection";
 
 interface OAuthRegistration { client_id: string }
 interface OAuthTokenResponse { access_token: string }
-
-type AnalysisMode = "generate" | "edit";
-type JevProfileId = keyof typeof JEV_PROFILE_VIEWS;
-interface JevProfileView {
-  title: string;
-  answers: readonly { key: string; title: string; type: "noul" | "choice" | "score"; labels?: Record<string, string> }[];
+interface RunSummary {
+  runId: string;
+  displayId: string;
+  status: string;
+  stage: string | null;
+  operationalHealth: string;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+}
+interface RunDetail extends RunSummary {
+  outcomeSummary: string | null;
+  changedFileCount: number | null;
+  exitCode: number | null;
+}
+interface EventRecord {
+  eventId: string;
+  type: string;
+  stage: string | null;
+  step: string | null;
+  timestamp: string;
+  payload: Record<string, string | number | boolean>;
+}
+interface ArtifactRecord { id: string; name: string; size: number }
+interface AnalysisData {
+  runs: RunSummary[];
+  statusCounts: Array<{ status: string; count: number }>;
+  selectedRunId: string;
+  selectedRun: RunDetail | null;
+  events: EventRecord[];
+  artifacts: ArtifactRecord[];
 }
 
-const JEV_PROFILE_VIEWS = {
-  run_operations_triage_v1: {
-    title: "Run operations triage",
-    answers: [
-      { key: "needs_followup", title: "Needs followup", type: "noul" },
-      { key: "likely_area", title: "Likely area", type: "choice", labels: { execution: "Kaseki execution", control_plane: "Soyuz control plane", unknown: "Unknown" } },
-      { key: "severity", title: "Severity", type: "score" },
-    ],
-  },
-  kaseki_output_review_v1: {
-    title: "Kaseki output review",
-    answers: [
-      { key: "summary_specificity", title: "Summary specificity", type: "noul" },
-      { key: "outcome_alignment", title: "Outcome alignment", type: "choice", labels: { consistent: "Consistent", unclear: "Unclear", inconsistent: "Inconsistent" } },
-      { key: "evidence_strength", title: "Evidence strength", type: "score" },
-    ],
-  },
-  kaseki_output_review_v2: {
-    title: "Kaseki output and outcome review",
-    answers: [
-      { key: "summary_specificity", title: "Summary specificity", type: "noul" },
-      { key: "outcome_alignment", title: "Outcome alignment", type: "choice", labels: { consistent: "Consistent", unclear: "Unclear", inconsistent: "Inconsistent" } },
-      { key: "evidence_strength", title: "Evidence strength", type: "score" },
-      { key: "recorded_outcome", title: "Recorded outcome score", type: "score" },
-    ],
-  },
-} as const satisfies Record<string, JevProfileView>;
-
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const oauthKeys = ["state", "verifier", "clientId", "redirectUri"] as const;
 const notice = requiredElement<HTMLElement>("#analysis-notice");
 const dataNotice = requiredElement<HTMLElement>("#analysis-data-notice");
@@ -69,6 +55,10 @@ const question = requiredElement<HTMLTextAreaElement>("#analysis-question");
 const generateButton = requiredElement<HTMLButtonElement>("#analysis-generate");
 const refineButton = requiredElement<HTMLButtonElement>("#analysis-refine");
 const output = requiredElement<HTMLElement>("#analysis-output");
+const dataControls = requiredElement<HTMLElement>("#analysis-data-controls");
+const statusFilter = requiredElement<HTMLSelectElement>("#analysis-status-filter");
+const sortSelect = requiredElement<HTMLSelectElement>("#analysis-sort");
+const refreshButton = requiredElement<HTMLButtonElement>("#analysis-refresh");
 const jevDisclosure = requiredElement<HTMLDetailsElement>("#analysis-jev-disclosure");
 const jevControls = requiredElement<HTMLElement>("#analysis-jev-controls");
 const jevForm = requiredElement<HTMLFormElement>("#analysis-jev-form");
@@ -84,14 +74,15 @@ const jevFeedbackButtons = [...document.querySelectorAll<HTMLButtonElement>("[da
 
 let accessToken: string | null = null;
 let oauthClientId: string | null = null;
-let runtime: SoyuzOpenUIRuntime | null = null;
-let renderer: OpenUIDOMRenderer | null = null;
-let stopRuntimeSubscription: (() => void) | null = null;
-let jevRuntime: SoyuzOpenUIRuntime | null = null;
-let jevRenderer: OpenUIDOMRenderer | null = null;
-let stopJevRuntimeSubscription: (() => void) | null = null;
-let currentProgram = "";
+let renderer: A2uiDomRenderer | null = null;
+let currentMessages: unknown[] = [];
+let allRuns: RunSummary[] = [];
+let selectedRunId = "";
+let selectedRun: RunDetail | null = null;
+let selectedEvents: EventRecord[] = [];
+let selectedArtifacts: ArtifactRecord[] = [];
 let isGenerating = false;
+let isRefreshing = false;
 let isRunningJev = false;
 let hasRunJev = false;
 
@@ -102,14 +93,14 @@ connectButton.addEventListener("click", () => {
   if (accessToken) void signOut();
   else void connect();
 });
-
 form.addEventListener("submit", (event) => {
   event.preventDefault();
   const submitter = event.submitter;
-  const mode: AnalysisMode = submitter instanceof HTMLButtonElement && submitter.value === "edit" ? "edit" : "generate";
-  void generateAnalysis(mode);
+  void generateAnalysis(submitter instanceof HTMLButtonElement && submitter.value === "edit" ? "edit" : "generate");
 });
-
+statusFilter.addEventListener("change", renderAnalysis);
+sortSelect.addEventListener("change", renderAnalysis);
+refreshButton.addEventListener("click", () => void refreshData());
 jevForm.addEventListener("submit", (event) => {
   event.preventDefault();
   void runJevAssessment();
@@ -120,8 +111,7 @@ for (const button of jevFeedbackButtons) button.addEventListener("click", () => 
   const rating = button.dataset.jevRating;
   if (rating === "helpful" || rating === "not_helpful") void submitJevFeedback(rating);
 });
-
-window.addEventListener("pagehide", () => disposeRuntime());
+window.addEventListener("pagehide", disposeRenderer);
 
 async function connect(): Promise<void> {
   renderAuthUi(connectButton, accountLabel, "signing-in");
@@ -147,7 +137,6 @@ async function connect(): Promise<void> {
     sessionStorage.setItem("soyuz.analysis.verifier", verifier);
     sessionStorage.setItem("soyuz.analysis.clientId", registration.client_id);
     sessionStorage.setItem("soyuz.analysis.redirectUri", redirectUri);
-
     const authorize = new URL("/oauth/authorize", location.origin);
     authorize.searchParams.set("client_id", registration.client_id);
     authorize.searchParams.set("redirect_uri", redirectUri);
@@ -197,10 +186,11 @@ async function finishSignIn(): Promise<void> {
     history.replaceState(null, "", "/dashboard/analysis/");
     renderAuthUi(connectButton, accountLabel, "signed-in", identity.githubLogin);
     form.hidden = false;
+    dataControls.hidden = false;
     jevDisclosure.hidden = false;
     jevControls.hidden = false;
-    activateRuntime();
-    setNotice("Ask a question to generate a read-only interface from Soyuz run data.", "info");
+    activateRenderer();
+    setNotice("Ask a question to generate a read-only view from retained Soyuz run data.", "info");
   } catch {
     clearOAuthState();
     if (accessToken && oauthClientId) {
@@ -218,9 +208,9 @@ async function signOut(): Promise<void> {
   oauthClientId = null;
   renderAuthUi(connectButton, accountLabel, "signing-out");
   form.hidden = true;
+  dataControls.hidden = true;
   jevDisclosure.hidden = true;
   jevControls.hidden = true;
-  disposeRuntime();
   clearAnalysisOutput();
   setNotice("Signing out…", "info");
   try {
@@ -235,104 +225,264 @@ function clearLocalSession(message: string, tone: "info" | "success" | "warning"
   accessToken = null;
   oauthClientId = null;
   form.hidden = true;
+  dataControls.hidden = true;
   jevDisclosure.hidden = true;
   jevControls.hidden = true;
   renderAuthUi(connectButton, accountLabel, "signed-out");
-  disposeRuntime();
   clearAnalysisOutput();
   clearOAuthState();
   setNotice(message, tone);
 }
 
-function activateRuntime(): void {
-  if (!accessToken) return;
-  disposeRuntime();
-  runtime = createSoyuzOpenUIRuntime(accessToken, fetch, () => {
-    clearLocalSession("Your sign-in has expired or access has changed. Sign in again to continue.", "danger");
-  });
-  renderer = new OpenUIDOMRenderer(output, soyuzOpenUILibrary, soyuzComponentRenderers, {
-    maxDepth: OPENUI_MAX_DEPTH,
-    maxComponents: OPENUI_MAX_COMPONENTS,
-  });
-  stopRuntimeSubscription = runtime.subscribe(renderRuntime);
-  jevRuntime = createSoyuzOpenUIRuntime(accessToken, fetch, () => {
-    clearLocalSession("Your sign-in has expired or access has changed. Sign in again to continue.", "danger");
-  });
-  jevRenderer = new OpenUIDOMRenderer(jevOutput, soyuzOpenUILibrary, soyuzComponentRenderers, {
-    maxDepth: OPENUI_MAX_DEPTH,
-    maxComponents: OPENUI_MAX_COMPONENTS,
-  });
-  stopJevRuntimeSubscription = jevRuntime.subscribe(renderJevRuntime);
+function activateRenderer(): void {
+  disposeRenderer();
+  renderer = new A2uiDomRenderer(output, handleAnalysisAction);
 }
 
-function disposeRuntime(): void {
-  stopRuntimeSubscription?.();
-  stopRuntimeSubscription = null;
-  stopJevRuntimeSubscription?.();
-  stopJevRuntimeSubscription = null;
+function disposeRenderer(): void {
   renderer?.dispose();
   renderer = null;
-  runtime?.dispose();
-  runtime = null;
-  jevRenderer?.dispose();
-  jevRenderer = null;
-  jevRuntime?.dispose();
-  jevRuntime = null;
 }
 
-function renderRuntime(): void {
-  if (!runtime || !renderer) return;
-  const root = runtime.getRoot();
-  if (root) renderer.render(root, {
-    store: runtime.store,
-    queryManager: runtime.queryManager,
-    dispatchAction,
-  });
-  const snapshot = runtime.queryManager.getSnapshot();
-  if (snapshot.__openui_errors.length > 0) {
-    setDataNotice("Some run data could not be loaded. Refresh or select a different run to try again.", "warning");
-  } else if (runtime.queryManager.isAnyLoading()) {
-    setDataNotice("Loading approved Soyuz run data…", "info");
-  } else {
-    setDataNotice("", "empty");
+async function generateAnalysis(mode: "generate" | "edit"): Promise<void> {
+  if (!accessToken || !renderer || isGenerating) return;
+  const prompt = question.value.trim();
+  if (!prompt) {
+    setNotice("Enter a question about retained run data.", "warning");
+    question.focus();
+    return;
+  }
+  if (mode === "edit" && currentMessages.length === 0) {
+    setNotice("Generate an interface before refining it.", "warning");
+    return;
+  }
+  isGenerating = true;
+  generateButton.disabled = true;
+  if (mode === "edit") setButtonBusy(refineButton, true, "Refining interface…");
+  else setButtonBusy(generateButton, true, "Generating interface…");
+  setNotice(mode === "edit" ? "Refining the current interface…" : "Generating an interface…", "info");
+  try {
+    const additions = await streamGeneration(prompt, mode);
+    const nextMessages = mode === "edit" ? [...currentMessages, ...additions] : additions;
+    const validation = validateA2uiMessages(nextMessages);
+    if (!validation.ok) throw new Error("The generated interface was invalid.");
+    currentMessages = nextMessages;
+    renderAnalysis();
+    refineButton.hidden = false;
+    question.value = "";
+    setNotice(mode === "edit" ? "Interface refined." : "Interface ready. Use the fixed filters or select a run to inspect its recorded details.", "success");
+    if (allRuns.length === 0) await refreshData(false);
+  } catch (error) {
+    if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
+      clearLocalSession("Your sign-in has expired or access has changed. Sign in again to continue.", "danger");
+    } else {
+      setNotice(error instanceof Error ? error.message.slice(0, 240) : "The interface could not be generated. Please try again.", "danger");
+    }
+  } finally {
+    isGenerating = false;
+    setButtonBusy(generateButton, false);
+    setButtonBusy(refineButton, false);
+    generateButton.disabled = false;
   }
 }
 
-function renderJevRuntime(): void {
-  if (!jevRuntime || !jevRenderer || !hasRunJev) return;
-  const root = jevRuntime.getRoot();
-  if (root) jevRenderer.render(root, {
-    store: jevRuntime.store,
-    queryManager: jevRuntime.queryManager,
-    dispatchAction: () => undefined,
+async function streamGeneration(prompt: string, mode: "generate" | "edit"): Promise<unknown[]> {
+  const token = accessToken;
+  if (!token) throw new Error("Sign in to generate an analysis.");
+  const response = await fetch("/dashboard/api/analysis/generate", {
+    method: "POST",
+    cache: "no-store",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "text/event-stream" },
+    body: JSON.stringify({
+      prompt,
+      mode,
+      ...(mode === "edit" ? { existingSurface: JSON.stringify(currentMessages) } : {}),
+    }),
   });
-  const snapshot = jevRuntime.queryManager.getSnapshot();
-  if (snapshot.__openui_errors.length > 0) {
-    hasRunJev = false;
-    isRunningJev = false;
-    setButtonBusy(jevButton, false);
-    jevProfile.disabled = false;
-    jevRunId.disabled = false;
-    setJevNotice("JEV could not validate a response for this run. No action was taken.", "warning");
-    jevFeedback.hidden = true;
-  } else if (jevRuntime.queryManager.isAnyLoading()) {
-    setJevNotice("JEV is assessing the selected run. Please wait…", "info");
-  } else {
-    hasRunJev = false;
-    isRunningJev = false;
-    setButtonBusy(jevButton, false);
-    jevProfile.disabled = false;
-    jevRunId.disabled = false;
-    setJevNotice("Advisory result received. Review the run record and confirm any consequential decision yourself.", "success");
-    jevFeedback.hidden = false;
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) throw new HttpError("sign-in required", response.status);
+    throw new Error(response.status === 503 ? "AI analysis is not configured. Contact your Soyuz administrator." : "The analysis request could not be completed.");
+  }
+  if (!(response.headers.get("content-type") ?? "").includes("text/event-stream") || !response.body) {
+    throw new Error("The AI provider returned an unsupported response.");
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const additions: unknown[] = [];
+  let buffer = "";
+  let responseChars = 0;
+  let complete = false;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      buffer += decoder.decode(chunk.value, { stream: !chunk.done }).replace(/\r\n/g, "\n");
+      responseChars += buffer.length;
+      if (responseChars > A2UI_MAX_STREAM_CHARS * 2) throw new Error("The AI response exceeded supported limits.");
+      let boundary = buffer.indexOf("\n\n");
+      while (boundary >= 0) {
+        const frame = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const status = consumeA2uiFrame(frame, additions);
+        if (status === "error") throw new Error("The AI response was incomplete or invalid. Please try again.");
+        if (status === "done") complete = true;
+        boundary = buffer.indexOf("\n\n");
+      }
+      if (chunk.done || complete) break;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  if (!complete || additions.length === 0) throw new Error("The AI response ended before the interface was complete.");
+  const combined = mode === "edit" ? [...currentMessages, ...additions] : additions;
+  if (!validateA2uiMessages(combined).ok) throw new Error("The generated A2UI surface failed validation.");
+  return additions;
+}
+
+function consumeA2uiFrame(frame: string, additions: unknown[]): "continue" | "done" | "error" {
+  const lines = frame.replaceAll("\r", "").split("\n");
+  const eventName = lines.find((line) => line.startsWith("event:"))?.slice(6).trim();
+  const data = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
+  if (!data) return "continue";
+  let payload: unknown;
+  try { payload = JSON.parse(data); }
+  catch { return "error"; }
+  if (eventName === "error" || (payload && typeof payload === "object" && "error" in payload)) return "error";
+  if (eventName === "a2ui") additions.push(payload);
+  if (eventName === "done") return "done";
+  return "continue";
+}
+
+async function refreshData(showNotice = true): Promise<void> {
+  if (!accessToken || isRefreshing) return;
+  isRefreshing = true;
+  setButtonBusy(refreshButton, true, "Refreshing…");
+  if (showNotice) setDataNotice("Loading approved Soyuz run data…", "info");
+  try {
+    const page = await apiJson<{ runs: unknown[] }>("/dashboard/api/runs?limit=30");
+    allRuns = Array.isArray(page.runs) ? page.runs.map(projectRun).filter((run): run is RunSummary => run !== null) : [];
+    if (selectedRunId && !allRuns.some((run) => run.runId === selectedRunId)) {
+      selectedRunId = "";
+      selectedRun = null;
+      selectedEvents = [];
+      selectedArtifacts = [];
+    }
+    if (selectedRunId) await loadSelectedRun(selectedRunId);
+    renderAnalysis();
+    setDataNotice(allRuns.length ? "Showing read-only data from retained runs." : "No retained runs are currently available.", "empty");
+  } catch (error) {
+    if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
+      clearLocalSession("Your sign-in has expired or access has changed. Sign in again to continue.", "danger");
+    } else {
+      setDataNotice("Some run data could not be loaded. Refresh to try again.", "warning");
+    }
+  } finally {
+    isRefreshing = false;
+    setButtonBusy(refreshButton, false);
+  }
+}
+
+async function loadSelectedRun(runId: string): Promise<void> {
+  if (!UUID.test(runId) || !allRuns.some((run) => run.runId === runId)) return;
+  const encoded = encodeURIComponent(runId);
+  const [detailResponse, eventResponse, artifactResponse] = await Promise.all([
+    apiJson<Record<string, unknown>>(`/dashboard/api/runs/${encoded}`),
+    apiJson<{ events: unknown[] }>(`/dashboard/api/runs/${encoded}/events?limit=50&after=0`),
+    apiJson<{ artifacts: unknown[] }>(`/dashboard/api/runs/${encoded}/artifacts`),
+  ]);
+  if (selectedRunId !== runId) return;
+  selectedRun = projectDetail(detailResponse);
+  selectedEvents = Array.isArray(eventResponse.events) ? eventResponse.events.map(projectEvent).filter((event): event is EventRecord => event !== null) : [];
+  selectedArtifacts = Array.isArray(artifactResponse.artifacts)
+    ? artifactResponse.artifacts.map(projectArtifact).filter((artifact): artifact is ArtifactRecord => artifact !== null)
+    : [];
+}
+
+function renderAnalysis(): void {
+  if (!renderer || currentMessages.length === 0) return;
+  const runs = displayedRuns();
+  const statusCounts = countStatuses(allRuns);
+  try {
+    renderer.render(currentMessages, {
+      runs,
+      statusCounts,
+      selectedRunId,
+      selectedRun,
+      events: selectedEvents.slice(0, 50),
+      artifacts: selectedArtifacts.slice(0, 100),
+    });
+  } catch {
+    setDataNotice("The generated interface could not be rendered safely. Generate a new interface to continue.", "warning");
+  }
+}
+
+function displayedRuns(): RunSummary[] {
+  const status = statusFilter.value;
+  const sort = sortSelect.value;
+  return allRuns.filter((run) => status === "all" || run.status === status).toSorted((left, right) => {
+    if (sort === "displayId") return left.displayId.localeCompare(right.displayId);
+    if (sort === "status") return left.status.localeCompare(right.status) || right.createdAt.localeCompare(left.createdAt);
+    return right.createdAt.localeCompare(left.createdAt);
+  }).slice(0, 30);
+}
+
+function handleAnalysisAction(action: AnalysisAction): void {
+  switch (action.name) {
+    case "refresh_runs":
+      void refreshData();
+      break;
+    case "reset_filters":
+      statusFilter.value = "all";
+      sortSelect.value = "createdAt";
+      selectedRunId = "";
+      selectedRun = null;
+      selectedEvents = [];
+      selectedArtifacts = [];
+      renderAnalysis();
+      void refreshData();
+      break;
+    case "select_run":
+      if (typeof action.context.runId === "string") void selectRun(action.context.runId);
+      break;
+    case "navigate_dashboard":
+      if (action.context.path === "/dashboard/analysis/") location.assign("/dashboard/analysis/");
+      break;
+  }
+}
+
+async function selectRun(runId: string): Promise<void> {
+  if (!UUID.test(runId) || !allRuns.some((run) => run.runId === runId)) return;
+  selectedRunId = runId;
+  const run = allRuns.find((item) => item.runId === runId);
+  jevRunId.value = runId;
+  if (run) {
+    const suggested = suggestedJevProfile(run);
+    if (suggested) jevProfile.value = suggested;
+  }
+  clearJevAssessment();
+  renderAnalysis();
+  setDataNotice("Loading the selected run's recorded details…", "info");
+  try {
+    await loadSelectedRun(runId);
+    renderAnalysis();
+    setDataNotice("Selected run details loaded from Soyuz's read-only APIs.", "empty");
+  } catch (error) {
+    if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
+      clearLocalSession("Your sign-in has expired or access has changed. Sign in again to continue.", "danger");
+    } else {
+      selectedRun = null;
+      selectedEvents = [];
+      selectedArtifacts = [];
+      renderAnalysis();
+      setDataNotice("Selected run details could not be loaded. Refresh or select another run.", "warning");
+    }
   }
 }
 
 async function runJevAssessment(): Promise<void> {
-  if (!accessToken || !jevRuntime || !jevRenderer || isRunningJev) return;
+  if (!accessToken || isRunningJev) return;
   const runId = jevRunId.value.trim();
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId)) {
-    setJevNotice("Enter a retained run UUID or select a run in the generated table.", "warning");
+  if (!UUID.test(runId)) {
+    setJevNotice("Enter a retained run UUID or select a run in the generated view.", "warning");
     jevRunId.focus();
     return;
   }
@@ -341,16 +491,7 @@ async function runJevAssessment(): Promise<void> {
     setJevNotice("Select a supported JEV profile.", "warning");
     return;
   }
-
-  const program = createJevDecisionProgram(profileId, runId.toLowerCase());
-  const validated = validateGeneratedProgram(program, { allowJev: true });
-  if (!validated.ok || !validated.result) {
-    setJevNotice("The JEV view could not be prepared. No provider request was sent.", "warning");
-    return;
-  }
-
   isRunningJev = true;
-  hasRunJev = true;
   setButtonBusy(jevButton, true, "Assessing run…");
   jevProfile.disabled = true;
   jevRunId.disabled = true;
@@ -359,46 +500,45 @@ async function runJevAssessment(): Promise<void> {
   jevFeedback.hidden = true;
   jevFeedbackNotice.textContent = "";
   for (const button of jevFeedbackButtons) button.disabled = false;
-  setJevNotice("Sending the approved run projection to OpenRouter for advisory analysis…", "info");
-  jevRuntime.setProgram(validated.result);
-  renderJevRuntime();
-}
-
-function createJevDecisionProgram(profileId: JevProfileId, runId: string): string {
-  const profile = JEV_PROFILE_VIEWS[profileId];
-  const components = [`Heading(${JSON.stringify(profile.title)})`, 'Text("Advisory decision support. Verify the recorded run before taking consequential action.", "warning")'];
-  for (const field of profile.answers) {
-    const title = field.title;
-    const answer = `decision.answers.${field.key}`;
-    components.push(`DecisionSummary(${JSON.stringify(title)}, ${answer})`);
-    if (field.type === "score") {
-      components.push(`ScoreScale(${JSON.stringify(`${title} score`)}, ${answer}.score, ${answer}.legend, ${answer}.probabilities)`);
+  setJevNotice("Sending the approved run projection to Senku for advisory analysis…", "info");
+  try {
+    const result = await apiJson<{ model: string; answers: Record<string, unknown> }>("/dashboard/api/analysis/decisions", {
+      method: "POST",
+      headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ profileId, runId: runId.toLowerCase() }),
+      cache: "no-store",
+    });
+    renderJevResult(jevOutput, profileId, result);
+    hasRunJev = true;
+    setJevNotice("Advisory result received. Review the run record and confirm any consequential decision yourself.", "success");
+    jevFeedback.hidden = false;
+  } catch (error) {
+    if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
+      clearLocalSession("Your sign-in has expired or access has changed. Sign in again to continue.", "danger");
     } else {
-      const labels = field.type === "choice"
-        ? field.labels ?? {}
-        : { false: "False", true: "True" };
-      components.push(`ChoiceProbabilities(${JSON.stringify(`${title} probabilities`)}, ${answer}.probabilities, ${JSON.stringify(labels)})`);
+      setJevNotice("JEV could not validate a response for this run. No action was taken.", "warning");
     }
-    components.push(`ConfidenceDisplay(${JSON.stringify(`${title} confidence`)}, ${answer}.confidence)`);
+    hasRunJev = false;
+    jevFeedback.hidden = true;
+  } finally {
+    isRunningJev = false;
+    setButtonBusy(jevButton, false);
+    jevProfile.disabled = false;
+    jevRunId.disabled = false;
   }
-  const query = `decision = Query("jev_decisions", { profileId: ${JSON.stringify(profileId)}, runId: ${JSON.stringify(runId)} }, { model: "", answers: {} })`;
-  return `${query}\nroot = Stack([${components.join(", ")}])`;
 }
 
 async function submitJevFeedback(rating: "helpful" | "not_helpful"): Promise<void> {
-  if (!accessToken || !jevProfile.value || !jevRunId.value || jevFeedbackButtons.every((button) => button.disabled)) return;
+  if (!accessToken || !hasRunJev || !isJevProfileId(jevProfile.value) || !UUID.test(jevRunId.value.trim())
+    || jevFeedbackButtons.every((button) => button.disabled)) return;
   for (const button of jevFeedbackButtons) button.disabled = true;
   const activeButton = jevFeedbackButtons.find((button) => button.dataset.jevRating === rating);
   if (activeButton) setButtonBusy(activeButton, true, "Saving rating…");
   try {
-    await fetchJson<{ data: { saved: boolean } }>("/dashboard/api/analysis/feedback", {
+    await apiJson<{ saved: boolean }>("/dashboard/api/analysis/feedback", {
       method: "POST",
       headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        profileId: jevProfile.value,
-        runId: jevRunId.value.trim().toLowerCase(),
-        rating,
-      }),
+      body: JSON.stringify({ profileId: jevProfile.value, runId: jevRunId.value.trim().toLowerCase(), rating }),
       cache: "no-store",
     });
     if (activeButton) {
@@ -419,221 +559,101 @@ function isJevProfileId(value: string): value is JevProfileId {
   return Object.hasOwn(JEV_PROFILE_VIEWS, value);
 }
 
-function setJevNotice(message: string, tone: "info" | "success" | "warning"): void {
-  renderNotice(jevNotice, message, tone);
-}
-
 function clearJevAssessment(): void {
   if (isRunningJev) return;
   hasRunJev = false;
-  jevRenderer?.clear();
   jevOutput.replaceChildren();
   jevOutput.hidden = true;
+  jevFeedback.hidden = true;
+  jevFeedbackNotice.textContent = "";
   setJevNotice("", "info");
 }
 
-async function generateAnalysis(mode: AnalysisMode): Promise<void> {
-  if (!accessToken || !runtime || !renderer || isGenerating) return;
-  const prompt = question.value.trim();
-  if (!prompt) {
-    setNotice("Enter a question about retained run data.", "warning");
-    question.focus();
-    return;
-  }
-  if (mode === "edit" && !currentProgram) {
-    setNotice("Generate an interface before refining it.", "warning");
-    return;
-  }
-  isGenerating = true;
-  if (mode === "edit") {
-    generateButton.disabled = true;
-    setButtonBusy(refineButton, true, "Refining interface…");
-  } else {
-    setButtonBusy(generateButton, true, "Generating interface…");
-    refineButton.disabled = true;
-  }
-  setNotice(mode === "edit" ? "Refining the current interface…" : "Generating an interface…", "info");
-  try {
-    const patch = await streamGeneration(prompt, mode, mode === "edit" ? currentProgram : undefined);
-    const program = mode === "edit" ? mergeStatements(currentProgram, patch, "root") : patch;
-    const validated = validateGeneratedProgram(program);
-    if (!validated.ok || !validated.result) throw new Error(validated.reason ?? "The generated interface was invalid.");
-    runtime.setProgram(validated.result);
-    currentProgram = program;
-    renderRuntime();
-    refineButton.hidden = false;
-    question.value = "";
-    setNotice(mode === "edit" ? "Interface refined. Filters and queries remain interactive." : "Interface ready. Select a run, filter, or sort without another generation call.", "success");
-  } catch (error) {
-    if (error instanceof HttpError && (error.status === 401 || error.status === 403)) {
-      clearLocalSession("Your sign-in has expired or access has changed. Sign in again to continue.", "danger");
-    } else {
-      setNotice(error instanceof Error ? error.message.slice(0, 240) : "The interface could not be generated. Please try again.", "danger");
-    }
-  } finally {
-    isGenerating = false;
-    setButtonBusy(generateButton, false);
-    setButtonBusy(refineButton, false);
-  }
+function projectRun(value: unknown): RunSummary | null {
+  if (!isRecord(value) || typeof value.runId !== "string" || !UUID.test(value.runId)) return null;
+  const startedAt = nullableString(value.startedAt, 40);
+  const completedAt = nullableString(value.completedAt, 40);
+  return {
+    runId: value.runId,
+    displayId: safeString(value.displayId, 80) || "Retained run",
+    status: safeString(value.status, 40) || "unknown",
+    stage: nullableString(value.stage, 80),
+    operationalHealth: safeString(value.operationalHealth, 40) || "unknown",
+    createdAt: safeString(value.createdAt, 40),
+    startedAt,
+    completedAt,
+    durationMs: durationMs(startedAt, completedAt),
+  };
 }
 
-async function streamGeneration(prompt: string, mode: AnalysisMode, existingProgram?: string): Promise<string> {
-  const token = accessToken;
-  if (!token) throw new Error("Sign in to generate an analysis.");
-  const response = await fetch("/dashboard/api/analysis/generate", {
-    method: "POST",
-    cache: "no-store",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-      accept: "text/event-stream",
-    },
-    body: JSON.stringify({ prompt, mode, ...(existingProgram ? { existingProgram } : {}) }),
-  });
-  if (!response.ok) {
-    if (response.status === 401 || response.status === 403) throw new HttpError("sign-in required", response.status);
-    throw new Error(response.status === 503 ? "AI analysis is not configured. Contact your Soyuz administrator." : "The analysis request could not be completed.");
-  }
-  if (!(response.headers.get("content-type") ?? "").includes("text/event-stream") || !response.body) {
-    throw new Error("The AI provider returned an unsupported response.");
-  }
-
-  const parser = createStreamingParser(soyuzOpenUILibrary.toJSONSchema(), "Stack");
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let source = "";
-  let complete = false;
-  try {
-    while (true) {
-      const chunk = await reader.read();
-      buffer += decoder.decode(chunk.value, { stream: !chunk.done });
-      buffer = buffer.replace(/\r\n/g, "\n");
-      if (buffer.length > OPENUI_MAX_PROGRAM_CHARS * 3) throw new Error("The AI response exceeded supported limits.");
-      let boundary = buffer.indexOf("\n\n");
-      while (boundary >= 0) {
-        const frame = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        if (consumeAnalysisFrame(frame, (delta) => {
-          source += delta;
-          if (source.length > OPENUI_MAX_PROGRAM_CHARS) throw new Error("The AI response exceeded supported limits.");
-          const result = parser.set(source);
-          const preview = previewHeadings(result);
-          if (preview && mode === "generate" && renderer && runtime) {
-            renderer.render(preview, { store: runtime.store, queryManager: runtime.queryManager, dispatchAction: () => undefined });
-          }
-        })) {
-          complete = true;
-          break;
-        }
-        boundary = buffer.indexOf("\n\n");
-      }
-      if (chunk.done) break;
-      if (complete) break;
-    }
-  } finally {
-    await reader.cancel().catch(() => undefined);
-  }
-  if (!complete) throw new Error("The AI response ended before the interface was complete.");
-  parser.set(source, true);
-  return source;
+function projectDetail(value: Record<string, unknown>): RunDetail | null {
+  const summary = projectRun(value);
+  if (!summary) return null;
+  return {
+    ...summary,
+    outcomeSummary: nullableString(value.outcomeSummary, 2_000),
+    changedFileCount: safeInteger(value.changedFileCount, 0, 1_000_000),
+    exitCode: safeInteger(value.exitCode, -1_000_000, 1_000_000),
+  };
 }
 
-function consumeAnalysisFrame(frame: string, onDelta: (delta: string) => void): boolean {
-  const lines = frame.replaceAll("\r", "").split("\n");
-  const eventName = lines.find((line) => line.startsWith("event:"))?.slice(6).trim();
-  const data = lines.filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trimStart())
-    .join("\n");
-  if (!data) return false;
-  let payload: unknown;
-  try { payload = JSON.parse(data); }
-  catch { throw new Error("The AI response stream was malformed."); }
-  if (eventName === "error" || (payload && typeof payload === "object" && "error" in payload)) {
-    throw new Error("The AI response was incomplete or invalid. Please try again.");
-  }
-  if (!payload || typeof payload !== "object") return false;
-  const message = payload as { delta?: unknown; done?: unknown };
-  if (typeof message.delta === "string") onDelta(message.delta);
-  return message.done === true;
-}
-
-function previewHeadings(result: ParseResult): ElementNode | null {
-  const root = result.root;
-  if (!root || root.typeName !== "Stack" || root.partial || result.meta.unresolved.length > 0 || result.meta.errors.length > 0) return null;
-  const children = root.props.children;
-  if (!Array.isArray(children)) return null;
-  const headings = children.filter((child): child is ElementNode => isElementNode(child)
-    && child.typeName === "Heading" && !child.partial && typeof child.props.text === "string");
-  if (headings.length === 0) return null;
-  return { ...root, partial: false, props: { children: headings, direction: "vertical" } };
-}
-
-function dispatchAction(action: OpenUIAction): void {
-  if (!runtime) return;
-  const validated = validateSoyuzAction(action);
-  if (!validated) {
-    setDataNotice("An unsupported interface action was ignored.", "warning");
-    return;
-  }
-  switch (validated.type) {
-    case "refresh_runs":
-      runtime.refresh();
-      break;
-    case "reset_filters":
-      runtime.store.set("$runStatus", "all");
-      runtime.store.set("$selectedRunId", "");
-      runtime.store.set("$runSort", "createdAt");
-      runtime.refresh();
-      break;
-    case "select_run": {
-      const runId = validated.params.runId;
-      if (typeof runId === "string" && isLoadedRun(runId)) {
-        runtime.store.set("$selectedRunId", runId);
-        if (!isRunningJev) {
-          jevRunId.value = runId;
-          const selectedRun = findLoadedRun(runId);
-          const suggestedProfile = selectedRun ? suggestedJevProfile(selectedRun) : null;
-          if (suggestedProfile) jevProfile.value = suggestedProfile;
-          clearJevAssessment();
-        }
-      }
-      break;
-    }
-    case "navigate_dashboard": {
-      const path = validated.params.path;
-      if (path === "/dashboard/" || path === "/dashboard/analysis/") location.assign(path);
-      break;
+function projectEvent(value: unknown): EventRecord | null {
+  if (!isRecord(value) || typeof value.eventId !== "string") return null;
+  const payload: Record<string, string | number | boolean> = {};
+  if (isRecord(value.payload)) {
+    for (const [key, item] of Object.entries(value.payload).slice(0, 12)) {
+      if (typeof item === "string") payload[key.slice(0, 64)] = item.slice(0, 160);
+      else if (typeof item === "number" && Number.isFinite(item)) payload[key.slice(0, 64)] = item;
+      else if (typeof item === "boolean") payload[key.slice(0, 64)] = item;
     }
   }
+  return {
+    eventId: value.eventId.slice(0, 80),
+    type: safeString(value.type, 80),
+    stage: nullableString(value.stage, 80),
+    step: nullableString(value.step, 80),
+    timestamp: safeString(value.timestamp, 40),
+    payload,
+  };
 }
 
-function isLoadedRun(runId: string): boolean {
-  return findLoadedRun(runId) !== null;
+function projectArtifact(value: unknown): ArtifactRecord | null {
+  if (!isRecord(value) || typeof value.id !== "string" || !UUID.test(value.id)) return null;
+  return { id: value.id, name: safeString(value.name, 160), size: safeInteger(value.size, 0, 1_000_000_000) ?? 0 };
 }
 
-function findLoadedRun(runId: string): { status?: unknown; operationalHealth?: unknown } | null {
-  if (!runtime) return null;
-  const snapshot = runtime.queryManager.getSnapshot();
-  for (const value of Object.values(snapshot)) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-    const runs = (value as { runs?: unknown }).runs;
-    if (Array.isArray(runs)) {
-      const selected = runs.find((run) => run && typeof run === "object" && (run as { runId?: unknown }).runId === runId);
-      if (selected && typeof selected === "object") return selected as { status?: unknown; operationalHealth?: unknown };
-    }
-    if ((value as { runId?: unknown }).runId === runId && typeof (value as { status?: unknown }).status === "string") {
-      return value as { status?: unknown; operationalHealth?: unknown };
-    }
-  }
-  return null;
+function countStatuses(runs: RunSummary[]): Array<{ status: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const run of runs) counts.set(run.status, (counts.get(run.status) ?? 0) + 1);
+  return [...counts].toSorted(([left], [right]) => left.localeCompare(right)).map(([status, count]) => ({ status, count }));
 }
 
-async function apiJson<T>(path: string): Promise<T> {
-  return fetchJson<T>(path, {
-    headers: accessToken ? { authorization: `Bearer ${accessToken}` } : {},
-    cache: "no-store",
-  });
+function durationMs(start: string | null, end: string | null): number | null {
+  if (!start || !end) return null;
+  const duration = Date.parse(end) - Date.parse(start);
+  return Number.isFinite(duration) && duration >= 0 && duration <= 31_536_000_000 ? duration : null;
+}
+
+function safeString(value: unknown, max: number): string {
+  return typeof value === "string" ? value.slice(0, max) : "";
+}
+
+function nullableString(value: unknown, max: number): string | null {
+  return typeof value === "string" ? value.slice(0, max) : null;
+}
+
+function safeInteger(value: unknown, min: number, max: number): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max ? value : null;
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+async function apiJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (accessToken) headers.set("authorization", `Bearer ${accessToken}`);
+  return fetchJson<T>(path, { ...init, headers, cache: init.cache ?? "no-store" });
 }
 
 function setNotice(message: string, tone: "info" | "success" | "warning" | "danger"): void {
@@ -644,14 +664,23 @@ function setDataNotice(message: string, tone: "info" | "empty" | "warning"): voi
   renderNotice(dataNotice, message, tone);
 }
 
+function setJevNotice(message: string, tone: "info" | "success" | "warning"): void {
+  renderNotice(jevNotice, message, tone);
+}
+
 function clearAnalysisOutput(): void {
-  currentProgram = "";
+  currentMessages = [];
+  allRuns = [];
+  selectedRunId = "";
+  selectedRun = null;
+  selectedEvents = [];
+  selectedArtifacts = [];
   question.value = "";
   setButtonBusy(generateButton, false);
   setButtonBusy(refineButton, false);
+  generateButton.disabled = false;
   refineButton.hidden = true;
   renderer?.clear();
-  jevRenderer?.clear();
   jevRunId.value = "";
   jevOutput.replaceChildren();
   jevOutput.hidden = true;

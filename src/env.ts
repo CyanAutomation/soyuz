@@ -4,7 +4,7 @@ export interface Env {
   DB: D1Database;
   RUN_QUEUE: Queue;
   OAUTH_REGISTRATION_LIMITER: RateLimit;
-  OPENUI_GENERATION_LIMITER: RateLimit;
+  ANALYSIS_GENERATION_LIMITER: RateLimit;
   JEV_DECISION_LIMITER: RateLimit;
   SENKU: Fetcher;
   CLIENT_API_TOKEN: string;
@@ -31,14 +31,14 @@ export interface Env {
   GITHUB_OAUTH_CLIENT_ID?: string;
   GITHUB_OAUTH_CLIENT_SECRET?: string;
   SOYUZ_OAUTH_ALLOWED_GITHUB_IDS?: string;
-  /** Full HTTPS OpenAI-compatible chat completions endpoint. */
-  OPENUI_PROVIDER_URL?: string;
+  /** Full HTTPS OpenAI-compatible chat completions endpoint for A2UI generation. */
+  ANALYSIS_PROVIDER_URL?: string;
   /** Server-side credential for the configured model provider or AI Gateway. */
-  OPENUI_PROVIDER_API_KEY?: string;
+  ANALYSIS_PROVIDER_API_KEY?: string;
   /** Provider model identifier. */
-  OPENUI_MODEL?: string;
+  ANALYSIS_MODEL?: string;
   /** Explicit opt-in deterministic local fixture mode; keep disabled in production. */
-  OPENUI_DEMO_MODE?: string;
+  ANALYSIS_DEMO_MODE?: string;
   /** Machine identity for Soyuz-to-Senku decision requests. Store as a Worker secret. */
   SENKU_SOYUZ_API_TOKEN?: string;
 }

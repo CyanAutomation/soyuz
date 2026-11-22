@@ -22,8 +22,8 @@
     "soyuz:smoke": "node scripts/soyuz-production-smoke.ts"
   },
   "dependencies": {
+    "@a2ui/web_core": "0.15.0",
     "@cloudflare/workers-oauth-provider": "^1.2.4",
-    "@openuidev/lang-core": "^1.1.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {

@@ -5,7 +5,7 @@ description: Use when changing Soyuz's Senku Service Binding, JEV profile inputs
 
 # Change the Senku integration
 
-Read `docs/SENKU-INTEGRATION.md`, `docs/OPENUI-ANALYSIS.md`, and the deployment sections of `docs/DEPLOYMENT.md` before changing the integration. Follow `soyuz-openui-analysis` for browser and generated analysis behavior.
+Read `docs/SENKU-INTEGRATION.md`, `docs/A2UI-ANALYSIS.md`, and the deployment sections of `docs/DEPLOYMENT.md` before changing the integration. Follow `soyuz-a2ui-analysis` for browser and generated analysis behavior.
 
 ## Locate the integration
 
@@ -19,7 +19,7 @@ Read `docs/SENKU-INTEGRATION.md`, `docs/OPENUI-ANALYSIS.md`, and the deployment 
 
 - Call Senku only through the `SENKU` Service Binding and fixed internal route. Do not use its public hostname, add a runtime backend selector, shadow request, or automatic provider fallback.
 - Keep `SENKU_SOYUZ_API_TOKEN` server-side and configure matching machine identity values on both Workers. Never send it to the browser, include it in request bodies, or log it.
-- Keep profile selection and evidence construction server-side. Send only the versioned, bounded input documented for the selected profile; do not include task prompts, repository URLs, logs, artifacts, event payloads, or generated OpenUI programs.
+- Keep profile selection and evidence construction server-side. Send only the versioned, bounded input documented for the selected profile; do not include task prompts, repository URLs, logs, artifacts, event payloads, or generated UI messages.
 - Validate the response size, schema/profile version, provider metadata, answer keys and types, choices, score ranges, and nullable fields before returning it. Return only the existing safe dashboard response fields.
 - Map timeouts, unavailable binding/provider, invalid requests, and malformed responses to documented safe error codes. Do not return or log raw Senku error bodies. A failed decision must not alter run state.
 

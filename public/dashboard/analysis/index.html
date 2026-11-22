@@ -37,13 +37,39 @@
         <div class="field">
           <label class="field__label" for="analysis-question">What would you like to know?</label>
           <textarea class="field__control field__control--textarea" id="analysis-question" name="prompt" maxlength="2000" rows="3" required aria-describedby="analysis-question-help" placeholder="Summarise the last 10 runs, compare completed run durations, or show events for a selected run."></textarea>
-          <p class="field__help" id="analysis-question-help">Ask about retained run data. The generated view is read-only.</p>
+          <p class="field__help" id="analysis-question-help">Ask about retained run data. The A2UI generated view is read-only.</p>
         </div>
         <div class="analysis-form__actions">
           <button id="analysis-generate" class="button button--primary" type="submit" value="generate">Generate interface</button>
           <button id="analysis-refine" class="button button--secondary" type="submit" value="edit" hidden>Refine current interface</button>
         </div>
       </form>
+      <section id="analysis-data-controls" class="analysis-data-controls card card--padded" aria-label="Retained run data controls" hidden>
+        <div class="field">
+          <label class="field__label" for="analysis-status-filter">Status filter</label>
+          <select class="field__control" id="analysis-status-filter">
+            <option value="all">All statuses</option>
+            <option value="admitting">Admitting</option>
+            <option value="queued">Queued</option>
+            <option value="claimed">Claimed</option>
+            <option value="running">Running</option>
+            <option value="cancel_requested">Cancel requested</option>
+            <option value="cancelled">Cancelled</option>
+            <option value="completed">Completed</option>
+            <option value="failed">Failed</option>
+            <option value="admission_failed">Admission failed</option>
+          </select>
+        </div>
+        <div class="field">
+          <label class="field__label" for="analysis-sort">Sort runs</label>
+          <select class="field__control" id="analysis-sort">
+            <option value="createdAt">Newest first</option>
+            <option value="displayId">Run ID</option>
+            <option value="status">Status</option>
+          </select>
+        </div>
+        <button id="analysis-refresh" class="button button--secondary" type="button">Refresh runs</button>
+      </section>
       <details id="analysis-jev-disclosure" class="analysis-jev-disclosure" hidden>
         <summary>Decision support with JEV</summary>
         <section id="analysis-jev-controls" class="analysis-jev-controls card card--padded" aria-labelledby="analysis-jev-heading" hidden>
@@ -61,7 +87,7 @@
             <div class="field">
               <label class="field__label" for="analysis-jev-run-id">Run to assess</label>
               <input class="field__control" id="analysis-jev-run-id" name="runId" type="text" inputmode="text" autocomplete="off" maxlength="36" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" required aria-describedby="analysis-jev-run-help" placeholder="Select a run in the generated table">
-              <p class="field__help" id="analysis-jev-run-help">Select a run in the generated table above to fill this field automatically, or enter its retained run UUID.</p>
+              <p class="field__help" id="analysis-jev-run-help">Select a run in the generated view above to fill this field automatically, or enter its retained run UUID.</p>
             </div>
             <div class="analysis-jev-form__actions">
               <button id="analysis-jev-run" class="button button--secondary" type="submit">Run JEV assessment</button>
