@@ -22,7 +22,7 @@ function testEnv() {
       send: async (message: unknown) => { messages.push(message as QueuedRun); },
     } as unknown as Env["RUN_QUEUE"],
     OAUTH_REGISTRATION_LIMITER: { limit: async () => ({ success: true }) } as Env["OAUTH_REGISTRATION_LIMITER"],
-    OPENUI_GENERATION_LIMITER: { limit: async () => ({ success: true }) } as Env["OPENUI_GENERATION_LIMITER"],
+    ANALYSIS_GENERATION_LIMITER: { limit: async () => ({ success: true }) } as Env["ANALYSIS_GENERATION_LIMITER"],
     JEV_DECISION_LIMITER: { limit: async () => ({ success: true }) } as Env["JEV_DECISION_LIMITER"],
     SENKU: (runtimeEnv as unknown as Env).SENKU,
     CLIENT_API_TOKEN: CLIENT_TOKEN,

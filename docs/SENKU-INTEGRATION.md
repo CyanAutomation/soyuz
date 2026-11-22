@@ -20,7 +20,7 @@ The integration is a direct switchover. There is no backend selector, shadow req
 
 Soyuz wraps each input as `{ "schemaVersion": "1", "input": ... }`. The output-review summary remains bounded to 2,000 characters. Nullable fields are sent as `null`; exit codes are passed through without inventing a value. Missing or unsupported changed-file counts and missing summaries are represented as `null`.
 
-Soyuz does not send raw task prompts, repository URLs, event payloads, validation logs, artifacts, OpenUI programs, or caller-defined questions. Senku constructs the state projection and JEV questions for its profile. Soyuz validates the returned profile ID/version, schema version, provider, model, request ID, duration, attempt count, usage, answer keys, answer types, choice sets, score legends, probability ranges, and nullable confidence. Only `model` and validated `answers` are returned in the existing dashboard success response.
+Soyuz does not send raw task prompts, repository URLs, event payloads, validation logs, artifacts, generated UI messages, or caller-defined questions. Senku constructs the state projection and JEV questions for its profile. Soyuz validates the returned profile ID/version, schema version, provider, model, request ID, duration, attempt count, usage, answer keys, answer types, choice sets, score legends, probability ranges, and nullable confidence. Only `model` and validated `answers` are returned in the existing dashboard success response.
 
 ## Timeout and error mapping
 

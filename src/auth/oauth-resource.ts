@@ -25,13 +25,13 @@ export async function handleDashboardApiRequest(
   if (request.method === "POST" && segments.length === 2 && segments[0] === "analysis" && segments[1] === "generate") {
     let outcome: RateLimitOutcome;
     try {
-      outcome = await env.OPENUI_GENERATION_LIMITER.limit({ key: access.context.props.githubUserId });
+      outcome = await env.ANALYSIS_GENERATION_LIMITER.limit({ key: access.context.props.githubUserId });
     } catch {
       return errorResponse(requestId, 503, "RATE_LIMITER_UNAVAILABLE", "Analysis generation is temporarily unavailable. Retry shortly.");
     }
     if (!outcome.success) return rateLimitedResponse(requestId);
-    const { handleOpenUIGenerationRequest } = await import("../openui/generation");
-    return handleOpenUIGenerationRequest(request, env, requestId);
+    const { handleA2uiGenerationRequest } = await import("../a2ui/generation");
+    return handleA2uiGenerationRequest(request, env, requestId);
   }
   if (request.method === "POST" && segments.length === 2 && segments[0] === "analysis" && segments[1] === "decisions") {
     let outcome: RateLimitOutcome;

@@ -26,12 +26,12 @@ function testEnv(options: {
   queueFailure?: boolean;
   artifacts?: Env["ARTIFACTS"];
   oauth?: boolean;
-  openuiDemo?: boolean;
+  analysisDemo?: boolean;
   senku?: Env["SENKU"];
 } = {}) {
   const sent: QueueMessage[] = [];
   const oauthRegistrationLimiter = { limit: vi.fn(async () => ({ success: true })) };
-  const openuiGenerationLimiter = { limit: vi.fn(async () => ({ success: true })) };
+  const analysisGenerationLimiter = { limit: vi.fn(async () => ({ success: true })) };
   const jevDecisionLimiter = { limit: vi.fn(async () => ({ success: true })) };
   const send = vi.fn(async (message: unknown) => {
     if (options.queueFailure) throw new Error("simulated queue failure");
@@ -41,7 +41,7 @@ function testEnv(options: {
     DB: runtimeEnv.DB,
     RUN_QUEUE: { send } as unknown as Env["RUN_QUEUE"],
     OAUTH_REGISTRATION_LIMITER: oauthRegistrationLimiter as unknown as Env["OAUTH_REGISTRATION_LIMITER"],
-    OPENUI_GENERATION_LIMITER: openuiGenerationLimiter as unknown as Env["OPENUI_GENERATION_LIMITER"],
+    ANALYSIS_GENERATION_LIMITER: analysisGenerationLimiter as unknown as Env["ANALYSIS_GENERATION_LIMITER"],
     JEV_DECISION_LIMITER: jevDecisionLimiter as unknown as Env["JEV_DECISION_LIMITER"],
     SENKU: options.senku ?? (runtimeEnv as unknown as Env).SENKU,
     SENKU_SOYUZ_API_TOKEN: SENKU_TOKEN,
@@ -54,9 +54,9 @@ function testEnv(options: {
     GITHUB_OAUTH_CLIENT_ID: options.oauth ? "test-github-client-id" : undefined,
     GITHUB_OAUTH_CLIENT_SECRET: options.oauth ? "test-github-client-secret" : undefined,
     SOYUZ_OAUTH_ALLOWED_GITHUB_IDS: options.oauth ? "123" : undefined,
-    OPENUI_DEMO_MODE: options.openuiDemo ? "true" : undefined,
+    ANALYSIS_DEMO_MODE: options.analysisDemo ? "true" : undefined,
   };
-  return { bindings, sent, send, oauthRegistrationLimiter, openuiGenerationLimiter, jevDecisionLimiter };
+  return { bindings, sent, send, oauthRegistrationLimiter, analysisGenerationLimiter, jevDecisionLimiter };
 }
 
 function senkuAnswers(profileId: "run_operations_triage_v1" | "kaseki_output_review_v2"): Record<string, unknown> {
@@ -1310,8 +1310,8 @@ describe("Soyuz Worker API", () => {
     expect((await callBinary(bindings, "/mcp", { token: accessToken })).response.status).toBe(404);
   });
 
-  it("[OAUTH-02] allows only the authenticated analysis-generation POST with read scope", async () => {
-    const { bindings } = testEnv({ oauth: true, openuiDemo: true });
+  it("[OAUTH-02] allows only the authenticated A2UI generation POST with read scope", async () => {
+    const { bindings } = testEnv({ oauth: true, analysisDemo: true });
     const accessToken = await createOAuthAccessToken(bindings);
     const request = {
       method: "POST",
@@ -1323,8 +1323,8 @@ describe("Soyuz Worker API", () => {
     const analysis = await callBinary(bindings, "/dashboard/api/analysis/generate", request);
     expect(analysis.response.status).toBe(200);
     expect(analysis.response.headers.get("content-type")).toContain("text/event-stream");
-    expect(analysis.body).toContain("list_runs");
-    expect(analysis.body).toContain('"done":true');
+    expect(analysis.body).toContain("Recent retained runs");
+    expect(analysis.body).toContain("event: done");
 
     const unauthenticated = await callBinary(bindings, "/dashboard/api/analysis/generate", {
       method: "POST",
@@ -1350,10 +1350,10 @@ describe("Soyuz Worker API", () => {
     expect(otherPost.response.status).toBe(405);
   });
 
-  it("[OPENUI-RATE-LIMIT-01] applies a per-GitHub-user limit before analysis generation", async () => {
-    const { bindings, openuiGenerationLimiter } = testEnv({ oauth: true, openuiDemo: true });
+  it("[ANALYSIS-RATE-LIMIT-01] applies a per-GitHub-user limit before analysis generation", async () => {
+    const { bindings, analysisGenerationLimiter } = testEnv({ oauth: true, analysisDemo: true });
     const accessToken = await createOAuthAccessToken(bindings);
-    openuiGenerationLimiter.limit.mockResolvedValue({ success: false });
+    analysisGenerationLimiter.limit.mockResolvedValue({ success: false });
 
     const response = await callBinary(bindings, "/dashboard/api/analysis/generate", {
       method: "POST",
@@ -1364,7 +1364,7 @@ describe("Soyuz Worker API", () => {
 
     expect(response.response.status).toBe(429);
     expect(response.response.headers.get("retry-after")).toBe("60");
-    expect(openuiGenerationLimiter.limit).toHaveBeenCalledWith({ key: "123" });
+    expect(analysisGenerationLimiter.limit).toHaveBeenCalledWith({ key: "123" });
   });
 
   it("[JEV-API-01] invokes bounded server-owned decisions only for an allowlisted read-scope user", async () => {
@@ -1572,9 +1572,9 @@ describe("Soyuz Worker API", () => {
     expect(registrationResponse.response.status).toBe(503);
     expect(registrationResponse.body.error.code).toBe("RATE_LIMITER_UNAVAILABLE");
 
-    const analysis = testEnv({ oauth: true, openuiDemo: true });
+    const analysis = testEnv({ oauth: true, analysisDemo: true });
     const accessToken = await createOAuthAccessToken(analysis.bindings);
-    analysis.openuiGenerationLimiter.limit.mockRejectedValue(new Error("simulated limiter failure"));
+    analysis.analysisGenerationLimiter.limit.mockRejectedValue(new Error("simulated limiter failure"));
     const analysisResponse = await callBinary(analysis.bindings, "/dashboard/api/analysis/generate", {
       method: "POST",
       token: accessToken,

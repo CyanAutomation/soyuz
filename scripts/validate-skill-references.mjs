@@ -9,7 +9,7 @@ const REPOSITORY_DIRECTORIES = [
   "dashboard",
   "docs",
   "migrations",
-  "openui",
+  "a2ui",
   "public",
   "scripts",
   "src",

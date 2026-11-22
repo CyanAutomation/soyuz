@@ -5,7 +5,7 @@ flowchart TD
     CLI[CLI] -->|REST| REST[REST adapter]
     UI[Web UI and integrations] -->|REST| REST
     UI -->|GitHub OAuth, read-only| Dashboard[Private run dashboard]
-    UI -->|GitHub OAuth, read-only| Analysis[OpenUI analysis page]
+    UI -->|GitHub OAuth, read-only| Analysis[A2UI analysis page]
     Analysis -->|bounded approved GET queries| DashboardApi[Dashboard read API]
     Analysis -->|read-scope authenticated POST| Generation[Analysis generation adapter]
     Generation -->|optional OpenAI-compatible streaming| Provider[Configured model provider]
@@ -31,7 +31,7 @@ flowchart TD
 
 The REST and agent HTTP adapters call the same run application operations. UTCP discovery describes those native HTTP endpoints; tool invocations do not pass through a protocol server or internal forwarding layer. The agent adapter applies its own restricted input contract and sanitized output projections while sharing validation, idempotency, D1, Queue, read, event, and cancellation paths.
 
-The OpenUI analysis page is a separate optional presentation over the existing dashboard read APIs. Its authenticated dashboard POSTs generate OpenUI Lang, request typed JEV answers from Senku through a Service Binding, and record user ratings of those answers. JEV use remains explicit and cannot change run state. Soyuz builds bounded profile input; Senku owns questions and provider inference. See [OpenUI run analysis](OPENUI-ANALYSIS.md) and [Senku integration](SENKU-INTEGRATION.md) for data boundaries and rollout.
+The A2UI analysis page is a separate optional presentation over the existing dashboard read APIs. Its authenticated generation endpoint streams validated A2UI v1.0 messages. The browser loads approved run data from fixed read routes and keeps it out of the model request. Users can also request typed JEV answers from Senku through the existing Service Binding and rate limited feedback route. JEV use remains explicit and cannot change run state. Soyuz builds bounded profile input; Senku owns questions and provider inference. See [A2UI run analysis](A2UI-ANALYSIS.md) and [Senku integration](SENKU-INTEGRATION.md) for data boundaries and rollout.
 
 ## Ownership boundary
 
@@ -41,7 +41,7 @@ Kaseki owns host capacity, local scheduling, Docker containers, repository acces
 
 The new Kirisame publication path is a separately gated extension to that boundary. Soyuz owns a claim-fenced intent, durable publication state, attempt leases, retry timing, and status projection. A trusted Worker host must upload and validate the immutable Kirisame v1 manifest before reporting run completion. Existing legacy Kaseki publication remains supported: a completion carrying `publishedUrl` is not materialized into a second publication. The dispatcher has no production binding or allowlist in this change and stays off until Phase 2C.
 
-Cloudflare Rate Limit bindings cap OAuth client registration at 10 requests per connecting IP per minute, OpenUI generation at 5 requests per allowlisted GitHub user per minute, and combined JEV decision/feedback requests at 5 per allowlisted GitHub user per minute. Analysis endpoints fail closed with 503 if their rate limiter is unavailable. Registration fails closed with 503 if the connecting IP is unavailable rather than sharing a fallback bucket. These limits are enforced locally at Cloudflare locations rather than as a global quota, so they help contain automated abuse and provider costs but do not replace a global billing quota. Kaseki still owns destination and execution-context safety for HTTPS repositories.
+Cloudflare Rate Limit bindings cap OAuth client registration at 10 requests per connecting IP per minute, A2UI generation at 5 requests per allowlisted GitHub user per minute, and combined JEV decision/feedback requests at 5 per allowlisted GitHub user per minute. Analysis endpoints fail closed with 503 if their rate limiter is unavailable. Registration fails closed with 503 if the connecting IP is unavailable rather than sharing a fallback bucket. These limits are enforced locally at Cloudflare locations rather than as a global quota, so they help contain automated abuse and provider costs but do not replace a global billing quota. Kaseki still owns destination and execution-context safety for HTTPS repositories.
 
 Messages are typed in Soyuz and carry `contractVersion: "1"`. The repositories do not share source code. A Kaseki consumer calls `GET /v1/worker/runs/:id` before start and while running, then reports lifecycle callbacks using the worker token.
 

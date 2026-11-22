@@ -5,15 +5,15 @@ description: Use when changing the private run dashboard, its GitHub OAuth flow,
 
 # Change the private dashboard and OAuth flow
 
-Read the dashboard and OAuth sections in `docs/DEPLOYMENT.md`, `docs/ARCHITECTURE.md`, and `docs/CONTRACT.md`. Run and worker operations are unavailable from the dashboard. Its narrowly scoped analysis generation, JEV decision, and feedback endpoints are authenticated POSTs that do not create or mutate runs. For cross-cutting credential roles, rotation, or origin authorization, also follow `soyuz-auth-boundaries`. For model and rendering boundaries, read `docs/OPENUI-ANALYSIS.md` and follow `soyuz-openui-analysis` and `soyuz-senku-integration`.
+Read the dashboard and OAuth sections in `docs/DEPLOYMENT.md`, `docs/ARCHITECTURE.md`, and `docs/CONTRACT.md`. Run and worker operations are unavailable from the dashboard. Its narrowly scoped analysis generation, JEV decision, and feedback endpoints are authenticated POSTs that do not create or mutate runs. For cross-cutting credential roles, rotation, or origin authorization, also follow `soyuz-auth-boundaries`. For model and rendering boundaries, read `docs/A2UI-ANALYSIS.md` and follow `soyuz-a2ui-analysis` and `soyuz-senku-integration`.
 
 ## Find the implementation
 
 - Browser UI: `dashboard/` and `public/dashboard/`.
-- Generated analysis UI and runtime: `dashboard/analysis/`, `openui/`, `src/openui/`, and `src/jev/`.
+- Generated analysis UI and runtime: `dashboard/analysis/`, `a2ui/`, `src/a2ui/`, and `src/jev/`.
 - Dashboard data and OAuth routes: `src/auth/oauth.ts`, `src/auth/oauth-policy.ts`, `src/auth/oauth-resource.ts`, and the dispatch in `src/index.ts`.
 - Private API projections and artifacts: `src/api/` and the OAuth provider configuration.
-- Browser and auth coverage: `tests/oauth.test.ts`, `tests/dashboard-api.test.ts`, `tests/dashboard-ui.test.ts`, `tests/openui.test.ts`, `tests/openui-generation.test.ts`, `tests/jev.test.ts`, and `tests/api.test.ts`.
+- Browser and auth coverage: `tests/oauth.test.ts`, `tests/dashboard-api.test.ts`, `tests/dashboard-ui.test.ts`, `tests/a2ui.test.ts`, `tests/a2ui-generation.test.ts`, `tests/a2ui-renderer.test.ts`, `tests/jev.test.ts`, and `tests/api.test.ts`.
 
 ## Preserve security and product boundaries
 
