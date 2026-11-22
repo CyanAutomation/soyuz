@@ -66,6 +66,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
+      - name: Monitor runner egress
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+
       - name: Require PR review gates
         if: ${{ github.event_name == 'pull_request' && (needs.dependency-review.result != 'success' || needs.d1-migration-impact.result != 'success') }}
         run: |
@@ -114,6 +119,9 @@ jobs:
         continue-on-error: true
         run: npm audit --audit-level=high
 
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -126,11 +134,20 @@ jobs:
       - name: Validate Wrangler deployment bundle
         run: npx wrangler deploy --dry-run --outdir .wrangler/deploy
 
+      - name: Generate dependency SBOM
+        if: github.event_name == 'push'
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          file: package-lock.json
+          format: cyclonedx-json
+          output-file: soyuz-sbom.cdx.json
+          upload-artifact: false
+
       - name: Package validated Worker bundle
         if: github.event_name == 'push'
         env:
           BUNDLE_ARCHIVE: soyuz-worker-${{ github.sha }}.tar.gz
-        run: tar -czf "$BUNDLE_ARCHIVE" .wrangler/deploy public
+        run: tar -czf "$BUNDLE_ARCHIVE" .wrangler/deploy public soyuz-sbom.cdx.json
 
       - name: Upload validated Worker bundle
         if: github.event_name == 'push'
@@ -177,6 +194,11 @@ jobs:
       group: soyuz-production
       cancel-in-progress: false
     steps:
+      - name: Monitor runner egress
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -226,6 +248,11 @@ jobs:
       group: soyuz-production
       cancel-in-progress: false
     steps:
+      - name: Monitor runner egress
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

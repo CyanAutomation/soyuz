@@ -37,8 +37,42 @@ test("CI reports high-severity dependency advisories and matches Wrangler versio
   const validate = jobBlock(ci, "validate");
   assert.match(validate, /npm audit --audit-level=high/);
   assert.match(validate, /Report dependency advisories[\s\S]*?continue-on-error:\s*true/);
+  const productionAudit = validate.match(/- name: Audit production dependencies[\s\S]*?(?=\n      - name:|\n  [\w-]+:|$)/)?.[0] ?? "";
+  assert.match(productionAudit, /npm audit --omit=dev --audit-level=high/);
+  assert.doesNotMatch(productionAudit, /continue-on-error/);
   const deployWranglerVersion = ci.match(/wranglerVersion:\s*["']([^"']+)["']/)?.[1];
   assert.equal(deployWranglerVersion, packageLock.packages["node_modules/wrangler"].version);
+});
+
+test("dependency and deployment jobs monitor runner egress", () => {
+  const validate = jobBlock(ci, "validate");
+  assert.match(validate, /steps:\s*\n\s+- name: Monitor runner egress/, "validation should start egress monitoring before every other step");
+
+  for (const [name, job] of [
+    ["validate", validate],
+    ["production-d1-preflight", jobBlock(ci, "production-d1-preflight")],
+    ["deploy", jobBlock(ci, "deploy")],
+  ]) {
+    assert.match(job, /uses: step-security\/harden-runner@[0-9a-f]{40}/, `${name} should pin harden-runner`);
+    assert.match(job, /egress-policy:\s*audit/, `${name} should monitor egress before enforcing an allowlist`);
+    assert.ok(job.indexOf("uses: step-security/harden-runner@") < job.indexOf("uses: actions/checkout@"), `${name} should start egress monitoring before checkout`);
+  }
+});
+
+test("the attested Worker archive includes a CycloneDX SBOM", () => {
+  const validate = jobBlock(ci, "validate");
+  const sbomStep = validate.match(/- name: Generate dependency SBOM[\s\S]*?(?=\n      - name:|\n  [\w-]+:|$)/)?.[0] ?? "";
+  assert.match(sbomStep, /uses: anchore\/sbom-action@[0-9a-f]{40}/);
+  assert.match(sbomStep, /file:\s*package-lock\.json/);
+  assert.match(sbomStep, /format:\s*cyclonedx-json/);
+  assert.match(sbomStep, /output-file:\s*soyuz-sbom\.cdx\.json/);
+  assert.match(sbomStep, /upload-artifact:\s*false/);
+  assert.match(sbomStep, /if:\s*github\.event_name\s*==\s*'push'/);
+  assert.match(validate, /tar -czf[^\n]*soyuz-sbom\.cdx\.json/);
+  assert.ok(validate.indexOf("Generate dependency SBOM") < validate.indexOf("tar -czf"), "the SBOM must exist before packaging");
+
+  const attest = jobBlock(ci, "attest");
+  assert.match(attest, /subject-path:\s*soyuz-worker-\$\{\{ github\.sha \}\}\.tar\.gz/);
 });
 
 test("the deploy artifact is attested after main validation and verified before extraction", () => {
@@ -78,4 +112,5 @@ test("deployment guidance calls out CodeQL as a required analysis check and docu
   assert.match(deploymentDocs, /Analyze JavaScript and TypeScript/);
   assert.match(deploymentDocs, /attestation|provenance/i);
   assert.match(deploymentDocs, /npm audit/);
+  assert.match(deploymentDocs, /secret scanning and push protection/i);
 });
