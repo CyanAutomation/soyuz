@@ -33,6 +33,22 @@ type CallbackParseResult<T> =
 
 type CallbackSchema<T> = { safeParse(input: unknown): CallbackParseResult<T> };
 
+type TerminalOutcomeData = {
+  summary?: string;
+  publishedUrl?: string;
+  changedFileCount?: number;
+  outcomeSummary?: unknown;
+};
+
+function terminalOutcomeResult(data: TerminalOutcomeData): Record<string, unknown> {
+  return {
+    ...(data.summary ? { summary: data.summary } : {}),
+    ...(data.publishedUrl ? { publishedUrl: data.publishedUrl } : {}),
+    ...(data.changedFileCount !== undefined ? { changedFileCount: data.changedFileCount } : {}),
+    ...(data.outcomeSummary ? { outcomeSummary: data.outcomeSummary } : {}),
+  };
+}
+
 export async function handleWorkerCallbacks(request: Request, env: Env, url: URL, requestId: string): Promise<Response | null> {
   const parts = url.pathname.split("/").filter(Boolean);
   if (parts[0] !== "v1" || parts[1] !== "worker" || parts[2] !== "runs") return null;
@@ -189,12 +205,7 @@ async function completed(request: Request, env: Env, runId: string, requestId: s
       request, requestId, WorkerCompletedSchema, "INVALID_WORKER_CALLBACK", "Completed callback failed validation",
     );
     const row = await requireActiveWorker(env, runId, payload.data.workerId, payload.data.claimCallbackId);
-    const result = {
-      ...(payload.data.summary ? { summary: payload.data.summary } : {}),
-      ...(payload.data.publishedUrl ? { publishedUrl: payload.data.publishedUrl } : {}),
-      ...(payload.data.changedFileCount !== undefined ? { changedFileCount: payload.data.changedFileCount } : {}),
-      ...(payload.data.outcomeSummary ? { outcomeSummary: payload.data.outcomeSummary } : {}),
-    };
+    const result = terminalOutcomeResult(payload.data);
     await ensureCallbackIdAvailable(env, runId, payload.data.callbackId, "run.completed", payload.data.workerId, result);
     if (row.status === "completed") return successResponse(requestId, publicRun(row));
     const now = new Date().toISOString();
@@ -222,11 +233,12 @@ async function failed(request: Request, env: Env, runId: string, requestId: stri
       request, requestId, WorkerFailedSchema, "INVALID_WORKER_CALLBACK", "Failed callback failed validation",
     );
     const row = await requireWorkerOwnership(env, runId, payload.data.workerId, payload.data.claimCallbackId);
+    const result = terminalOutcomeResult(payload.data);
     const eventPayload = {
       failureClass: payload.data.failureClass,
       failureMessage: payload.data.failureMessage,
       ...(payload.data.exitCode !== undefined ? { exitCode: payload.data.exitCode } : {}),
-      ...(payload.data.outcomeSummary ? { outcomeSummary: payload.data.outcomeSummary } : {}),
+      ...result,
     };
     await ensureCallbackIdAvailable(env, runId, payload.data.callbackId, "run.failed", payload.data.workerId, eventPayload);
     if (row.status === "failed") return successResponse(requestId, publicRun(row));
@@ -237,7 +249,7 @@ async function failed(request: Request, env: Env, runId: string, requestId: stri
       exit_code: payload.data.exitCode ?? null,
       failure_class: payload.data.failureClass,
       failure_message: payload.data.failureMessage,
-      result_json: payload.data.outcomeSummary ? stableStringify({ outcomeSummary: payload.data.outcomeSummary }) : null,
+      result_json: Object.keys(result).length ? stableStringify(result) : null,
     }, {
       eventId: payload.data.callbackId,
       type: "run.failed",
@@ -261,10 +273,11 @@ async function cancelled(request: Request, env: Env, runId: string, requestId: s
       request, requestId, WorkerCancelledSchema, "INVALID_WORKER_CALLBACK", "Cancelled callback failed validation",
     );
     const row = await requireWorkerOwnership(env, runId, payload.data.workerId, payload.data.claimCallbackId);
+    const result = terminalOutcomeResult(payload.data);
     const eventPayload = {
       ...(payload.data.reason ? { reason: payload.data.reason } : {}),
       ...(payload.data.exitCode !== undefined ? { exitCode: payload.data.exitCode } : {}),
-      ...(payload.data.outcomeSummary ? { outcomeSummary: payload.data.outcomeSummary } : {}),
+      ...result,
     };
     await ensureCallbackIdAvailable(env, runId, payload.data.callbackId, "run.cancelled", payload.data.workerId, eventPayload);
     if (row.status === "cancelled") return successResponse(requestId, publicRun(row));
@@ -275,7 +288,7 @@ async function cancelled(request: Request, env: Env, runId: string, requestId: s
       exit_code: payload.data.exitCode ?? null,
       failure_class: "cancelled",
       failure_message: payload.data.reason ?? null,
-      result_json: payload.data.outcomeSummary ? stableStringify({ outcomeSummary: payload.data.outcomeSummary }) : null,
+      result_json: Object.keys(result).length ? stableStringify(result) : null,
     }, {
       eventId: payload.data.callbackId,
       type: "run.cancelled",

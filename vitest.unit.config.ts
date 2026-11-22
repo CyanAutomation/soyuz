@@ -11,6 +11,7 @@ export default defineConfig({
       "tests/jev.test.ts",
       "tests/jev-selection.test.ts",
       "tests/run-list.test.ts",
+      "tests/worker-callback-contract.test.ts",
       "tests/dashboard-ui.test.ts",
       "tests/dashboard-markup.test.mjs",
     ],
