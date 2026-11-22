@@ -15,6 +15,12 @@ const FencedCallbackBase = CallbackBase.extend({
 });
 
 const OptionalTimestamp = z.string().datetime({ offset: true }).optional();
+const TerminalOutcomeFields = {
+  summary: z.string().max(2_000).optional(),
+  publishedUrl: z.string().url().max(2_048).refine(isHttpUrl, "publishedUrl must use HTTP or HTTPS").optional(),
+  changedFileCount: z.number().int().min(0).max(100_000).optional(),
+  outcomeSummary: RunOutcomeSummarySchema.optional(),
+};
 
 export const WorkerStartedSchema = FencedCallbackBase.extend({
   startedAt: OptionalTimestamp,
@@ -70,10 +76,7 @@ export const WorkerEventSchema = z.object({
 export const WorkerCompletedSchema = FencedCallbackBase.extend({
   completedAt: OptionalTimestamp,
   exitCode: z.literal(0).optional(),
-  summary: z.string().max(2_000).optional(),
-  publishedUrl: z.string().url().max(2_048).refine(isHttpUrl, "publishedUrl must use HTTP or HTTPS").optional(),
-  changedFileCount: z.number().int().min(0).max(100_000).optional(),
-  outcomeSummary: RunOutcomeSummarySchema.optional(),
+  ...TerminalOutcomeFields,
 }).strict();
 
 export const WorkerFailedSchema = FencedCallbackBase.extend({
@@ -81,12 +84,12 @@ export const WorkerFailedSchema = FencedCallbackBase.extend({
   exitCode: z.number().int().optional(),
   failureClass: z.string().min(1).max(120),
   failureMessage: z.string().min(1).max(4_000),
-  outcomeSummary: RunOutcomeSummarySchema.optional(),
+  ...TerminalOutcomeFields,
 }).strict();
 
 export const WorkerCancelledSchema = FencedCallbackBase.extend({
   completedAt: OptionalTimestamp,
   exitCode: z.number().int().optional(),
   reason: z.string().max(2_000).optional(),
-  outcomeSummary: RunOutcomeSummarySchema.optional(),
+  ...TerminalOutcomeFields,
 }).strict();

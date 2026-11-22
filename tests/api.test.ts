@@ -2036,6 +2036,9 @@ describe("Soyuz Worker API", () => {
         callbackId: "00000000-0000-4000-8000-000000000016",
         workerId,
         reason: "Cancellation observed by the execution host",
+        summary: "The worker stopped after cancellation was applied.",
+        publishedUrl: "https://github.com/example/project/pull/7",
+        changedFileCount: 3,
       },
     });
     expect(confirmed.response.status).toBe(200);
@@ -2432,6 +2435,9 @@ describe("Soyuz Worker API", () => {
       exitCode: 1,
       failureClass: "validation_failed",
       failureMessage: "The validation command returned a non-zero exit code.",
+      summary: "The pre-agent validation command failed.",
+      publishedUrl: "https://github.com/example/project/pull/7",
+      changedFileCount: 0,
     };
     const failure = await call(bindings, `/v1/worker/runs/${runId}/failed`, {
       method: "POST",
