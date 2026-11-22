@@ -41,4 +41,10 @@ export interface Env {
   ANALYSIS_DEMO_MODE?: string;
   /** Machine identity for Soyuz-to-Senku decision requests. Store as a Worker secret. */
   SENKU_SOYUZ_API_TOKEN?: string;
+  /** Optional private RPC binding. Keep absent until Phase 2C is separately commissioned. */
+  KIRISAME?: { publish(requestJson: string): Promise<unknown> };
+  /** Durable publication dispatch remains off unless explicitly enabled. */
+  PUBLICATION_DISPATCH_ENABLED?: string;
+  /** JSON exact destination rules; absent or malformed configuration denies new intents. */
+  PUBLICATION_REPOSITORY_ALLOWLIST?: string;
 }

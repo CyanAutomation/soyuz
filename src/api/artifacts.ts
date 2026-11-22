@@ -171,12 +171,23 @@ export async function purgeExpiredArtifacts(env: Env, at = new Date()): Promise<
   for (let batch = 0; batch < 10; batch += 1) {
     const rows = await env.DB.prepare(`
       SELECT id, run_id, kind, name, content_type, size_bytes, object_key, created_at, expires_at, state
-      FROM run_artifacts WHERE expires_at <= ? AND id > ? ORDER BY id LIMIT 500
-    `).bind(cutoff, afterId).all<ArtifactRow>();
+      FROM run_artifacts a WHERE expires_at <= ? AND id > ?
+        AND NOT EXISTS (
+          SELECT 1 FROM publication_intents i LEFT JOIN publications p ON p.publication_id = i.publication_id
+          WHERE i.artifact_object_key = a.object_key AND (
+            i.state = 'authorized'
+            OR (i.state = 'abandoned' AND (i.retained_until IS NULL OR i.retained_until > ?))
+            OR p.state IN ('pending', 'publishing', 'retryable_failure')
+            OR (p.state = 'published' AND (p.retained_until IS NULL OR p.retained_until > ?))
+            OR (p.state = 'blocked' AND (p.retained_until IS NULL OR p.retained_until > ?))
+          )
+        ) ORDER BY id LIMIT 500
+    `).bind(cutoff, afterId, cutoff, cutoff, cutoff).all<ArtifactRow>();
     if (rows.results.length === 0) return;
     for (const row of rows.results) {
       afterId = row.id;
       try {
+        if (await isPublicationArtifactPinned(env, row.object_key, cutoff)) continue;
         await env.ARTIFACTS.delete(row.object_key);
         await env.DB.prepare("DELETE FROM run_artifacts WHERE id = ? AND expires_at <= ?").bind(row.id, cutoff).run();
       } catch {
@@ -189,9 +200,24 @@ export async function purgeExpiredArtifacts(env: Env, at = new Date()): Promise<
 async function expireArtifact(env: Env, row: ArtifactRow): Promise<void> {
   if (!env.ARTIFACTS) return;
   try {
+    if (await isPublicationArtifactPinned(env, row.object_key, new Date().toISOString())) return;
     await env.ARTIFACTS.delete(row.object_key);
     await env.DB.prepare("DELETE FROM run_artifacts WHERE id = ?").bind(row.id).run();
   } catch {
     // The scheduled retention sweep retries if either store is temporarily unavailable.
   }
+}
+
+async function isPublicationArtifactPinned(env: Env, objectKey: string, at: string): Promise<boolean> {
+  const row = await env.DB.prepare(`
+    SELECT 1 AS pinned FROM publication_intents i LEFT JOIN publications p ON p.publication_id = i.publication_id
+    WHERE i.artifact_object_key = ? AND (
+      i.state = 'authorized'
+      OR (i.state = 'abandoned' AND (i.retained_until IS NULL OR i.retained_until > ?))
+      OR p.state IN ('pending', 'publishing', 'retryable_failure')
+      OR (p.state = 'published' AND (p.retained_until IS NULL OR p.retained_until > ?))
+      OR (p.state = 'blocked' AND (p.retained_until IS NULL OR p.retained_until > ?))
+    ) LIMIT 1
+  `).bind(objectKey, at, at, at).first();
+  return Boolean(row);
 }
