@@ -89,6 +89,17 @@ Every worker request uses `Authorization: Bearer <WORKER_API_TOKEN>`, distinct f
 - `POST /v1/worker/runs/:id/cancelled` body: `{ contractVersion, callbackId, workerId, claimCallbackId?, completedAt?, exitCode?, reason? }`. It accepts an owned, live `claimed` run as well as an active run so a confirmed pre-start cancellation can be recorded.
 - `PUT /v1/worker/runs/:id/artifacts/:artifactId` streams an artifact with `Content-Length`, `X-Artifact-Name`, `X-Artifact-Kind`, `X-Soyuz-Worker-Id`, and `X-Soyuz-Claim-Callback-Id` headers. The worker ID and current claim ID must match the active run. Each file is limited to 25,000,000 bytes; a run can retain at most 100 artifacts.
 
+### Publication manifest and intent (additive worker contract)
+
+The new-style publication path is separate from generic artifacts and is not produced by current Kaseki versions. Its routes still use the Worker bearer token and the active claim fence:
+
+- `PUT /v1/worker/runs/:id/publication-manifests/:artifactId` accepts a UTF-8 JSON Kirisame publication artifact v1. Headers: `Content-Length`, `X-Soyuz-Worker-Id`, and `X-Soyuz-Claim-Callback-Id`. The body is capped at 9 MiB; the canonical artifact is capped at 8 MiB and file data at the Kirisame v1 limits. Soyuz derives `publication-manifests/{runId}/{artifactId}` as the private R2 key.
+- A claim-fenced `validation.completed` event may include `payload.publicationEvidence` with `evidenceVersion: "1"`, `outcome: "passed"`, `runId`, `artifactId`, `artifactDigest`, repository, `baseRef`, and `baseSha`. The event itself must be sent to the authenticated Worker callback with the current `claimCallbackId`. Soyuz accepts it as trusted host evidence only because the Worker credential is held by the execution host and withheld from the coding container; a free-form event, an uploaded file alone, or `validationPassed: true` does not authorize publication.
+- `POST /v1/worker/runs/:id/publication-intents` accepts `{ contractVersion: "1", artifactId, artifactDigest, mode, title?, body? }`. PR mode requires bounded title/body; branch mode rejects them. Soyuz also requires a canonical `patch` run whose `publishMode` exactly matches the explicit publication mode. It checks the canonical run repository/ref, private stored object bytes, canonical RFC 8785 digest, matching host validation event, and an exact `PUBLICATION_REPOSITORY_ALLOWLIST` entry containing owner, name, base refs, and modes. Missing or malformed policy denies registration.
+- Intent registration is idempotent per run. Repeating the same manifest and PR metadata returns the same server-generated UUIDv7 publication ID; changed contents, destination, mode, title, or body conflict. Exactly one authorized intent is allowed per run.
+- An intent becomes a `pending` publication only after the canonical run is `completed` and its completion has no legacy `publishedUrl`. Failed, cancelled, and legacy-published runs do not enter the Kirisame ledger.
+- `GET /v1/runs/:id/publication` uses client bearer authentication and returns safe publication status separately from execution status. It includes a validated legacy `publishedUrl` when one exists. It never returns manifest bytes, R2 keys, raw RPC bodies, or credentials.
+
 The claim request's `callbackId` is also the per-attempt fencing token. New Kaseki hosts echo it on every later callback; Soyuz rejects an older token with 409 `STALE_CLAIM`, including when two controller instances accidentally reuse a `workerId`. The echoed field is optional for contract-v1 compatibility with older hosts; those hosts do not receive stale-callback protection. Lifecycle callback IDs and event IDs must remain stable across retries. Replaying the same ID and payload is safe; reusing an ID for different data returns 409. Worker events are event metadata, not stdout/stderr. Exact artifact retries with the same ID and metadata are idempotent; reusing an ID for different bytes or metadata returns 409.
 
 `artifacts.uploaded` is a bounded terminal event containing only `status` (`complete` or `partial`), `uploadedCount`, `failedCount`, and `skippedCount`. The Kaseki adapter persists the report and its event ID before delivery, so retrying the terminal callback replays the same report safely. It does not include artifact contents or local filesystem paths.
@@ -108,6 +119,7 @@ Requirement IDs: `HEALTH-DB-01`, `RUN-READ-REST-01`, `CANCEL-QUEUED-01`, `CANCEL
 | `GET /v1/run-outcomes` | Client | Sanitized aggregate outcomes and per-run projections for the newest 30 retained runs |
 | `GET /v1/runs/:id` | Client | Canonical run and normalized request |
 | `GET /v1/runs/:id/events` | Client | Append-only event history |
+| `GET /v1/runs/:id/publication` | Client | Safe publication ledger projection, separate from execution state |
 | `GET /v1/runs/:id/artifacts` | Client | List retained artifact metadata |
 | `GET /v1/runs/:id/artifacts/:artifactId` | Client | Download an artifact as an attachment |
 | `POST /v1/runs/:id/cancel` | Client | Cancel queued work or record running cancellation intent |

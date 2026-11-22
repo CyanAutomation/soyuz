@@ -15,6 +15,16 @@ const FencedCallbackBase = CallbackBase.extend({
 });
 
 const OptionalTimestamp = z.string().datetime({ offset: true }).optional();
+const PublicationValidationEvidenceSchema = z.object({
+  evidenceVersion: z.literal("1"),
+  outcome: z.literal("passed"),
+  artifactId: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
+  artifactDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  runId: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
+  repository: z.object({ owner: z.string().min(1).max(39), name: z.string().min(1).max(100) }).strict(),
+  baseRef: z.string().min(1).max(128),
+  baseSha: z.string().regex(/^[a-f0-9]{40}$/),
+}).strict();
 const TerminalOutcomeFields = {
   summary: z.string().max(2_000).optional(),
   publishedUrl: z.string().url().max(2_048).refine(isHttpUrl, "publishedUrl must use HTTP or HTTPS").optional(),
@@ -63,6 +73,16 @@ export const WorkerEventSchema = z.object({
       path: ["step"],
       message: "step is required for step.changed events",
     });
+  }
+  if (event.type === "validation.completed" && event.payload.publicationEvidence !== undefined) {
+    const evidence = PublicationValidationEvidenceSchema.safeParse(event.payload.publicationEvidence);
+    if (!evidence.success || !event.claimCallbackId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["payload", "publicationEvidence"],
+        message: "Publication validation evidence requires its versioned shape and current claim callback ID",
+      });
+    }
   }
   if (new TextEncoder().encode(JSON.stringify(event.payload)).byteLength > 12_000) {
     context.addIssue({

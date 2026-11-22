@@ -1,0 +1,26 @@
+{
+  "documentType": "publication-result",
+  "value": {
+    "contractVersion": "1",
+    "publicationId": "019a6000-0000-7000-8000-000000000001",
+    "runId": "019a6000-0000-7000-8000-000000000002",
+    "repository": {
+      "owner": "cyanautomation",
+      "name": "demo-app"
+    },
+    "mode": "pr",
+    "outcome": "pr_published",
+    "retryable": false,
+    "reconciliation": "pull_request_confirmed",
+    "branch": {
+      "ref": "kirisame/p/019a6000-0000-7000-8000-000000000001",
+      "commitSha": "dddddddddddddddddddddddddddddddddddddddd",
+      "reused": true
+    },
+    "pullRequest": {
+      "number": 42,
+      "url": "https://github.com/cyanautomation/demo-app/pull/42",
+      "state": "open"
+    }
+  }
+}

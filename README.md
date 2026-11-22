@@ -2,7 +2,7 @@
 
 # Soyuz
 
-Soyuz is the Cloudflare control plane for Kaseki. It accepts authenticated run requests, persists canonical run state in D1, publishes versioned jobs to Cloudflare Queues, and records callbacks from Kaseki execution hosts. Kaseki continues to own Docker, repository access, Pi, validation, safety admission, and publication.
+Soyuz is the Cloudflare control plane for Kaseki. It accepts authenticated run requests, persists canonical run state in D1, publishes versioned jobs to Cloudflare Queues, and records callbacks from Kaseki execution hosts. A separate, opt-in publication ledger can authorize and track Kirisame v1 publications after a successful run; publication errors never change execution status. The production dispatcher and Kirisame Service Binding remain disabled and unconfigured.
 
 ## Local development
 
@@ -43,6 +43,7 @@ GET  /v1/runs?limit=30&status=queued
 GET  /v1/run-outcomes
 GET  /v1/runs/:id
 GET  /v1/runs/:id/events?after=0&limit=100
+GET  /v1/runs/:id/publication
 GET  /v1/runs/:id/artifacts
 GET  /v1/runs/:id/artifacts/:artifactId
 POST /v1/runs/:id/cancel
@@ -67,9 +68,13 @@ POST /v1/worker/runs/:id/completed
 POST /v1/worker/runs/:id/failed
 POST /v1/worker/runs/:id/cancelled
 PUT  /v1/worker/runs/:id/artifacts/:artifactId
+PUT  /v1/worker/runs/:id/publication-manifests/:artifactId
+POST /v1/worker/runs/:id/publication-intents
 ```
 
 Artifact uploads require the current worker ID and claim callback ID as headers, are limited to 25 MB each and 100 per run, and are retained for 30 days. The dashboard uses OAuth with an explicit GitHub user-ID allowlist; it exposes read-only run and artifact data.
+
+Publication manifests use a separate private R2 prefix, are capped at 9 MiB, and can only be registered under the active worker claim. Soyuz verifies the Kirisame v1 manifest and canonical SHA-256 digest, requires a matching `validation.completed` event authenticated with the Worker API credential, and checks an exact repository/base/mode allowlist. A publication intent is materialized only after a successful execution with no legacy `publishedUrl`. See [Kirisame publication lifecycle](docs/KIRISAME-PUBLICATION.md) for claim fencing, retries, artifact pins, and migration ordering.
 
 The optional `/dashboard/analysis/` page uses OpenUI Core and a native TypeScript DOM renderer to build read-only run-analysis views from natural-language prompts. It also offers explicit advisory JEV triage and Kaseki outcome scoring through Senku over a Cloudflare Service Binding. Soyuz keeps the user-facing dashboard API, OAuth policy, run records, and feedback; Senku owns the questions and provider inference. Users can rate an assessment; Soyuz keeps the rating but not the model answer. See [OpenUI run analysis](docs/OPENUI-ANALYSIS.md) and [Senku integration](docs/SENKU-INTEGRATION.md) for the data boundary and deployment order.
 
@@ -80,6 +85,12 @@ Client and worker keys are static bearer secrets; Soyuz does not assign them an 
 The recent-runs dashboard includes a sanitized outcome overview for the newest 30 retained runs. The dashboard continues to use its GitHub OAuth login, user-ID allowlist, sessions, and read-only analysis access. Cloudflare Access migration remains a separate future workstream.
 
 The dashboard's shared design tokens, page headers, toolbars, cards, badges, and DOM helpers are documented in the [dashboard UI foundation](docs/DASHBOARD-UI.md).
+
+## Publication lifecycle
+
+The execution state machine remains unchanged. Kirisame publication has its own `pending`, `publishing`, `published`, `retryable_failure`, and `blocked` states, attempt leases, immutable request fingerprint, and append-only events. The scheduler uses a D1 compare-and-set and bounded retry backoff. It sends the same request and publication ID after uncertain outcomes. `/v1/runs/:id/publication` is a client-authenticated, read-only projection; it does not expose manifests or storage keys. Legacy Kaseki `publishedUrl` remains visible on the run and is never republished.
+
+The deployment has no `KIRISAME` binding, `PUBLICATION_REPOSITORY_ALLOWLIST`, or dispatch enablement. Tests inject the `MockPublisherEntrypoint`; they do not contact GitHub. D1 migration `0009_durable_publications.sql` is additive and must be applied locally for tests. Production needs the separately authorized migration-before-code procedure in [deployment](docs/DEPLOYMENT.md#database-migration-and-rollout). Do not configure production dispatch until Phase 2C.
 
 ## Provisioning Cloudflare resources
 
