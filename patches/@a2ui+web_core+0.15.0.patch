@@ -1,0 +1,390 @@
+diff --git a/node_modules/@a2ui/web_core/src/catalog/exclusive_union.js b/node_modules/@a2ui/web_core/src/catalog/exclusive_union.js
+index a86e0db..26dd4f6 100644
+--- a/node_modules/@a2ui/web_core/src/catalog/exclusive_union.js
++++ b/node_modules/@a2ui/web_core/src/catalog/exclusive_union.js
+@@ -14,7 +14,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { ignoreOverride, parseDef } from 'zod-to-json-schema';
+ /**
+  * The definitions of the guards that make a union exclusive. A JSON Schema
+diff --git a/node_modules/@a2ui/web_core/src/catalog/schema_loader.js b/node_modules/@a2ui/web_core/src/catalog/schema_loader.js
+index 1183081..8255e80 100644
+--- a/node_modules/@a2ui/web_core/src/catalog/schema_loader.js
++++ b/node_modules/@a2ui/web_core/src/catalog/schema_loader.js
+@@ -13,7 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { validateMetadata } from '../common/metadata.js';
+ import { isAtLeastVersion } from '../common/semver.js';
+ import { assertUax31Identifier } from '../common/uax31.js';
+diff --git a/node_modules/@a2ui/web_core/src/catalog/spec_annotations.js b/node_modules/@a2ui/web_core/src/catalog/spec_annotations.js
+index 294e216..ae54e03 100644
+--- a/node_modules/@a2ui/web_core/src/catalog/spec_annotations.js
++++ b/node_modules/@a2ui/web_core/src/catalog/spec_annotations.js
+@@ -13,7 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ const annotations = new WeakMap();
+ function cloneWithDefAnnotation(schema, nextAnnotation, description = schema.description) {
+     const copy = z.ZodType.prototype.describe.call(schema, description);
+diff --git a/node_modules/@a2ui/web_core/src/catalog/types.js b/node_modules/@a2ui/web_core/src/catalog/types.js
+index d1c8b8e..ab410b1 100644
+--- a/node_modules/@a2ui/web_core/src/catalog/types.js
++++ b/node_modules/@a2ui/web_core/src/catalog/types.js
+@@ -13,7 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { A2uiCatalogError, A2uiExpressionError } from '../errors.js';
+ import { isAtLeastVersion } from '../common/semver.js';
+ import { isThenable, settleDeep } from '../common/settle_deep.js';
+diff --git a/node_modules/@a2ui/web_core/src/catalogs/basic/v1/components/basic_components.js b/node_modules/@a2ui/web_core/src/catalogs/basic/v1/components/basic_components.js
+index 1d4f71a..e0303ac 100644
+--- a/node_modules/@a2ui/web_core/src/catalogs/basic/v1/components/basic_components.js
++++ b/node_modules/@a2ui/web_core/src/catalogs/basic/v1/components/basic_components.js
+@@ -15,7 +15,7 @@
+  */
+ // AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
+ // Generated from specification/ catalogs via scripts/generate-catalog-schemas.mjs
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { spec, specDef } from '../../../../catalog/spec_annotations.js';
+ import { ActionSchema, CheckRuleSchema, ChildListSchema, ChildSchema, DataBindingSchema, DynamicBooleanSchema, DynamicNumberSchema, DynamicStringListSchema, DynamicStringSchema, } from '../../../../v1_0/schema/common-types.js';
+ export const WeightSchema = specDef('Weight', z
+diff --git a/node_modules/@a2ui/web_core/src/catalogs/basic/v1/functions/basic_functions_api.js b/node_modules/@a2ui/web_core/src/catalogs/basic/v1/functions/basic_functions_api.js
+index 36b918f..037d9e2 100644
+--- a/node_modules/@a2ui/web_core/src/catalogs/basic/v1/functions/basic_functions_api.js
++++ b/node_modules/@a2ui/web_core/src/catalogs/basic/v1/functions/basic_functions_api.js
+@@ -15,7 +15,7 @@
+  */
+ // AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
+ // Generated from specification/ catalogs via scripts/generate-catalog-schemas.mjs
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { spec } from '../../../../catalog/spec_annotations.js';
+ import { DataBindingSchema, DynamicBooleanSchema, DynamicNumberSchema, DynamicStringSchema, DynamicValueSchema, FunctionCallSchema, } from '../../../../v1_0/schema/common-types.js';
+ /**
+diff --git a/node_modules/@a2ui/web_core/src/processing/format-zod-issue.js b/node_modules/@a2ui/web_core/src/processing/format-zod-issue.js
+index 72e8fb0..baf47fc 100644
+--- a/node_modules/@a2ui/web_core/src/processing/format-zod-issue.js
++++ b/node_modules/@a2ui/web_core/src/processing/format-zod-issue.js
+@@ -13,7 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ /**
+  * Formats a single Zod issue into a human-readable diagnostic message.
+  *
+diff --git a/node_modules/@a2ui/web_core/src/processing/message-error-mapper.js b/node_modules/@a2ui/web_core/src/processing/message-error-mapper.js
+index 14830a8..946177e 100644
+--- a/node_modules/@a2ui/web_core/src/processing/message-error-mapper.js
++++ b/node_modules/@a2ui/web_core/src/processing/message-error-mapper.js
+@@ -13,7 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { isAtLeastVersion } from '../common/semver.js';
+ import { A2uiCatalogError, A2uiDataError, A2uiError, A2uiExpressionError, A2uiIntegrityError, A2uiRecursionError, A2uiRpcError, A2uiStateError, A2uiValidationError, } from '../errors.js';
+ /** Known top-level action envelope keys across A2UI protocol versions. */
+diff --git a/node_modules/@a2ui/web_core/src/resolution/data-context.js b/node_modules/@a2ui/web_core/src/resolution/data-context.js
+index 12ef7db..cbc23af 100644
+--- a/node_modules/@a2ui/web_core/src/resolution/data-context.js
++++ b/node_modules/@a2ui/web_core/src/resolution/data-context.js
+@@ -14,7 +14,7 @@
+  * limitations under the License.
+  */
+ import { signal, computed, effect, isSignal, getValue, setValue, peekValue, } from '../reactivity/signals.js';
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { DataModel } from '../state/data-model.js';
+ import { MAX_FUNCTION_CALL_ARGS } from '../types/helpers.js';
+ import { A2uiCatalogError, A2uiExpressionError, A2uiValidationError } from '../errors.js';
+diff --git a/node_modules/@a2ui/web_core/src/types/common-types.js b/node_modules/@a2ui/web_core/src/types/common-types.js
+index 506cd17..be1cb24 100644
+--- a/node_modules/@a2ui/web_core/src/types/common-types.js
++++ b/node_modules/@a2ui/web_core/src/types/common-types.js
+@@ -28,7 +28,7 @@
+  * model. Version-isolated wire validation and catalog schemas are maintained
+  * separately in src/v<version>/ directories, e.g. src/v1_0/.
+  */
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { isValidUax31Identifier } from '../common/uax31.js';
+ import { markChildRef } from './child-ref-helpers.js';
+ export const ComponentIdSchema = markChildRef(z
+diff --git a/node_modules/@a2ui/web_core/src/types/helpers.js b/node_modules/@a2ui/web_core/src/types/helpers.js
+index 56e080e..a0ac455 100644
+--- a/node_modules/@a2ui/web_core/src/types/helpers.js
++++ b/node_modules/@a2ui/web_core/src/types/helpers.js
+@@ -13,7 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { markChildRef, childRefKindOf, } from './child-ref-helpers.js';
+ import { ChildListSchema, ComponentIdSchema } from './common-types.js';
+ export { markChildRef, childRefKindOf };
+diff --git a/node_modules/@a2ui/web_core/src/universal/basic_catalog/theme.js b/node_modules/@a2ui/web_core/src/universal/basic_catalog/theme.js
+index d908af9..564ee4d 100644
+--- a/node_modules/@a2ui/web_core/src/universal/basic_catalog/theme.js
++++ b/node_modules/@a2ui/web_core/src/universal/basic_catalog/theme.js
+@@ -13,7 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import validateColor from 'validate-color';
+ export const HEX_COLOR_REGEX = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+ /**
+diff --git a/node_modules/@a2ui/web_core/src/v0_8/basic_catalog/components/basic_components.js b/node_modules/@a2ui/web_core/src/v0_8/basic_catalog/components/basic_components.js
+index 97875e5..4a7d57f 100644
+--- a/node_modules/@a2ui/web_core/src/v0_8/basic_catalog/components/basic_components.js
++++ b/node_modules/@a2ui/web_core/src/v0_8/basic_catalog/components/basic_components.js
+@@ -16,7 +16,7 @@
+ // AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
+ // Generated from specification/v0_8/json/standard_catalog_definition.json via
+ // src/v0_8/scripts/generate-catalog.mjs
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { spec } from '../../../catalog/spec_annotations.js';
+ export const TextApi = {
+     name: 'Text',
+diff --git a/node_modules/@a2ui/web_core/src/v0_8/schema/common-types.js b/node_modules/@a2ui/web_core/src/v0_8/schema/common-types.js
+index a155b3c..8f7eeff 100644
+--- a/node_modules/@a2ui/web_core/src/v0_8/schema/common-types.js
++++ b/node_modules/@a2ui/web_core/src/v0_8/schema/common-types.js
+@@ -13,7 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ /**
+  * Base primitives
+  */
+diff --git a/node_modules/@a2ui/web_core/src/v0_8/schema/server-to-client.js b/node_modules/@a2ui/web_core/src/v0_8/schema/server-to-client.js
+index 46192fd..f8600ec 100644
+--- a/node_modules/@a2ui/web_core/src/v0_8/schema/server-to-client.js
++++ b/node_modules/@a2ui/web_core/src/v0_8/schema/server-to-client.js
+@@ -13,7 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { DataValueSchema } from './common-types.js';
+ const _validateValueProperty = (val, ctx) => {
+     let count = 0;
+diff --git a/node_modules/@a2ui/web_core/src/v0_9/basic_catalog/components/basic_components.js b/node_modules/@a2ui/web_core/src/v0_9/basic_catalog/components/basic_components.js
+index 99fc7d3..7dd006b 100644
+--- a/node_modules/@a2ui/web_core/src/v0_9/basic_catalog/components/basic_components.js
++++ b/node_modules/@a2ui/web_core/src/v0_9/basic_catalog/components/basic_components.js
+@@ -15,7 +15,7 @@
+  */
+ // AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
+ // Generated from specification/ catalogs via scripts/generate-catalog-schemas.mjs
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { spec, specDef } from '../../../catalog/spec_annotations.js';
+ import { AccessibilityAttributesSchema, ActionSchema, CheckRuleSchema, ChildListSchema, ComponentIdSchema, DataBindingSchema, DynamicBooleanSchema, DynamicNumberSchema, DynamicStringListSchema, DynamicStringSchema, } from '../../schema/common-types.js';
+ export const CatalogComponentCommonSchema = specDef('CatalogComponentCommon', z.object({
+diff --git a/node_modules/@a2ui/web_core/src/v0_9/basic_catalog/functions/basic_functions_api.js b/node_modules/@a2ui/web_core/src/v0_9/basic_catalog/functions/basic_functions_api.js
+index 936df7d..476927e 100644
+--- a/node_modules/@a2ui/web_core/src/v0_9/basic_catalog/functions/basic_functions_api.js
++++ b/node_modules/@a2ui/web_core/src/v0_9/basic_catalog/functions/basic_functions_api.js
+@@ -15,7 +15,7 @@
+  */
+ // AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
+ // Generated from specification/ catalogs via scripts/generate-catalog-schemas.mjs
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { spec } from '../../../catalog/spec_annotations.js';
+ import { DynamicBooleanSchema, DynamicNumberSchema, DynamicStringSchema, DynamicValueSchema, } from '../../schema/common-types.js';
+ /**
+diff --git a/node_modules/@a2ui/web_core/src/v0_9/basic_catalog/functions/legacy_functions_api.js b/node_modules/@a2ui/web_core/src/v0_9/basic_catalog/functions/legacy_functions_api.js
+index 67b68bf..2c5719a 100644
+--- a/node_modules/@a2ui/web_core/src/v0_9/basic_catalog/functions/legacy_functions_api.js
++++ b/node_modules/@a2ui/web_core/src/v0_9/basic_catalog/functions/legacy_functions_api.js
+@@ -25,7 +25,7 @@
+  *
+  * @deprecated Define these functions in your own catalog instead.
+  */
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ const nullableNumber = () => z.preprocess(v => (v === null ? undefined : v), z.coerce.number());
+ const stringArg = () => z.preprocess(v => (v === undefined || v === null ? undefined : String(v)), z.string());
+ const anyRequired = () => z.any().refine(v => v !== undefined, 'Required');
+diff --git a/node_modules/@a2ui/web_core/src/v0_9/schema/client-capabilities.js b/node_modules/@a2ui/web_core/src/v0_9/schema/client-capabilities.js
+index 4559a9b..4620bb5 100644
+--- a/node_modules/@a2ui/web_core/src/v0_9/schema/client-capabilities.js
++++ b/node_modules/@a2ui/web_core/src/v0_9/schema/client-capabilities.js
+@@ -15,7 +15,7 @@
+  */
+ // AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
+ // Generated from specification/v0.9/json/ via src/v0_9/scripts/generate-schemas.mjs
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ export const FunctionDefinitionSchema = z
+     .object({
+     'name': z.string().describe('The unique name of the function.'),
+diff --git a/node_modules/@a2ui/web_core/src/v0_9/schema/client-to-server.js b/node_modules/@a2ui/web_core/src/v0_9/schema/client-to-server.js
+index 029a6b5..7cfa2af 100644
+--- a/node_modules/@a2ui/web_core/src/v0_9/schema/client-to-server.js
++++ b/node_modules/@a2ui/web_core/src/v0_9/schema/client-to-server.js
+@@ -15,7 +15,7 @@
+  */
+ // AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
+ // Generated from specification/v0.9/json/ via src/v0_9/scripts/generate-schemas.mjs
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ export const A2uiClientActionSchema = z
+     .object({
+     'name': z
+diff --git a/node_modules/@a2ui/web_core/src/v0_9/schema/common-types.js b/node_modules/@a2ui/web_core/src/v0_9/schema/common-types.js
+index 23a11b1..661025b 100644
+--- a/node_modules/@a2ui/web_core/src/v0_9/schema/common-types.js
++++ b/node_modules/@a2ui/web_core/src/v0_9/schema/common-types.js
+@@ -15,7 +15,7 @@
+  */
+ // AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
+ // Generated from specification/v0.9/json/ via src/v0_9/scripts/generate-schemas.mjs
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { markChildRef } from '../../types/child-ref-helpers.js';
+ export const ComponentIdSchema = markChildRef(z
+     .string()
+diff --git a/node_modules/@a2ui/web_core/src/v0_9/schema/helpers.js b/node_modules/@a2ui/web_core/src/v0_9/schema/helpers.js
+index e0b5e08..3d5e16d 100644
+--- a/node_modules/@a2ui/web_core/src/v0_9/schema/helpers.js
++++ b/node_modules/@a2ui/web_core/src/v0_9/schema/helpers.js
+@@ -13,7 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { markChildRef, childRefKindOf, } from '../../types/child-ref-helpers.js';
+ import { ChildListSchema, ComponentIdSchema, DynamicBooleanSchema, DynamicNumberSchema, DynamicStringListSchema, DynamicStringSchema, DynamicValueSchema, } from './common-types.js';
+ export { markChildRef, childRefKindOf };
+diff --git a/node_modules/@a2ui/web_core/src/v0_9/schema/server-to-client.js b/node_modules/@a2ui/web_core/src/v0_9/schema/server-to-client.js
+index d52e9af..02e5132 100644
+--- a/node_modules/@a2ui/web_core/src/v0_9/schema/server-to-client.js
++++ b/node_modules/@a2ui/web_core/src/v0_9/schema/server-to-client.js
+@@ -15,7 +15,7 @@
+  */
+ // AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
+ // Generated from specification/v0.9/json/ via src/v0_9/scripts/generate-schemas.mjs
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ export const CreateSurfaceMessageSchema = z
+     .object({
+     'version': z.enum(['v0.9', 'v0.9.1']),
+diff --git a/node_modules/@a2ui/web_core/src/v1_0/functions/system_functions.js b/node_modules/@a2ui/web_core/src/v1_0/functions/system_functions.js
+index 177c5b1..005069b 100644
+--- a/node_modules/@a2ui/web_core/src/v1_0/functions/system_functions.js
++++ b/node_modules/@a2ui/web_core/src/v1_0/functions/system_functions.js
+@@ -13,7 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { createFunctionImplementation } from '../../catalog/types.js';
+ import { A2uiValidationError } from '../../errors.js';
+ import { resolveContextIndex } from '../../resolution/data-context.js';
+diff --git a/node_modules/@a2ui/web_core/src/v1_0/schema/agent-to-renderer.js b/node_modules/@a2ui/web_core/src/v1_0/schema/agent-to-renderer.js
+index 0fb942b..dc251d6 100644
+--- a/node_modules/@a2ui/web_core/src/v1_0/schema/agent-to-renderer.js
++++ b/node_modules/@a2ui/web_core/src/v1_0/schema/agent-to-renderer.js
+@@ -15,7 +15,7 @@
+  */
+ // AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
+ // Generated from specification/v1.0/json/ via src/v1_0/scripts/generate-schemas.mjs
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { CallIdSchema, ExtensionsSchema, FunctionCallSchema, FunctionResponseSchema, } from './common-types.js';
+ import { ComponentsListSchema } from './helpers.js';
+ export const CreateSurfaceMessageSchema = z
+diff --git a/node_modules/@a2ui/web_core/src/v1_0/schema/catalog-definition.js b/node_modules/@a2ui/web_core/src/v1_0/schema/catalog-definition.js
+index 4721ddf..fed5748 100644
+--- a/node_modules/@a2ui/web_core/src/v1_0/schema/catalog-definition.js
++++ b/node_modules/@a2ui/web_core/src/v1_0/schema/catalog-definition.js
+@@ -15,7 +15,7 @@
+  */
+ // AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
+ // Generated from specification/v1.0/json/ via src/v1_0/scripts/generate-schemas.mjs
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { ExtensionsSchema } from './common-types.js';
+ export const FunctionCallValidationSchemaSchema = z
+     .object({
+diff --git a/node_modules/@a2ui/web_core/src/v1_0/schema/common-types.js b/node_modules/@a2ui/web_core/src/v1_0/schema/common-types.js
+index 1e537ee..5a2c9da 100644
+--- a/node_modules/@a2ui/web_core/src/v1_0/schema/common-types.js
++++ b/node_modules/@a2ui/web_core/src/v1_0/schema/common-types.js
+@@ -15,7 +15,7 @@
+  */
+ // AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
+ // Generated from specification/v1.0/json/ via src/v1_0/scripts/generate-schemas.mjs
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { isValidUax31Identifier } from '../../common/uax31.js';
+ import { markChildRef } from '../../types/child-ref-helpers.js';
+ export const ComponentIdSchema = markChildRef(z
+diff --git a/node_modules/@a2ui/web_core/src/v1_0/schema/helpers.js b/node_modules/@a2ui/web_core/src/v1_0/schema/helpers.js
+index a1e4391..85b6567 100644
+--- a/node_modules/@a2ui/web_core/src/v1_0/schema/helpers.js
++++ b/node_modules/@a2ui/web_core/src/v1_0/schema/helpers.js
+@@ -13,7 +13,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License.
+  */
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { markChildRef, childRefKindOf, } from '../../types/child-ref-helpers.js';
+ import { ChildListSchema, ComponentCommonSchema, ComponentIdSchema, DynamicBooleanSchema, DynamicNumberSchema, DynamicStringListSchema, DynamicStringSchema, DynamicValueSchema, } from './common-types.js';
+ export { markChildRef, childRefKindOf };
+diff --git a/node_modules/@a2ui/web_core/src/v1_0/schema/renderer-capabilities.js b/node_modules/@a2ui/web_core/src/v1_0/schema/renderer-capabilities.js
+index 0bc1cba..da476d7 100644
+--- a/node_modules/@a2ui/web_core/src/v1_0/schema/renderer-capabilities.js
++++ b/node_modules/@a2ui/web_core/src/v1_0/schema/renderer-capabilities.js
+@@ -15,7 +15,7 @@
+  */
+ // AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
+ // Generated from specification/v1.0/json/ via src/v1_0/scripts/generate-schemas.mjs
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ /** Zod schema validating the strict v1.0 protocol renderer capabilities payload. */
+ export const V10RendererCapabilitiesSchema = z
+     .object({
+diff --git a/node_modules/@a2ui/web_core/src/v1_0/schema/renderer-to-agent.js b/node_modules/@a2ui/web_core/src/v1_0/schema/renderer-to-agent.js
+index 213c862..0f4bd06 100644
+--- a/node_modules/@a2ui/web_core/src/v1_0/schema/renderer-to-agent.js
++++ b/node_modules/@a2ui/web_core/src/v1_0/schema/renderer-to-agent.js
+@@ -15,7 +15,7 @@
+  */
+ // AUTO-GENERATED FILE - DO NOT EDIT MANUALLY
+ // Generated from specification/v1.0/json/ via src/v1_0/scripts/generate-schemas.mjs
+-import { z } from 'zod';
++import { z } from 'zod/v3';
+ import { CallIdSchema, ExtensionsSchema, FunctionCallSchema, FunctionResponseSchema, } from './common-types.js';
+ export const ActionMessageSchema = z
+     .object({

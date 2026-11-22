@@ -15,7 +15,11 @@ The generation body is `{ "prompt": "...", "mode": "generate" | "edit", "existin
 
 ## Protocol and action boundary
 
-`a2ui/protocol.ts` validates v1.0 messages with the official `MessageProcessor` and `STRICT_VALIDATION` from Google's core package. The schema-only Basic Catalog document at `a2ui/basic-catalog-v1.json` is the published A2UI v1.0 catalog shipped with `@a2ui/web_core@0.15.0`; its adjacent license is retained. This avoids importing the package's Lit web-component renderer into the Worker. Refresh the snapshot when updating the pinned core package. The surface must use the Basic Catalog ID and a single connected root. The model cannot supply a data model, update data, delete a surface, invoke functions, add catalogs, render arbitrary components, or select arbitrary bindings.
+`a2ui/protocol.ts` validates v1.0 messages with the official `MessageProcessor` and `STRICT_VALIDATION` from Google's core package. The schema-only Basic Catalog document at `a2ui/basic-catalog-v1.json` is the published A2UI v1.0 catalog shipped with `@a2ui/web_core@0.15.0`; its adjacent license is retained. This avoids importing the package's Lit web-component renderer into the Worker. Refresh the snapshot when updating the pinned core package.
+
+The A2UI package declares Zod 3, which is affected by GHSA-mrhx-c7xc-m3w5 and has no patched 3.x release. Soyuz overrides that package's Zod dependency to the root Zod 4 version and applies the checked-in `patches/@a2ui+web_core+0.15.0.patch`, which switches its runtime schema imports to Zod 4's `zod/v3` compatibility API. `npm postinstall` applies the patch. Recheck the override and rerun the A2UI protocol tests when upgrading either dependency.
+
+The surface must use the Basic Catalog ID and a single connected root. The model cannot supply a data model, update data, delete a surface, invoke functions, add catalogs, render arbitrary components, or select arbitrary bindings.
 
 Supported UI actions are limited to selecting a run already loaded by the browser, refreshing the fixed run list, resetting host filters, and navigating to the analysis page. Run creation, cancellation, retry, feedback, and JEV are not available through A2UI actions. All server writes remain host-owned and separately authenticated.
 
