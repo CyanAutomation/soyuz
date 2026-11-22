@@ -83,6 +83,7 @@ test("the deploy artifact is attested after main validation and verified before 
   assert.match(validate, /tar -czf/);
   assert.match(validate, /path:\s+soyuz-worker-\$\{\{ github\.sha \}\}\.tar\.gz/);
   assert.match(attest, /needs:\s*validate/);
+  assert.match(attest, /if:\s*\$\{\{\s*!cancelled\(\)\s*&&\s*github\.event_name == 'push'\s*&&\s*github\.ref == 'refs\/heads\/main'\s*&&\s*needs\.validate\.result == 'success'\s*\}\}/);
   assert.match(attest, /id-token:\s*write/);
   assert.match(attest, /attestations:\s*write/);
   assert.match(attest, /actions\/attest-build-provenance@[0-9a-f]{40}/);

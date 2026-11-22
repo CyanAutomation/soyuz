@@ -161,7 +161,9 @@ jobs:
 
   attest:
     name: Attest validated Worker bundle
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    # PR-only jobs are skipped on pushes; bypass their implicit success() check.
+    # Still require validation to succeed before attesting the production bundle.
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.validate.result == 'success' }}
     needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 5
