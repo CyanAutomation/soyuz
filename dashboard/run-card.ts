@@ -58,7 +58,7 @@ export function createRunCard(run: DashboardRunSummary, options: RunCardOptions 
   const statuses = ownerDocument.createElement("div");
   statuses.className = "run-card__statuses";
   statuses.append(status);
-  if (run.operationalHealth === "suspect_stalled") {
+  if (statusPresentation.active && run.operationalHealth === "suspect_stalled") {
     statuses.append(createBadge("Health: Suspect stalled", "warning", ownerDocument));
   }
   header.append(identity, statuses);
@@ -121,7 +121,7 @@ export function createRunCard(run: DashboardRunSummary, options: RunCardOptions 
   health.textContent = run.operationalHealth === "suspect_stalled"
     ? `${lastHeartbeat} Soyuz still records this run as ${statusPresentation.label.toLowerCase()} because no terminal callback is recorded. Check Kaseki's local job and callback outbox. Confirm execution has stopped before retrying a blocked callback or attempting recovery.`
     : lastHeartbeat;
-  health.hidden = run.operationalHealth !== "suspect_stalled";
+  health.hidden = !statusPresentation.active || run.operationalHealth !== "suspect_stalled";
   body.append(health);
 
   const metadata = ownerDocument.createElement("details");
