@@ -315,8 +315,9 @@ async function streamGeneration(prompt: string, mode: "generate" | "edit"): Prom
   try {
     while (true) {
       const chunk = await reader.read();
-      buffer += decoder.decode(chunk.value, { stream: !chunk.done }).replace(/\r\n/g, "\n");
-      responseChars += buffer.length;
+      const decoded = decoder.decode(chunk.value, { stream: !chunk.done }).replace(/\r\n/g, "\n");
+      buffer += decoded;
+      responseChars += decoded.length;
       if (responseChars > A2UI_MAX_STREAM_CHARS * 2) throw new Error("The AI response exceeded supported limits.");
       let boundary = buffer.indexOf("\n\n");
       while (boundary >= 0) {

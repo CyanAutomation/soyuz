@@ -239,7 +239,6 @@ function validatedDemoResponse(
       },
     });
   } catch {
-    validator.dispose();
     return errorResponse(requestId, 400, "INVALID_EXISTING_SURFACE", "The demo surface could not be prepared.");
   } finally {
     validator.dispose();

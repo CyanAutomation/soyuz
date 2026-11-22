@@ -70,9 +70,12 @@ describe("A2UI analysis DOM renderer", () => {
     }], { events: [{ type: "run.completed" }] });
 
     const disclosure = target.querySelector("details");
+    const list = disclosure?.querySelector(".a2ui-list");
     expect(disclosure?.hasAttribute("open")).toBe(false);
     expect(disclosure?.textContent).toContain("Recorded event history");
     expect(disclosure?.textContent).toContain("run.completed");
+    expect(list?.children.length).toBe(1);
+    expect(list?.textContent).toContain("run.completed");
     renderer.dispose();
   });
 });

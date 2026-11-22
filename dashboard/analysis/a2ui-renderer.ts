@@ -87,8 +87,9 @@ export class A2uiDomRenderer {
       }
       case "List": {
         const children = props.children;
-        let node: HTMLElement = this.document.createElement("div");
-        node.className = "a2ui-list";
+        const listNode = this.document.createElement("div");
+        listNode.className = "a2ui-list";
+        let node: HTMLElement = listNode;
         if (isRecord(children) && typeof children.path === "string"
           && DataModel.resolvePath(children.path, contextPath) === "/events") {
           const disclosure = this.document.createElement("details");
@@ -96,15 +97,15 @@ export class A2uiDomRenderer {
           const summary = this.document.createElement("summary");
           summary.textContent = "Recorded event history";
           disclosure.appendChild(summary);
-          disclosure.appendChild(node);
+          disclosure.appendChild(listNode);
           node = disclosure;
         }
         if (Array.isArray(children)) {
           for (const childId of children) {
-            if (typeof childId === "string") node.appendChild(this.renderComponent(surface, childId, contextPath, nextAncestry));
+            if (typeof childId === "string") listNode.appendChild(this.renderComponent(surface, childId, contextPath, nextAncestry));
           }
         } else if (isRecord(children) && typeof children.path === "string" && typeof children.componentId === "string") {
-          this.renderList(node, surface, children.path, children.componentId, contextPath, nextAncestry);
+          this.renderList(listNode, surface, children.path, children.componentId, contextPath, nextAncestry);
         }
         return node;
       }
