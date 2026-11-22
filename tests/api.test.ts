@@ -7,7 +7,7 @@ import { reconcileAdmissions, reconcileStalledRuns } from "../src/queue/reconcil
 import { purgeExpiredArtifacts } from "../src/api/artifacts";
 import { purgeExpiredPublicationManifests, purgeExpiredRunRequests, purgeOldRuns } from "../src/api/retention";
 import { canonicalJson, digestHex } from "../src/publication/contract-v1";
-import { dispatchPublication, PUBLICATION_LEASE_MS, PUBLICATION_MAX_IMMEDIATE_ATTEMPTS, reconcilePublications, type PublicationRow } from "../src/publication/lifecycle";
+import { dispatchPublication, PUBLICATION_DISPATCH_BATCH_SIZE, PUBLICATION_LEASE_MS, reconcilePublications, type PublicationRow } from "../src/publication/lifecycle";
 import { MockPublisherEntrypoint } from "../src/publication/mock-publisher";
 import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
 import { oauthProviderOptions } from "../src/auth/oauth";
@@ -824,7 +824,9 @@ describe("Soyuz Worker API", () => {
     const r2 = memoryArtifactBucket();
     const { bindings } = testEnv({ artifacts: r2.bucket });
     const runIds: string[] = [];
-    for (let index = 0; index < PUBLICATION_MAX_IMMEDIATE_ATTEMPTS + 1; index += 1) {
+    expect(PUBLICATION_DISPATCH_BATCH_SIZE).toBeGreaterThan(3);
+    const publicationCount = PUBLICATION_DISPATCH_BATCH_SIZE + 1;
+    for (let index = 0; index < publicationCount; index += 1) {
       const workerId = `publication-batch-host-${index}`;
       const claimCallbackId = crypto.randomUUID();
       const artifactId = `018f0000-0000-7000-8000-${String(100 + index).padStart(12, "0")}`;
@@ -836,10 +838,10 @@ describe("Soyuz Worker API", () => {
     const publisher = new MockPublisherEntrypoint();
     await reconcilePublications(bindings, new Date(), publisher);
 
-    expect(publisher.calls).toHaveLength(PUBLICATION_MAX_IMMEDIATE_ATTEMPTS);
+    expect(publisher.calls).toHaveLength(PUBLICATION_DISPATCH_BATCH_SIZE);
     const states = await Promise.all(runIds.map((runId) => bindings.DB.prepare("SELECT state FROM publications WHERE run_id = ?")
       .bind(runId).first<{ state: string }>()));
-    expect(states.filter((row) => row?.state === "published")).toHaveLength(PUBLICATION_MAX_IMMEDIATE_ATTEMPTS);
+    expect(states.filter((row) => row?.state === "published")).toHaveLength(PUBLICATION_DISPATCH_BATCH_SIZE);
     expect(states.filter((row) => row?.state === "pending")).toHaveLength(1);
   });
 
