@@ -6,7 +6,9 @@ import { KirisameErrorSchema, PublicationResultSchema, type KirisameError, type 
 import { createUuidV7 } from "./uuid-v7";
 
 export const PUBLICATION_MAX_ATTEMPTS = 8;
-export const PUBLICATION_MAX_IMMEDIATE_ATTEMPTS = 3;
+export const PUBLICATION_MAX_IMMEDIATE_ATTEMPTS = 10;
+// Select a larger due page than the number of RPC attempts made in one sweep.
+export const PUBLICATION_DISPATCH_BATCH_SIZE = 100;
 export const PUBLICATION_LEASE_MS = 2 * 60_000;
 const RETENTION_MS = 30 * 24 * 60 * 60_000;
 
@@ -144,8 +146,10 @@ export async function reconcilePublications(env: Env, at = new Date(), injectedP
       OR (state = 'retryable_failure' AND next_attempt_at <= ?)
       OR (state = 'publishing' AND lease_expires_at <= ?)
     ORDER BY COALESCE(next_attempt_at, created_at), publication_id LIMIT ?
-  `).bind(now, now, now, PUBLICATION_MAX_IMMEDIATE_ATTEMPTS).all<PublicationRow>();
-  for (const row of due.results ?? []) await dispatchPublication(env, row, publisher, at);
+  `).bind(now, now, now, PUBLICATION_DISPATCH_BATCH_SIZE).all<PublicationRow>();
+  for (const row of (due.results ?? []).slice(0, PUBLICATION_MAX_IMMEDIATE_ATTEMPTS)) {
+    await dispatchPublication(env, row, publisher, at);
+  }
 }
 
 export async function dispatchPublication(

@@ -139,10 +139,9 @@ async function uploadManifest(
         AND (SELECT event_id FROM run_events WHERE run_id = runs.id AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1) = ?
     `).bind(artifactId, access.run.id, rawDigest, bytes.byteLength, objectKey, access.workerId, access.claimCallbackId, now, expiry,
       access.run.id, access.workerId, access.claimCallbackId).run();
-    const existing = await env.DB.prepare("SELECT * FROM publication_manifest_artifacts WHERE artifact_id = ?")
+    let existing = await env.DB.prepare("SELECT * FROM publication_manifest_artifacts WHERE artifact_id = ?")
       .bind(artifactId).first<{ artifact_id: string; run_id: string; content_digest: string; object_key: string; state: string; worker_id: string; claim_callback_id: string }>();
-    if (existing && (existing.run_id !== access.run.id || existing.content_digest !== rawDigest
-      || existing.worker_id !== access.workerId || existing.claim_callback_id !== access.claimCallbackId)) {
+    if (existing && (existing.run_id !== access.run.id || existing.content_digest !== rawDigest)) {
       return errorResponse(requestId, 409, "ARTIFACT_ID_CONFLICT", "A different publication manifest already uses this artifact ID.");
     }
     if (!existing) {
@@ -150,15 +149,35 @@ async function uploadManifest(
         ? errorResponse(requestId, 409, "STALE_CLAIM", "Worker claim changed during manifest upload.")
         : errorResponse(requestId, 503, "MANIFEST_INDEX_UNAVAILABLE", "Soyuz could not index the publication manifest.");
     }
+    if (existing.worker_id !== access.workerId || existing.claim_callback_id !== access.claimCallbackId) {
+      const rebound = await env.DB.prepare(`UPDATE publication_manifest_artifacts
+        SET worker_id = ?, claim_callback_id = ?, state = 'pending'
+        WHERE artifact_id = ? AND run_id = ? AND content_digest = ? AND state IN ('pending', 'ready')
+          AND NOT EXISTS (SELECT 1 FROM publication_intents WHERE artifact_id = ?)
+          AND EXISTS (SELECT 1 FROM runs WHERE id = ? AND status = 'running' AND worker_id = ?
+            AND (SELECT event_id FROM run_events WHERE run_id = runs.id AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1) = ?)`)
+        .bind(access.workerId, access.claimCallbackId, artifactId, access.run.id, rawDigest, artifactId,
+          access.run.id, access.workerId, access.claimCallbackId).run();
+      if (Number(rebound.meta?.changes ?? 0) !== 1) {
+        return errorResponse(requestId, 409, "STALE_CLAIM", "Worker claim changed before the manifest upload could be recovered.");
+      }
+      existing = await env.DB.prepare("SELECT * FROM publication_manifest_artifacts WHERE artifact_id = ?")
+        .bind(artifactId).first<{ artifact_id: string; run_id: string; content_digest: string; object_key: string; state: string; worker_id: string; claim_callback_id: string }>();
+      if (!existing || existing.worker_id !== access.workerId || existing.claim_callback_id !== access.claimCallbackId) {
+        return errorResponse(requestId, 409, "STALE_CLAIM", "Worker claim changed before the manifest upload could be recovered.");
+      }
+    }
     await env.ARTIFACTS.put(objectKey, bytes, {
       httpMetadata: { contentType: "application/json; charset=utf-8" },
       customMetadata: { runId: access.run.id, artifactId, kind: "publication_manifest", sha256: validated.digest },
     });
     const ready = await env.DB.prepare(`UPDATE publication_manifest_artifacts SET state = 'ready'
       WHERE artifact_id = ? AND run_id = ? AND content_digest = ? AND state IN ('pending', 'ready')
+        AND worker_id = ? AND claim_callback_id = ?
         AND EXISTS (SELECT 1 FROM runs WHERE id = ? AND status = 'running' AND worker_id = ?
           AND (SELECT event_id FROM run_events WHERE run_id = runs.id AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1) = ?)`)
-      .bind(artifactId, access.run.id, rawDigest, access.run.id, access.workerId, access.claimCallbackId).run();
+      .bind(artifactId, access.run.id, rawDigest, access.workerId, access.claimCallbackId,
+        access.run.id, access.workerId, access.claimCallbackId).run();
     if (Number(ready.meta?.changes ?? 0) !== 1) {
       return errorResponse(requestId, 409, "STALE_CLAIM", "Worker claim changed while storing the publication manifest.");
     }

@@ -7,7 +7,7 @@ import { reconcileAdmissions, reconcileStalledRuns } from "../src/queue/reconcil
 import { purgeExpiredArtifacts } from "../src/api/artifacts";
 import { purgeExpiredPublicationManifests, purgeExpiredRunRequests, purgeOldRuns } from "../src/api/retention";
 import { canonicalJson, digestHex } from "../src/publication/contract-v1";
-import { dispatchPublication, PUBLICATION_LEASE_MS, reconcilePublications, type PublicationRow } from "../src/publication/lifecycle";
+import { dispatchPublication, PUBLICATION_LEASE_MS, PUBLICATION_MAX_IMMEDIATE_ATTEMPTS, reconcilePublications, type PublicationRow } from "../src/publication/lifecycle";
 import { MockPublisherEntrypoint } from "../src/publication/mock-publisher";
 import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
 import { oauthProviderOptions } from "../src/auth/oauth";
@@ -538,6 +538,27 @@ describe("Soyuz Worker API", () => {
       workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000042", withEvidence: false,
     });
     expect(withoutEvidence.uploaded.response.status).toBe(201);
+    const evidencePayload = {
+      contractVersion: "1",
+      eventId: crypto.randomUUID(),
+      workerId,
+      type: "validation.completed",
+      payload: {
+        publicationEvidence: {
+          evidenceVersion: "1", outcome: "passed", artifactId: "018f0000-0000-7000-8000-000000000042",
+          artifactDigest: withoutEvidence.digest, runId: withoutEvidence.runId,
+          repository: { owner: "example", name: "project" }, baseRef: "main", baseSha: "a".repeat(40),
+        },
+      },
+    };
+    const clientCredentialEvidence = await call(bindings, `/v1/worker/runs/${withoutEvidence.runId}/events`, {
+      method: "POST", token: CLIENT_TOKEN, body: { ...evidencePayload, claimCallbackId },
+    });
+    const unfencedHostEvidence = await call(bindings, `/v1/worker/runs/${withoutEvidence.runId}/events`, {
+      method: "POST", token: WORKER_TOKEN, body: evidencePayload,
+    });
+    expect(clientCredentialEvidence.response.status).toBe(401);
+    expect(unfencedHostEvidence.response.status).toBe(422);
     expect(withoutEvidence.intent.response.status).toBe(409);
     expect(withoutEvidence.intent.body.error.code).toBe("VALIDATION_EVIDENCE_REQUIRED");
 
@@ -619,6 +640,48 @@ describe("Soyuz Worker API", () => {
     });
     expect(rejected.intent.response.status).toBe(403);
     expect(rejected.intent.body.error.code).toBe("PUBLICATION_POLICY_DENIED");
+  });
+
+  it("[PUBLICATION-MANIFEST-CLAIM-01] lets a new claim recover an upload that became stale during the R2 write", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const workerId = "manifest-recovery-host";
+    const oldClaimId = "018f0000-0000-7000-8000-00000000004c";
+    const newClaimId = "018f0000-0000-7000-8000-00000000004d";
+    const runId = await startRunningRun(bindings, workerId, oldClaimId, crypto.randomUUID());
+    const artifactId = "018f0000-0000-7000-8000-00000000004e";
+    const manifest = await publicationManifest(runId, artifactId);
+    const body = JSON.stringify(manifest);
+    const originalPut = r2.put.getMockImplementation()!;
+    r2.put.mockImplementationOnce(async (...args) => {
+      const result = await originalPut(...args);
+      const claimAt = new Date().toISOString();
+      await bindings.DB.prepare(`INSERT INTO run_events (
+        run_id, contract_version, event_id, type, worker_id, occurred_at, recorded_at, payload_json
+      ) VALUES (?, '1', ?, 'run.claimed', ?, ?, ?, '{}')`)
+        .bind(runId, newClaimId, workerId, claimAt, claimAt).run();
+      return result;
+    });
+    const upload = (claimCallbackId: string) => callBinary(bindings,
+      `/v1/worker/runs/${runId}/publication-manifests/${artifactId}`, {
+        method: "PUT", token: WORKER_TOKEN,
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(new TextEncoder().encode(body).byteLength),
+          "x-soyuz-worker-id": workerId,
+          "x-soyuz-claim-callback-id": claimCallbackId,
+        },
+        body,
+      });
+
+    const staleUpload = await upload(oldClaimId);
+    expect(staleUpload.response.status).toBe(409);
+    expect((staleUpload.body as { error: { code: string } }).error.code).toBe("STALE_CLAIM");
+    const recoveredUpload = await upload(newClaimId);
+    expect(recoveredUpload.response.status).toBe(201);
+    const artifact = await bindings.DB.prepare("SELECT state, worker_id, claim_callback_id FROM publication_manifest_artifacts WHERE artifact_id = ?")
+      .bind(artifactId).first<{ state: string; worker_id: string; claim_callback_id: string }>();
+    expect(artifact).toEqual({ state: "ready", worker_id: workerId, claim_callback_id: newClaimId });
   });
 
   it("[PUBLICATION-INTENT-03] keeps legacy, failed, and cancelled executions out of the Kirisame ledger", async () => {
@@ -755,6 +818,57 @@ describe("Soyuz Worker API", () => {
     const publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
       .bind(data.runId).first<PublicationRow>();
     expect(publication).toMatchObject({ state: "published", mode: "branch", branch_sha: "b".repeat(40), pr_number: null, pr_url: null });
+  });
+
+  it("[PUBLICATION-DISPATCH-BATCH-01] processes more than three due publications in one sweep", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const runIds: string[] = [];
+    for (let index = 0; index < PUBLICATION_MAX_IMMEDIATE_ATTEMPTS + 1; index += 1) {
+      const workerId = `publication-batch-host-${index}`;
+      const claimCallbackId = crypto.randomUUID();
+      const artifactId = `018f0000-0000-7000-8000-${String(100 + index).padStart(12, "0")}`;
+      const data = await registerPublicationInputs(bindings, { workerId, claimCallbackId, artifactId });
+      await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
+      runIds.push(data.runId);
+    }
+
+    const publisher = new MockPublisherEntrypoint();
+    await reconcilePublications(bindings, new Date(), publisher);
+
+    expect(publisher.calls).toHaveLength(PUBLICATION_MAX_IMMEDIATE_ATTEMPTS);
+    const states = await Promise.all(runIds.map((runId) => bindings.DB.prepare("SELECT state FROM publications WHERE run_id = ?")
+      .bind(runId).first<{ state: string }>()));
+    expect(states.filter((row) => row?.state === "published")).toHaveLength(PUBLICATION_MAX_IMMEDIATE_ATTEMPTS);
+    expect(states.filter((row) => row?.state === "pending")).toHaveLength(1);
+  });
+
+  it("[PUBLICATION-RETRY-LIMIT-01] blocks after the eighth reserved attempt without stranding a retry", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const workerId = "publication-retry-limit-host";
+    const claimCallbackId = crypto.randomUUID();
+    const data = await registerPublicationInputs(bindings, {
+      workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000105",
+    });
+    await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
+    const publisher = new MockPublisherEntrypoint(Array.from({ length: 8 }, () => "retryable_error" as const));
+    let publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+      .bind(data.runId).first<PublicationRow>();
+    let at = new Date();
+    for (let attempt = 1; attempt <= 8; attempt += 1) {
+      await dispatchPublication(bindings, publication!, publisher, at);
+      publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+        .bind(data.runId).first<PublicationRow>();
+      expect(publication?.attempt_count).toBe(attempt);
+      if (attempt < 8) {
+        expect(publication?.state).toBe("retryable_failure");
+        at = new Date(Date.parse(publication!.next_attempt_at!) + 1);
+      }
+    }
+
+    expect(publication).toMatchObject({ state: "blocked", attempt_count: 8, last_error_code: "RETRY_LIMIT_REACHED" });
+    expect(publisher.calls).toHaveLength(8);
   });
 
   it("[PUBLICATION-RPC-01] blocks malformed or identity-mismatched publisher responses and stays inert without a binding", async () => {
