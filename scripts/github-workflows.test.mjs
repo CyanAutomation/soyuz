@@ -45,8 +45,11 @@ test("CI reports high-severity dependency advisories and matches Wrangler versio
 });
 
 test("dependency and deployment jobs monitor runner egress", () => {
+  const validate = jobBlock(ci, "validate");
+  assert.match(validate, /steps:\s*\n\s+- name: Monitor runner egress/, "validation should start egress monitoring before every other step");
+
   for (const [name, job] of [
-    ["validate", jobBlock(ci, "validate")],
+    ["validate", validate],
     ["production-d1-preflight", jobBlock(ci, "production-d1-preflight")],
     ["deploy", jobBlock(ci, "deploy")],
   ]) {
@@ -64,6 +67,7 @@ test("the attested Worker archive includes a CycloneDX SBOM", () => {
   assert.match(sbomStep, /format:\s*cyclonedx-json/);
   assert.match(sbomStep, /output-file:\s*soyuz-sbom\.cdx\.json/);
   assert.match(sbomStep, /upload-artifact:\s*false/);
+  assert.match(sbomStep, /if:\s*github\.event_name\s*==\s*'push'/);
   assert.match(validate, /tar -czf[^\n]*soyuz-sbom\.cdx\.json/);
   assert.ok(validate.indexOf("Generate dependency SBOM") < validate.indexOf("tar -czf"), "the SBOM must exist before packaging");
 
