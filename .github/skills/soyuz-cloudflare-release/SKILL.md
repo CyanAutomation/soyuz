@@ -1,11 +1,11 @@
 ---
 name: soyuz-cloudflare-release
-description: Use when changing Soyuz's GitHub Actions workflow, Wrangler configuration, Cloudflare release process, or production deployment checks.
+description: Use when changing Soyuz's GitHub Actions workflow, Wrangler configuration, release gates, or automated deployment behavior.
 ---
 
 # Change or operate the Soyuz release path
 
-Read every workflow under `.github/workflows/`, `wrangler.jsonc`, and the GitHub Actions and production sections of `docs/DEPLOYMENT.md` before editing release behavior. CodeQL and Scorecard have separate workflows and controls from `ci.yml`.
+Read every workflow under `.github/workflows/`, `wrangler.jsonc`, and the GitHub Actions and production sections of `docs/DEPLOYMENT.md` before editing release behavior. CodeQL and Scorecard have separate workflows and controls from `ci.yml`. For live production checks, migrations, smoke submissions, or recovery, also follow `soyuz-production-operations`.
 
 ## Understand the current pipeline
 
