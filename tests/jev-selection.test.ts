@@ -15,6 +15,12 @@ describe("JEV profile suggestion", () => {
     expect(suggestedJevProfile({ status: "running", retryOf: "00000000-0000-4000-8000-000000000001", operationalHealth: "suspect_stalled" })).toBe("run_operations_triage_v1");
     expect(suggestedJevProfile({ status: "running", retryOf: "00000000-0000-4000-8000-000000000001", operationalHealth: "healthy" })).toBeNull();
   });
+  it("[JEV-RETRY-REVIEW-01] ignores non-string statuses when selecting retry review", () => {
+    const retryOf = "00000000-0000-4000-8000-000000000001";
+
+    expect(suggestedJevProfile({ status: null, retryOf })).toBeNull();
+    expect(suggestedJevProfile({ status: { toString: () => "failed" }, retryOf })).toBeNull();
+  });
   it("[JEV-SELECT-01] does not suggest output review when a completed run has no summary", () => {
     expect(suggestedJevProfile({ status: "completed", outcomeSummary: null })).toBeNull();
   });

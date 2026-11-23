@@ -7,7 +7,8 @@ export function suggestedJevProfile(run: {
   outcomeSummary?: unknown;
   retryOf?: unknown;
 }): JEV_PROFILE_ID | null {
-  if (["completed", "failed", "cancelled", "admission_failed"].includes(String(run.status))
+  if (typeof run.status === "string"
+    && ["completed", "failed", "cancelled", "admission_failed"].includes(run.status)
     && typeof run.retryOf === "string" && run.retryOf.length > 0) {
     return "run_retry_review_v1";
   }
