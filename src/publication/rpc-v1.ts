@@ -79,7 +79,6 @@ export const PublicationResultSchema = z.object({
   }
 });
 
-export type PublicationIntentInput = z.infer<typeof PublicationIntentSchema>;
 export type PublicationResult = z.infer<typeof PublicationResultSchema>;
 export type KirisameError = z.infer<typeof KirisameErrorSchema>;
 export type PublisherEntrypoint = { publish(requestJson: string): Promise<unknown> };

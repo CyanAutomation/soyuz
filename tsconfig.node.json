@@ -11,7 +11,8 @@
     "tests/soyuz-production-smoke.test.ts",
     "tests/migration-impact.test.ts",
     "tests/migration-history.test.ts",
-    "tests/verify-production-database.test.ts"
+    "tests/verify-production-database.test.ts",
+    "tests/verify-production-migrations.test.ts"
   ],
   "exclude": []
 }

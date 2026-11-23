@@ -12,7 +12,7 @@ Read the authentication sections of `docs/ARCHITECTURE.md` and `docs/CONTRACT.md
 - Bearer credential matching and role selection: `src/auth/bearer.ts`.
 - OAuth policy, resources, and callback flow: `src/auth/oauth-policy.ts`, `src/auth/oauth-resource.ts`, and `src/auth/oauth.ts`.
 - Route dispatch and environment bindings: `src/index.ts` and `src/env.ts`.
-- Authentication tests: `tests/http-auth.test.ts`, `tests/oauth.test.ts`, and the relevant cases in `tests/api.test.ts` and `tests/dashboard-api.test.ts`.
+- Authentication tests: `tests/http-auth.test.ts`, `tests/oauth.test.ts`, and the relevant cases in `tests/api/runs-api.test.ts`, `tests/api/oauth-dashboard-api.test.ts`, and `tests/dashboard-api.test.ts`.
 
 ## Keep credentials and principals separate
 

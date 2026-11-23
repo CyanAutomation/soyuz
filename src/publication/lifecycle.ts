@@ -5,7 +5,7 @@ import { canonicalJson, digestHex, validatePublicationArtifact, type Publication
 import { KirisameErrorSchema, PublicationResultSchema, type KirisameError, type PublicationResult, type PublisherEntrypoint } from "./rpc-v1";
 import { createUuidV7 } from "./uuid-v7";
 
-export const PUBLICATION_MAX_ATTEMPTS = 8;
+const PUBLICATION_MAX_ATTEMPTS = 8;
 export const PUBLICATION_DISPATCH_BATCH_SIZE = 10;
 export const PUBLICATION_LEASE_MS = 2 * 60_000;
 const RETENTION_MS = 30 * 24 * 60 * 60_000;
@@ -157,6 +157,23 @@ export async function dispatchPublication(
   at = new Date(),
   timeoutMs = 30_000,
 ): Promise<boolean> {
+  const attemptId = await reservePublicationAttempt(env, current, at);
+  if (!attemptId) return false;
+  await appendPublicationStartedEvent(env, current, attemptId, at);
+
+  const request = await verifiedPublicationRequest(env, current, attemptId, at);
+  if (!request) return true;
+
+  const response = await callPublisher(publisher, request, timeoutMs);
+  if (!response.ok) {
+    await scheduleRetry(env, current, attemptId, response.errorCode, undefined, at);
+    return true;
+  }
+  await recordPublisherResponse(env, current, attemptId, response.raw, at);
+  return true;
+}
+
+async function reservePublicationAttempt(env: Env, current: PublicationRow, at: Date): Promise<string | null> {
   const now = at.toISOString();
   const attemptId = createUuidV7(at.getTime());
   const leaseUntil = new Date(at.getTime() + PUBLICATION_LEASE_MS).toISOString();
@@ -183,21 +200,31 @@ export async function dispatchPublication(
       FROM publications WHERE ? = 1 AND publication_id = ? AND state = 'publishing' AND attempt_id = ?
     `).bind(createUuidV7(at.getTime()), attemptId, now, oldAttemptExpired ? 1 : 0, current.publication_id, attemptId),
   ]);
-  if (Number(reservation[0]?.meta?.changes ?? 0) !== 1) return false;
+  return Number(reservation[0]?.meta?.changes ?? 0) === 1 ? attemptId : null;
+}
 
+async function appendPublicationStartedEvent(env: Env, current: PublicationRow, attemptId: string, at: Date): Promise<void> {
+  const now = at.toISOString();
   const startedEvent = createUuidV7(at.getTime());
   await env.DB.prepare(`
     INSERT OR IGNORE INTO publication_events (publication_id, event_id, run_id, event_type, state, attempt_id, occurred_at, metadata_json)
     SELECT publication_id, ?, run_id, 'publication.started', 'publishing', ?, ?, '{}'
     FROM publications WHERE publication_id = ? AND state = 'publishing' AND attempt_id = ? AND request_fingerprint = ?
   `).bind(startedEvent, attemptId, now, current.publication_id, attemptId, current.request_fingerprint).run();
+}
 
+async function verifiedPublicationRequest(
+  env: Env,
+  current: PublicationRow,
+  attemptId: string,
+  at: Date,
+): Promise<PublicationRequest | null> {
   const manifest = await loadAndVerifyManifest(env, current);
   if (!manifest) {
     await finishAttempt(env, current, attemptId, {
       state: "blocked", errorCode: "ARTIFACT_INVALID", eventType: "publication.blocked", at,
     });
-    return true;
+    return null;
   }
 
   const request = buildPublicationRequest(current, manifest);
@@ -206,43 +233,58 @@ export async function dispatchPublication(
     await finishAttempt(env, current, attemptId, {
       state: "blocked", errorCode: "REQUEST_FINGERPRINT_MISMATCH", eventType: "publication.blocked", at,
     });
-    return true;
+    return null;
   }
+  return request;
+}
 
-  let raw: unknown;
+type PublisherCallResult = { ok: true; raw: unknown } | { ok: false; errorCode: "GITHUB_TIMEOUT" | "GITHUB_UNAVAILABLE" };
+
+async function callPublisher(
+  publisher: PublisherEntrypoint,
+  request: PublicationRequest,
+  timeoutMs: number,
+): Promise<PublisherCallResult> {
   try {
-    raw = await withTimeout(publisher.publish(JSON.stringify(request)), timeoutMs);
+    return { ok: true, raw: await withTimeout(publisher.publish(JSON.stringify(request)), timeoutMs) };
   } catch (error) {
     const timeout = error instanceof PublicationTimeoutError;
-    await scheduleRetry(env, current, attemptId, timeout ? "GITHUB_TIMEOUT" : "GITHUB_UNAVAILABLE", undefined, at);
-    return true;
+    return { ok: false, errorCode: timeout ? "GITHUB_TIMEOUT" : "GITHUB_UNAVAILABLE" };
   }
+}
 
-  const standaloneError = KirisameErrorSchema.safeParse(raw);
-  if (standaloneError.success) {
-    if (!errorClassificationMatches(standaloneError.data)) {
-      await finishAttempt(env, current, attemptId, {
-        state: "blocked", errorCode: "MALFORMED_PUBLISHER_ERROR", eventType: "publication.blocked", at,
-      });
-    } else if (standaloneError.data.classification === "retryable") {
-      await scheduleRetry(env, current, attemptId, standaloneError.data.code, standaloneError.data.retryAfterSeconds, at);
-    } else {
-      await finishAttempt(env, current, attemptId, {
-        state: "blocked", errorCode: standaloneError.data.code, eventType: "publication.blocked", at,
-      });
-    }
-    return true;
-  }
-
-  const parsed = PublicationResultSchema.safeParse(raw);
-  if (!parsed.success || !resultMatchesRequest(current, parsed.data)
-    || (parsed.data.error && !errorClassificationMatches(parsed.data.error))) {
+async function recordPublisherResponse(
+  env: Env,
+  current: PublicationRow,
+  attemptId: string,
+  raw: unknown,
+  at: Date,
+): Promise<void> {
+  if (await handleStandalonePublisherError(env, current, attemptId, raw, at)) return;
+  const result = parseValidPublisherResult(raw, current);
+  if (!result) {
     await finishAttempt(env, current, attemptId, {
       state: "blocked", errorCode: "INVALID_PUBLISHER_RESPONSE", eventType: "publication.blocked", at,
     });
-    return true;
+    return;
   }
-  const result = parsed.data;
+  await recordPublicationOutcome(env, current, attemptId, result, at);
+}
+
+function parseValidPublisherResult(raw: unknown, current: PublicationRow): PublicationResult | null {
+  const parsed = PublicationResultSchema.safeParse(raw);
+  if (!parsed.success || !resultMatchesRequest(current, parsed.data)) return null;
+  if (parsed.data.error && !errorClassificationMatches(parsed.data.error)) return null;
+  return parsed.data;
+}
+
+async function recordPublicationOutcome(
+  env: Env,
+  current: PublicationRow,
+  attemptId: string,
+  result: PublicationResult,
+  at: Date,
+): Promise<void> {
   if (result.outcome === "retryable_failure") {
     const retryAfter = result.error?.retryAfterSeconds;
     await scheduleRetry(env, current, attemptId, result.error?.code ?? "GITHUB_UNAVAILABLE", retryAfter, at);
@@ -250,16 +292,48 @@ export async function dispatchPublication(
     await finishAttempt(env, current, attemptId, {
       state: "blocked", errorCode: result.error?.code ?? "PUBLISHING_BLOCKED", eventType: "publication.blocked", at,
     });
-  } else {
-    const success = result as PublicationResult;
-    const eventTypes = success.mode === "pr"
-      ? ["publication.branch_confirmed", "publication.pull_request_confirmed", "publication.published"] as const
-      : ["publication.branch_confirmed", "publication.published"] as const;
+    return;
+  }
+
+  await recordSuccessfulPublication(env, current, attemptId, result, at);
+}
+
+async function recordSuccessfulPublication(
+  env: Env,
+  current: PublicationRow,
+  attemptId: string,
+  success: PublicationResult,
+  at: Date,
+): Promise<void> {
+  const eventTypes = success.mode === "pr"
+    ? ["publication.branch_confirmed", "publication.pull_request_confirmed", "publication.published"] as const
+    : ["publication.branch_confirmed", "publication.published"] as const;
+  await finishAttempt(env, current, attemptId, {
+    state: "published", eventTypes, at,
+    branchSha: success.branch?.commitSha ?? null,
+    prNumber: success.pullRequest?.number ?? null,
+    prUrl: success.pullRequest?.url ?? null,
+  });
+}
+
+async function handleStandalonePublisherError(
+  env: Env,
+  current: PublicationRow,
+  attemptId: string,
+  raw: unknown,
+  at: Date,
+): Promise<boolean> {
+  const standaloneError = KirisameErrorSchema.safeParse(raw);
+  if (!standaloneError.success) return false;
+  if (!errorClassificationMatches(standaloneError.data)) {
     await finishAttempt(env, current, attemptId, {
-      state: "published", eventTypes, at,
-      branchSha: success.branch?.commitSha ?? null,
-      prNumber: success.pullRequest?.number ?? null,
-      prUrl: success.pullRequest?.url ?? null,
+      state: "blocked", errorCode: "MALFORMED_PUBLISHER_ERROR", eventType: "publication.blocked", at,
+    });
+  } else if (standaloneError.data.classification === "retryable") {
+    await scheduleRetry(env, current, attemptId, standaloneError.data.code, standaloneError.data.retryAfterSeconds, at);
+  } else {
+    await finishAttempt(env, current, attemptId, {
+      state: "blocked", errorCode: standaloneError.data.code, eventType: "publication.blocked", at,
     });
   }
   return true;
@@ -408,7 +482,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
   }
 }
 
-export class PublicationTimeoutError extends Error {}
+class PublicationTimeoutError extends Error {}
 
 export function safePublicationProjection(row: PublicationRow): Record<string, unknown> {
   return {

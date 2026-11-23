@@ -40,7 +40,7 @@ export interface UtcpManual {
   }>;
 }
 
-export function canonicalUtcpOrigin(env: Pick<Env, "SOYUZ_PUBLIC_URL" | "SOYUZ_ENVIRONMENT">): string | null {
+function canonicalUtcpOrigin(env: Pick<Env, "SOYUZ_PUBLIC_URL" | "SOYUZ_ENVIRONMENT">): string | null {
   if (!env.SOYUZ_PUBLIC_URL) return null;
   try {
     const url = new URL(env.SOYUZ_PUBLIC_URL);

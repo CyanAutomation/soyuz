@@ -90,14 +90,3 @@ export const AgentGetRunEventsOutputSchema = successEnvelope(z.object({
   hasMore: z.boolean(),
 }).strict());
 export const AgentCancelRunOutputSchema = successEnvelope(AgentRunDetailSchema);
-
-export const AgentHttpErrorSchema = z.object({
-  error: z.object({
-    code: z.string(),
-    message: z.string(),
-    requestId: z.string().uuid(),
-    details: z.unknown().optional(),
-  }).strict(),
-}).strict();
-
-export type AgentCreateRunInput = z.infer<typeof AgentCreateRunInputSchema>;
