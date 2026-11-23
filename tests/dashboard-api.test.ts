@@ -196,6 +196,24 @@ describe("dashboard API responses", () => {
     expect(response.json).toHaveBeenCalledOnce();
   });
 
+  it("[DASHBOARD-API-ERROR-02] preserves HTTP failures when an error body is not JSON", async () => {
+    const response = {
+      ok: false,
+      status: 500,
+      json: vi.fn().mockRejectedValue(new SyntaxError("Unexpected token '<'")),
+    };
+    const fetcher = vi.fn().mockResolvedValue(response);
+
+    await expect(fetchJson("/api", {}, fetcher)).rejects.toMatchObject({
+      name: "HttpError",
+      message: "request failed",
+      status: 500,
+      code: undefined,
+      requestId: undefined,
+    });
+    expect(response.json).toHaveBeenCalledOnce();
+  });
+
   it("[DASHBOARD-JEV-ERROR-01] turns known provider failures into actionable safe messages", () => {
     const unavailable = new HttpError("request failed", 502, "JEV_PROVIDER_UNAVAILABLE", "dec-00000000-0000-4000-8000-000000000123");
     expect(jevAssessmentErrorMessage(unavailable)).toBe(
