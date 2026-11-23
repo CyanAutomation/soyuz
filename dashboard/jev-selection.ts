@@ -4,8 +4,11 @@ export type JEV_PROFILE_ID = "run_operations_triage_v1" | "kaseki_output_review_
 export function suggestedJevProfile(run: {
   status?: unknown;
   operationalHealth?: unknown;
+  outcomeSummary?: unknown;
 }): JEV_PROFILE_ID | null {
-  if (run.status === "completed") return "kaseki_output_review_v2";
+  if (run.status === "completed" && typeof run.outcomeSummary === "string" && run.outcomeSummary.trim().length > 0) {
+    return "kaseki_output_review_v2";
+  }
   if (run.status === "failed" || run.status === "admission_failed" || run.operationalHealth === "suspect_stalled") {
     return "run_operations_triage_v1";
   }

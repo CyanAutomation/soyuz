@@ -39,7 +39,7 @@ Raw Senku error bodies are not returned or logged. A rejected or malformed decis
 
 ## Dashboard compatibility and feedback
 
-The browser request remains `POST /dashboard/api/analysis/decisions` with the same approved `profileId` and run UUID. OAuth, allowlist checks, `soyuz:read`, and the existing per-user decision rate limiter remain in the request path. Successful responses retain the current Soyuz shape, `{ data: { model, answers }, requestId }`. The browser renderer and `jev_feedback` schema and endpoints are unchanged.
+The main dashboard sends `POST /dashboard/api/analysis/decisions` with the same approved `profileId` and run UUID from the run-card JEV action. OAuth, allowlist checks, `soyuz:read`, and the existing per-user decision rate limiter remain in the request path. Successful responses retain the current Soyuz shape, `{ data: { model, answers }, requestId }`. The reusable run-card renderer displays validated advisory answers. The `jev_feedback` schema and feedback endpoint are unchanged; answers are not persisted.
 
 The unit and API tests use a mocked `SENKU` binding. The two-Worker integration test runs both Wrangler Workers locally, exercises the real binding and Senku bearer authorization, and replaces the outbound OpenRouter call with a synthetic response. Run it from the Soyuz checkout with `SENKU_WRANGLER_CONFIG=/absolute/path/to/senku/wrangler.jsonc npm run test:cross-worker`. It verifies the exact Senku profile projection, one provider attempt, the compatible dashboard response, and unchanged run state. It blocks all other outbound HTTP and requires no Cloudflare secrets or paid inference.
 

@@ -52,16 +52,16 @@ export function renderJevResult(
   for (const view of profile.answers) {
     const answer = asRecord(result.answers[view.key]);
     const card = document.createElement("article");
-    card.className = "card card--padded analysis-jev-answer";
+    card.className = "card card--padded jev-answer";
     const heading = document.createElement("h3");
-    heading.className = "analysis-jev__title";
+    heading.className = "jev-answer__title";
     heading.textContent = view.title;
     card.appendChild(heading);
     const choice = answer?.type === "choice" && typeof answer.choice === "string" ? answer.choice : null;
     const score = answer?.type === "score" && typeof answer.score === "number" ? answer.score : null;
     const noul = answer?.type === "noul" && typeof answer.noul === "number" ? answer.noul : null;
     const value = document.createElement("p");
-    value.className = "analysis-jev-answer__value";
+    value.className = "jev-answer__value";
     if (choice !== null) value.textContent = `Selected: ${view.labels?.[choice] ?? choice}`;
     else if (score !== null) value.textContent = `Score: ${score.toFixed(2)}`;
     else if (noul !== null) value.textContent = `True: ${formatProbability(noul)} · False: ${formatProbability(1 - noul)}`;
@@ -70,11 +70,11 @@ export function renderJevResult(
 
     if (answer && isRecord(answer.probabilities)) {
       const list = document.createElement("ul");
-      list.className = "analysis-jev-probabilities__list";
+      list.className = "jev-probabilities__list";
       for (const [key, probability] of Object.entries(answer.probabilities)) {
         if (typeof probability !== "number" || !Number.isFinite(probability)) continue;
         const row = document.createElement("li");
-        row.className = "analysis-jev-probabilities__item";
+        row.className = "jev-probabilities__item";
         const label = document.createElement("span");
         const answerLabel = isRecord(answer.legend) && typeof answer.legend[key] === "string" ? answer.legend[key] as string : key;
         label.textContent = view.labels?.[key] ?? answerLabel;
@@ -83,7 +83,7 @@ export function renderJevResult(
         meter.value = Math.min(1, Math.max(0, probability));
         meter.setAttribute("aria-label", `${label.textContent}: ${formatProbability(probability)}`);
         const percent = document.createElement("span");
-        percent.className = "analysis-jev-probabilities__value";
+        percent.className = "jev-probabilities__value";
         percent.textContent = formatProbability(probability);
         row.appendChild(label);
         row.appendChild(meter);
@@ -95,7 +95,7 @@ export function renderJevResult(
 
     const confidence = answer?.confidence;
     const confidenceNode = document.createElement("p");
-    confidenceNode.className = "analysis-jev-answer__confidence";
+    confidenceNode.className = "jev-answer__confidence";
     confidenceNode.textContent = typeof confidence === "number" ? `Confidence: ${formatProbability(confidence)}` : "Confidence: not provided";
     card.appendChild(confidenceNode);
     fragment.appendChild(card);

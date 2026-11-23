@@ -5,7 +5,7 @@ description: Use when changing Soyuz's Senku Service Binding, JEV profile inputs
 
 # Change the Senku integration
 
-Read `docs/SENKU-INTEGRATION.md`, `docs/A2UI-ANALYSIS.md`, and the deployment sections of `docs/DEPLOYMENT.md` before changing the integration. Follow `soyuz-a2ui-analysis` for browser and generated analysis behavior.
+Read `docs/SENKU-INTEGRATION.md`, `docs/RUN-OPERATIONS.md`, and the deployment sections of `docs/DEPLOYMENT.md` before changing the integration. Follow `soyuz-a2ui-analysis` for browser run operations and JEV behavior.
 
 ## Locate the integration
 

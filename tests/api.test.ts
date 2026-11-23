@@ -26,12 +26,10 @@ function testEnv(options: {
   queueFailure?: boolean;
   artifacts?: Env["ARTIFACTS"];
   oauth?: boolean;
-  analysisDemo?: boolean;
   senku?: Env["SENKU"];
 } = {}) {
   const sent: QueueMessage[] = [];
   const oauthRegistrationLimiter = { limit: vi.fn(async () => ({ success: true })) };
-  const analysisGenerationLimiter = { limit: vi.fn(async () => ({ success: true })) };
   const jevDecisionLimiter = { limit: vi.fn(async () => ({ success: true })) };
   const send = vi.fn(async (message: unknown) => {
     if (options.queueFailure) throw new Error("simulated queue failure");
@@ -41,7 +39,6 @@ function testEnv(options: {
     DB: runtimeEnv.DB,
     RUN_QUEUE: { send } as unknown as Env["RUN_QUEUE"],
     OAUTH_REGISTRATION_LIMITER: oauthRegistrationLimiter as unknown as Env["OAUTH_REGISTRATION_LIMITER"],
-    ANALYSIS_GENERATION_LIMITER: analysisGenerationLimiter as unknown as Env["ANALYSIS_GENERATION_LIMITER"],
     JEV_DECISION_LIMITER: jevDecisionLimiter as unknown as Env["JEV_DECISION_LIMITER"],
     SENKU: options.senku ?? (runtimeEnv as unknown as Env).SENKU,
     SENKU_SOYUZ_API_TOKEN: SENKU_TOKEN,
@@ -54,9 +51,8 @@ function testEnv(options: {
     GITHUB_OAUTH_CLIENT_ID: options.oauth ? "test-github-client-id" : undefined,
     GITHUB_OAUTH_CLIENT_SECRET: options.oauth ? "test-github-client-secret" : undefined,
     SOYUZ_OAUTH_ALLOWED_GITHUB_IDS: options.oauth ? "123" : undefined,
-    ANALYSIS_DEMO_MODE: options.analysisDemo ? "true" : undefined,
   };
-  return { bindings, sent, send, oauthRegistrationLimiter, analysisGenerationLimiter, jevDecisionLimiter };
+  return { bindings, sent, send, oauthRegistrationLimiter, jevDecisionLimiter };
 }
 
 function senkuAnswers(profileId: "run_operations_triage_v1" | "kaseki_output_review_v2"): Record<string, unknown> {
@@ -1273,6 +1269,49 @@ describe("Soyuz Worker API", () => {
     ]));
   });
 
+  it("[DASHBOARD-PUBLICATION-01] includes a safe publication summary in dashboard lists and details", async () => {
+    const { bindings } = testEnv({ oauth: true });
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const publicationId = "018f0000-0000-7000-8000-000000000091";
+    await bindings.DB.prepare(`
+      INSERT INTO publications (
+        publication_id, run_id, contract_version, request_fingerprint, artifact_id, artifact_digest,
+        artifact_object_key, repository_owner, repository_name, mode, base_ref, base_sha, head_ref,
+        title, body, state, attempt_count, next_attempt_at, last_error_code, created_at, updated_at
+      ) VALUES (?, ?, '1', ?, ?, ?, ?, 'example', 'project', 'pr', 'main', ?, ?, ?, ?, 'retryable_failure', 2, ?, ?, ?, ?)
+    `).bind(
+      publicationId,
+      runId,
+      "a".repeat(64),
+      "018f0000-0000-7000-8000-000000000092",
+      `sha256:${"b".repeat(64)}`,
+      "private-r2-object-key",
+      "c".repeat(40),
+      `soyuz/p/${publicationId}`,
+      "private pull request title",
+      "private pull request body",
+      "2026-11-22T12:15:00.000Z",
+      "RETRYABLE_INTERNAL_CODE",
+      "2026-11-22T12:00:00.000Z",
+      "2026-11-22T12:05:00.000Z",
+    ).run();
+    const accessToken = await createOAuthAccessToken(bindings);
+
+    const list = await call(bindings, "/dashboard/api/runs", { token: accessToken });
+    const summary = list.body.data.runs.find((run: { runId: string }) => run.runId === runId);
+    expect(list.response.status).toBe(200);
+    expect(summary.publication).toMatchObject({ state: "retryable_failure", attemptCount: 2, nextAttemptAt: "2026-11-22T12:15:00.000Z" });
+    expect(JSON.stringify(summary)).not.toContain("private-r2-object-key");
+    expect(JSON.stringify(summary)).not.toContain("private pull request title");
+    expect(JSON.stringify(summary)).not.toContain("private pull request body");
+
+    const detail = await call(bindings, `/dashboard/api/runs/${runId}`, { token: accessToken });
+    expect(detail.response.status).toBe(200);
+    expect(detail.body.data.publication).toMatchObject({ state: "retryable_failure", attemptCount: 2 });
+    expect(JSON.stringify(detail.body.data)).not.toContain("private-r2-object-key");
+  });
+
   it("[RUN-EVENT-PAGE-01] reports whether another page of run events remains", async () => {
     const { bindings } = testEnv({ oauth: true });
     const created = await submit(bindings);
@@ -1308,63 +1347,6 @@ describe("Soyuz Worker API", () => {
     expect(agentWrite.response.status).toBe(401);
     expect(agentWrite.body.error.code).toBe("UNAUTHORIZED");
     expect((await callBinary(bindings, "/mcp", { token: accessToken })).response.status).toBe(404);
-  });
-
-  it("[OAUTH-02] allows only the authenticated A2UI generation POST with read scope", async () => {
-    const { bindings } = testEnv({ oauth: true, analysisDemo: true });
-    const accessToken = await createOAuthAccessToken(bindings);
-    const request = {
-      method: "POST",
-      token: accessToken,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt: "Summarise the last 10 runs.", mode: "generate" }),
-    };
-
-    const analysis = await callBinary(bindings, "/dashboard/api/analysis/generate", request);
-    expect(analysis.response.status).toBe(200);
-    expect(analysis.response.headers.get("content-type")).toContain("text/event-stream");
-    expect(analysis.body).toContain("Recent retained runs");
-    expect(analysis.body).toContain("event: done");
-
-    const unauthenticated = await callBinary(bindings, "/dashboard/api/analysis/generate", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: request.body,
-    });
-    expect(unauthenticated.response.status).toBe(401);
-
-    const tokenWithoutReadScope = await createOAuthAccessToken(bindings, ["offline_access"]);
-    const withoutReadScope = await callBinary(bindings, "/dashboard/api/analysis/generate", {
-      method: "POST",
-      token: tokenWithoutReadScope,
-      headers: { "content-type": "application/json" },
-      body: request.body,
-    });
-    expect(withoutReadScope.response.status).toBe(403);
-
-    const otherPost = await call(bindings, "/dashboard/api/runs", {
-      method: "POST",
-      token: accessToken,
-      body: validRequest(),
-    });
-    expect(otherPost.response.status).toBe(405);
-  });
-
-  it("[ANALYSIS-RATE-LIMIT-01] applies a per-GitHub-user limit before analysis generation", async () => {
-    const { bindings, analysisGenerationLimiter } = testEnv({ oauth: true, analysisDemo: true });
-    const accessToken = await createOAuthAccessToken(bindings);
-    analysisGenerationLimiter.limit.mockResolvedValue({ success: false });
-
-    const response = await callBinary(bindings, "/dashboard/api/analysis/generate", {
-      method: "POST",
-      token: accessToken,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt: "Summarise the last 10 runs.", mode: "generate" }),
-    });
-
-    expect(response.response.status).toBe(429);
-    expect(response.response.headers.get("retry-after")).toBe("60");
-    expect(analysisGenerationLimiter.limit).toHaveBeenCalledWith({ key: "123" });
   });
 
   it("[JEV-API-01] invokes bounded server-owned decisions only for an allowlisted read-scope user", async () => {
@@ -1572,17 +1554,6 @@ describe("Soyuz Worker API", () => {
     expect(registrationResponse.response.status).toBe(503);
     expect(registrationResponse.body.error.code).toBe("RATE_LIMITER_UNAVAILABLE");
 
-    const analysis = testEnv({ oauth: true, analysisDemo: true });
-    const accessToken = await createOAuthAccessToken(analysis.bindings);
-    analysis.analysisGenerationLimiter.limit.mockRejectedValue(new Error("simulated limiter failure"));
-    const analysisResponse = await callBinary(analysis.bindings, "/dashboard/api/analysis/generate", {
-      method: "POST",
-      token: accessToken,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt: "Summarise the last 10 runs.", mode: "generate" }),
-    });
-    expect(analysisResponse.response.status).toBe(503);
-    expect((analysisResponse.body as any).error.code).toBe("RATE_LIMITER_UNAVAILABLE");
   });
 
   it("[OAUTH-03] renders an escaped, non-framable consent page and binds approval to the browser request", async () => {

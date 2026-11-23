@@ -126,6 +126,7 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -.04em; }
 .card__body { min-width: 0; }
 .card__footer { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
 .run-card { margin: var(--space-4) 0; padding: var(--space-5); }
+.run-intelligence { margin: var(--space-5) 0; }
 .outcome-overview { margin: var(--space-4) 0 var(--space-5); }
 .outcome-overview__scope { margin: 0; }
 .outcome-overview__facts { margin-top: var(--space-4); }
@@ -157,6 +158,8 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -.04em; }
 .badge--danger { background: var(--color-danger-soft); color: var(--color-danger-ink); }
 .badge--neutral { background: var(--color-neutral-soft); color: var(--color-neutral-ink); }
 .run-card__health { margin: var(--space-4) 0 0; }
+.run-card__metrics { margin-top: var(--space-4); }
+.run-card__outcome { margin: var(--space-4) 0 0; overflow-wrap: anywhere; }
 .run-card__metadata { margin-top: 0; }
 .run-card details { margin-top: 0; padding-top: var(--space-4); border-top: 1px solid var(--color-border); }
 .run-card summary { width: fit-content; cursor: pointer; font-weight: 650; }
@@ -174,35 +177,27 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -.04em; }
 .artifact-link { font-size: .9rem; }
 .load-more { display: flex; margin: var(--space-6) auto 0; }
 
-.analysis-form { display: grid; gap: var(--space-3); margin: var(--space-5) 0; }
-.analysis-form__actions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
-.analysis-output { display: grid; gap: var(--space-4); margin-top: var(--space-5); }
-.analysis-data-controls { display: flex; align-items: end; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-4) 0; }
-.analysis-data-controls .field { min-width: min(100%, 13rem); }
-.analysis-data-controls .field__control { width: 100%; }
-.analysis-jev-disclosure { margin-top: var(--space-6); }
-.analysis-jev-disclosure > summary { width: fit-content; cursor: pointer; color: var(--color-primary-ink); font-weight: 700; }
-.analysis-jev-controls { display: grid; gap: var(--space-3); margin-top: var(--space-5); }
-.analysis-jev-controls h2, .analysis-jev-controls p { margin: 0; }
-.analysis-jev-form { display: grid; grid-template-columns: minmax(12rem, 1fr) minmax(16rem, 1.5fr) auto; align-items: end; gap: var(--space-3); }
-.analysis-jev-form__actions { display: flex; align-items: flex-end; }
-.analysis-jev-output { display: grid; gap: var(--space-3); }
-.analysis-jev-feedback { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-4); }
-.analysis-jev-feedback p { margin: 0 var(--space-2) 0 0; }
-.analysis-jev-feedback .meta { flex-basis: 100%; }
-.analysis-jev__title { margin: 0 0 var(--space-2); font-size: .95rem; }
-.analysis-jev-summary__value, .analysis-jev-score__value { margin: 0; font-variant-numeric: tabular-nums; }
-.analysis-jev-answer__value, .analysis-jev-answer__confidence { margin: 0 0 var(--space-3); font-variant-numeric: tabular-nums; }
-.analysis-jev-answer__confidence { margin: var(--space-3) 0 0; color: var(--color-muted); }
-.analysis-jev-probabilities__list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
-.analysis-jev-probabilities__item { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(5rem, 2fr) 3.5rem; align-items: center; gap: var(--space-3); }
-.analysis-jev-probabilities__item > span { overflow-wrap: anywhere; }
-.analysis-jev-probabilities__value { text-align: right; font-variant-numeric: tabular-nums; }
-.analysis-jev-probabilities__item progress, .analysis-jev-confidence__meter, .analysis-jev-score__scale { width: 100%; min-height: .8rem; accent-color: var(--color-primary); }
-.analysis-jev-confidence { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(5rem, 2fr) 3.5rem; align-items: center; gap: var(--space-3); }
-.analysis-jev-confidence__value { text-align: right; font-variant-numeric: tabular-nums; }
-.analysis-jev-score { display: grid; gap: var(--space-2); }
-.analysis-jev-score__scale { margin: var(--space-1) 0; }
+.jev-panel { margin-top: var(--space-4); padding: var(--space-4); }
+.jev-panel .card__header { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: var(--space-2); }
+.jev-panel__description { margin: 0 0 var(--space-3); color: var(--color-muted); }
+.jev-panel__output { display: grid; gap: var(--space-3); margin-top: var(--space-4); }
+.jev-panel__output > p { margin: 0; }
+.jev-panel__feedback { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-4); }
+.jev-panel__feedback > p { margin: 0 var(--space-2) 0 0; }
+.jev-panel__feedback-notice { flex-basis: 100%; }
+.jev-answer { padding: var(--space-4); }
+.jev-answer__title { margin: 0 0 var(--space-2); font-size: .95rem; }
+.jev-answer__value, .jev-answer__confidence { margin: 0 0 var(--space-3); font-variant-numeric: tabular-nums; }
+.jev-answer__confidence { margin: var(--space-3) 0 0; color: var(--color-muted); }
+.jev-probabilities__list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.jev-probabilities__item { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(5rem, 2fr) 3.5rem; align-items: center; gap: var(--space-3); }
+.jev-probabilities__item > span { overflow-wrap: anywhere; }
+.jev-probabilities__value { text-align: right; font-variant-numeric: tabular-nums; }
+.jev-probabilities__item progress, .jev-confidence__meter, .jev-score__scale { width: 100%; min-height: .8rem; accent-color: var(--color-primary); }
+.jev-confidence { display: grid; grid-template-columns: minmax(8rem, 1fr) minmax(5rem, 2fr) 3.5rem; align-items: center; gap: var(--space-3); }
+.jev-confidence__value { text-align: right; font-variant-numeric: tabular-nums; }
+.jev-score { display: grid; gap: var(--space-2); }
+.jev-score__scale { margin: var(--space-1) 0; }
 .a2ui-layout { display: flex; min-width: 0; gap: var(--space-4); }
 .a2ui-layout--column { flex-direction: column; }
 .a2ui-layout--row { flex-direction: row; flex-wrap: wrap; align-items: stretch; }
@@ -227,7 +222,7 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -.04em; }
 .consent-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-5); }
 .consent-actions .button { min-width: 6.5rem; }
 
-.button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible, .analysis-run-table:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 3px; }
+.button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 3px; }
 
 @media (max-width: 640px) {
   .app-shell { padding: var(--space-6) var(--space-4) var(--space-8); }
@@ -240,18 +235,13 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -.04em; }
   .run-card__header { flex-direction: column; }
   .run-card__statuses { justify-content: flex-start; }
   .a2ui-layout--row { flex-direction: column; }
-  .analysis-run-table { overflow-x: auto; }
-  .analysis-jev-form { grid-template-columns: minmax(0, 1fr); }
+  .jev-probabilities__item, .jev-confidence { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 840px) {
   .toolbar { align-items: stretch; }
   .toolbar__group--search, .toolbar__group--filters, .toolbar__group--end { flex-basis: 100%; }
   .toolbar__group--end { justify-content: space-between; margin-inline-start: 0; }
-}
-
-@media (max-width: 760px) {
-  .analysis-jev-form { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 480px) {
@@ -262,8 +252,6 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -.04em; }
   .toolbar__group--filters { grid-template-columns: minmax(0, 1fr); }
   .toolbar__group--end { align-items: stretch; flex-direction: column; }
   .toolbar__group--end .button { width: 100%; }
-  .analysis-data-controls { align-items: stretch; flex-direction: column; }
-  .analysis-data-controls .field { width: 100%; }
   .run-card { padding: var(--space-4); }
   .snackbar { max-width: calc(100vw - 1.5rem); bottom: max(.75rem, env(safe-area-inset-bottom)); }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { parseHTML } from "linkedom";
-import { createBadge, createCard, createDefinitionList, createField, setButtonBusy, setNotice } from "../dashboard/ui/components";
+import { createActionButton, createBadge, createCard, createDefinitionList, createField, setButtonBusy, setNotice } from "../dashboard/ui/components";
 import { createRunCard } from "../dashboard/run-card";
 
 function createDocument() {
@@ -29,6 +29,19 @@ describe("shared dashboard UI components", () => {
 
     setButtonBusy(button, false);
     expect(button).toMatchObject({ disabled: false, textContent: "Refresh runs" });
+  });
+
+  it("[DASHBOARD-ACTION-BUTTON-01] creates a reusable text-safe action button", () => {
+    const document = createDocument();
+    const onClick = vi.fn();
+    const button = createActionButton("<script>Assess</script>", onClick, { variant: "primary", ownerDocument: document });
+
+    expect(button.type).toBe("button");
+    expect(button.textContent).toBe("<script>Assess</script>");
+    expect(button.querySelector("script")).toBeNull();
+    expect(button.className).toContain("button--primary");
+    button.click();
+    expect(onClick).toHaveBeenCalledOnce();
   });
 
   it("[DASHBOARD-STATUS-TEXT-01] displays untrusted status text without parsing markup", () => {
@@ -69,6 +82,42 @@ describe("shared dashboard UI components", () => {
         ["DT", "Repository", "DD", "CyanAutomation/soyuz"],
         ["DT", "Status", "DD", "Running"],
       ]);
+  });
+
+  it("[DASHBOARD-RUN-METRICS-01] shows computed timings as distinct facts and keeps publication separate from execution", () => {
+    const document = createDocument();
+    const run = {
+      status: "completed",
+      runId: "00000000-0000-4000-8000-000000000111",
+      displayId: "soyuz-111",
+      repoUrl: "https://github.com/example/project",
+      ref: "main",
+      origin: { type: "api_client", id: "client" },
+      retryOf: null,
+      createdAt: "2026-11-22T12:00:00.000Z",
+      queuedAt: "2026-11-22T12:00:10.000Z",
+      startedAt: "2026-11-22T12:01:00.000Z",
+      completedAt: "2026-11-22T12:04:00.000Z",
+      stage: null,
+      operationalHealth: "unknown" as const,
+      lastHeartbeatAt: null,
+      outcomeSummary: "Updated docs safely.",
+      publication: { state: "retryable_failure", attemptCount: 2, nextAttemptAt: "2026-11-22T12:15:00.000Z" },
+    };
+    const card = createRunCard(run, { ownerDocument: document, now: Date.parse("2026-11-22T12:10:00.000Z") });
+    const metrics = card.querySelector(".run-card__metrics");
+    const badges = [...card.querySelectorAll(".badge")].map((badge) => badge.textContent);
+
+    expect(metrics?.textContent).toContain("Run age");
+    expect(metrics?.textContent).toContain("4m");
+    expect(metrics?.textContent).toContain("Queue");
+    expect(metrics?.textContent).toContain("50s");
+    expect(metrics?.textContent).toContain("Execution");
+    expect(metrics?.textContent).toContain("3m");
+    expect(metrics?.textContent).toContain("Not reported");
+    expect(badges).toContain("Status: Completed");
+    expect(badges).toContain("Publication: Retryable failure");
+    expect(card.textContent).toContain("Updated docs safely.");
   });
 
   it("[DASHBOARD-FIELD-A11Y-01] associates a control with its label, help, and recovery text", () => {

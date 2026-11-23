@@ -30,6 +30,14 @@ export interface FieldParts {
   error: HTMLParagraphElement | null;
 }
 
+export interface ActionButtonOptions {
+  variant?: "primary" | "secondary";
+  className?: string;
+  disabled?: boolean;
+  ariaLabel?: string;
+  ownerDocument?: Document;
+}
+
 interface NoticeElement {
   hidden: HTMLElement["hidden"];
   textContent: string | null;
@@ -59,6 +67,25 @@ export function setButtonBusy(button: BusyButtonElement, busy: boolean, busyLabe
   button.textContent = busy && busyLabel ? busyLabel : idleLabel;
 }
 
+/** Create a labelled native action button with text-only content and a typed callback. */
+export function createActionButton(
+  label: string,
+  onClick: () => void,
+  options: ActionButtonOptions = {},
+): HTMLButtonElement {
+  const ownerDocument = options.ownerDocument ?? document;
+  const button = ownerDocument.createElement("button");
+  button.className = ["button", `button--${options.variant ?? "secondary"}`, options.className].filter(Boolean).join(" ");
+  button.type = "button";
+  button.textContent = label;
+  button.disabled = options.disabled ?? false;
+  if (options.ariaLabel) button.setAttribute("aria-label", options.ariaLabel);
+  button.addEventListener("click", () => {
+    if (!button.disabled) onClick();
+  });
+  return button;
+}
+
 /** Create a text-safe status badge that can be shared by dashboard views. */
 export function createBadge(label: string, tone: BadgeTone, ownerDocument: Document = document): HTMLSpanElement {
   const badge = ownerDocument.createElement("span");
@@ -79,7 +106,9 @@ export function createCard(options: CardOptions = {}, ownerDocument: Document = 
   const footer = ownerDocument.createElement("footer");
   footer.className = "card__footer";
 
-  element.append(header, body, footer);
+  element.appendChild(header);
+  element.appendChild(body);
+  element.appendChild(footer);
   return { element, header, body, footer };
 }
 
@@ -98,8 +127,9 @@ export function createDefinitionList(
     term.textContent = label;
     const description = ownerDocument.createElement("dd");
     description.textContent = value;
-    item.append(term, description);
-    list.append(item);
+    item.appendChild(term);
+    item.appendChild(description);
+    list.appendChild(item);
   }
   return list;
 }
@@ -143,9 +173,10 @@ export function createField(
   if (describedBy.size > 0) options.control.setAttribute("aria-describedby", [...describedBy].join(" "));
   else options.control.removeAttribute("aria-describedby");
 
-  element.append(label, options.control);
-  if (help) element.append(help);
-  if (error) element.append(error);
+  element.appendChild(label);
+  element.appendChild(options.control);
+  if (help) element.appendChild(help);
+  if (error) element.appendChild(error);
   return { element, label, control: options.control, help, error };
 }
 
@@ -169,6 +200,7 @@ export function createTimestamp(
   } else {
     time.textContent = "Time unavailable";
   }
-  element.append(labelElement, time);
+  element.appendChild(labelElement);
+  element.appendChild(time);
   return element;
 }

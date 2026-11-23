@@ -6,6 +6,7 @@ import { isUuid } from "../lib/uuid";
 import { safeHttpUrlForDisplay, safeUrlForDisplay } from "../lib/safe-url";
 import { handleClientArtifacts } from "../api/artifacts";
 import { handleRunOutcomes } from "../api/run-outcomes";
+import type { PublicationRow } from "../publication/lifecycle";
 import { errorResponse, rateLimitedResponse, requestIdFor, successResponse } from "../api/http";
 import { isAllowedGithubUser, SOYUZ_READ_SCOPE, type OAuthProps } from "./oauth-policy";
 
@@ -22,17 +23,6 @@ export async function handleDashboardApiRequest(
   const path = url.pathname.slice(API_PREFIX.length) || "/";
   const segments = path.split("/").filter(Boolean);
   const requestId = requestIdFor(request);
-  if (request.method === "POST" && segments.length === 2 && segments[0] === "analysis" && segments[1] === "generate") {
-    let outcome: RateLimitOutcome;
-    try {
-      outcome = await env.ANALYSIS_GENERATION_LIMITER.limit({ key: access.context.props.githubUserId });
-    } catch {
-      return errorResponse(requestId, 503, "RATE_LIMITER_UNAVAILABLE", "Analysis generation is temporarily unavailable. Retry shortly.");
-    }
-    if (!outcome.success) return rateLimitedResponse(requestId);
-    const { handleA2uiGenerationRequest } = await import("../a2ui/generation");
-    return handleA2uiGenerationRequest(request, env, requestId);
-  }
   if (request.method === "POST" && segments.length === 2 && segments[0] === "analysis" && segments[1] === "decisions") {
     let outcome: RateLimitOutcome;
     try {
@@ -55,7 +45,7 @@ export async function handleDashboardApiRequest(
     const { handleJevFeedbackRequest } = await import("../jev/feedback");
     return handleJevFeedbackRequest(request, env, access.context.props.githubUserId, requestId);
   }
-  if (request.method !== "GET") return errorResponse(requestId, 405, "METHOD_NOT_ALLOWED", "The dashboard is read-only except for authenticated AI analysis requests.");
+  if (request.method !== "GET") return errorResponse(requestId, 405, "METHOD_NOT_ALLOWED", "The dashboard is read-only except for authenticated JEV decision and feedback requests.");
   return routeDashboardApiRequest(request, env, url, segments, requestId, access.context, context);
 }
 
@@ -118,7 +108,12 @@ async function listDashboardRuns(env: Env, url: URL, requestId: string): Promise
       status: url.searchParams.get("status"),
       cursor: url.searchParams.get("cursor"),
     });
-    return successResponse(requestId, { runs: page.rows.map(dashboardRunSummary), nextCursor: page.nextCursor });
+    const publicationRead = await readPublicationSummaries(env, page.rows.map((row) => row.id));
+    return successResponse(requestId, {
+      runs: page.rows.map((row) => dashboardRunSummary(row, publicationRead.byRunId.get(row.id) ?? null, publicationRead.available)),
+      nextCursor: page.nextCursor,
+      publicationStatusAvailable: publicationRead.available,
+    });
   } catch (error) {
     return dashboardErrorResponse(error, requestId);
   }
@@ -126,9 +121,44 @@ async function listDashboardRuns(env: Env, url: URL, requestId: string): Promise
 
 async function readDashboardRun(env: Env, runId: string, requestId: string): Promise<Response> {
   try {
-    return successResponse(requestId, dashboardRunDetail(await readRun(env, runId)));
+    const row = await readRun(env, runId);
+    const publicationRead = await readPublicationSummaries(env, [runId]);
+    return successResponse(requestId, dashboardRunDetail(
+      row,
+      publicationRead.byRunId.get(runId) ?? null,
+      publicationRead.available,
+    ));
   } catch (error) {
     return dashboardErrorResponse(error, requestId);
+  }
+}
+
+interface DashboardPublicationStatus {
+  run_id: string;
+  state: PublicationRow["state"];
+  attempt_count: number;
+  next_attempt_at: string | null;
+  completed_at: string | null;
+}
+
+async function readPublicationSummaries(
+  env: Env,
+  runIds: string[],
+): Promise<{ available: boolean; byRunId: Map<string, DashboardPublicationStatus> }> {
+  if (runIds.length === 0) return { available: true, byRunId: new Map() };
+  try {
+    const placeholders = runIds.map(() => "?").join(", ");
+    const rows = await env.DB.prepare(`
+      SELECT run_id, state, attempt_count, next_attempt_at, completed_at
+      FROM publications WHERE run_id IN (${placeholders})
+    `).bind(...runIds).all<DashboardPublicationStatus>();
+    return {
+      available: true,
+      byRunId: new Map((rows.results ?? []).map((row) => [row.run_id, row])),
+    };
+  } catch {
+    // Keep run history usable during a publication-ledger read failure.
+    return { available: false, byRunId: new Map() };
   }
 }
 
@@ -182,7 +212,12 @@ function hasOAuthContext(context: ExecutionContext): context is OAuthResourceCon
     && Array.isArray(auth.scope) && auth.scope.every((scope) => typeof scope === "string");
 }
 
-function dashboardRunSummary(row: RunRow): Record<string, unknown> {
+function dashboardRunSummary(
+  row: RunRow,
+  publication: DashboardPublicationStatus | null = null,
+  publicationStatusAvailable = true,
+): Record<string, unknown> {
+  const result = parseResult(row);
   return {
     runId: row.id,
     displayId: row.display_id,
@@ -197,6 +232,10 @@ function dashboardRunSummary(row: RunRow): Record<string, unknown> {
     operationalHealth: row.operational_health,
     failureClass: row.failure_class,
     failureMessage: row.failure_message,
+    outcomeSummary: typeof result?.summary === "string" ? result.summary.slice(0, 2_000) : null,
+    legacyPublished: typeof result?.publishedUrl === "string" && safeHttpUrlForDisplay(result.publishedUrl) !== null,
+    publication: publication ? dashboardPublicationSummary(publication) : null,
+    publicationStatusAvailable,
     lastHeartbeatAt: row.last_heartbeat_at,
     createdAt: row.created_at,
     queuedAt: row.queued_at,
@@ -205,11 +244,15 @@ function dashboardRunSummary(row: RunRow): Record<string, unknown> {
   };
 }
 
-function dashboardRunDetail(row: RunRow): Record<string, unknown> {
+function dashboardRunDetail(
+  row: RunRow,
+  publication: DashboardPublicationStatus | null,
+  publicationStatusAvailable: boolean,
+): Record<string, unknown> {
   const result = parseResult(row);
   const publishedUrl = typeof result?.publishedUrl === "string" ? safeHttpUrlForDisplay(result.publishedUrl) : null;
   return {
-    ...dashboardRunSummary(row),
+    ...dashboardRunSummary(row, publication, publicationStatusAvailable),
     updatedAt: row.updated_at,
     outcomeSummary: typeof result?.summary === "string" ? result.summary.slice(0, 2_000) : null,
     publishedUrl,
@@ -220,6 +263,15 @@ function dashboardRunDetail(row: RunRow): Record<string, unknown> {
       state: row.status === "cancel_requested" ? "requested" : row.status === "cancelled" ? "cancelled" : "none",
       requestedAt: row.cancel_requested_at,
     },
+  };
+}
+
+function dashboardPublicationSummary(row: DashboardPublicationStatus): Record<string, unknown> {
+  return {
+    state: row.state,
+    attemptCount: row.attempt_count,
+    nextAttemptAt: row.next_attempt_at,
+    completedAt: row.completed_at,
   };
 }
 
