@@ -4,6 +4,16 @@ import { renderAuthUi } from "../dashboard/auth-ui.ts";
 import { revokeAccessToken } from "../dashboard/auth-api.ts";
 import { buildRunListPath, isActiveRunStatus } from "../dashboard/run-list.ts";
 import { safeHttpUrlForDisplay } from "../dashboard/ui/safe-url.ts";
+
+vi.mock("../dashboard/a2ui-renderer.js", () => ({
+  A2uiDomRenderer: class {
+    constructor(private readonly target: { replaceChildren(...children: unknown[]): void }) {}
+    render(_messages: unknown[], _hostData?: Record<string, unknown>) { this.target.replaceChildren(); }
+    clear() { this.target.replaceChildren(); }
+    dispose() { this.clear(); }
+  },
+}));
+
 import {
   formatEventLabel,
   formatEventPayloadValue,
@@ -35,6 +45,7 @@ interface FakeNode {
   addEventListener(event: string, callback: (event?: Event) => void): void;
   dispatch(event: string, detail?: Event): void;
   append(...children: unknown[]): void;
+  appendChild(child: unknown): unknown;
   replaceChildren(...children: unknown[]): void;
   click(): void;
 }
@@ -346,6 +357,7 @@ async function mountDashboard(
   const nodes = new Map([
     ["#notice", createNode()],
     ["#runs", createNode()],
+    ["#run-intelligence", createNode()],
     ["#outcome-overview", createNode()],
     ["#run-controls", createNode()],
     ["#connect", createNode()],
@@ -359,7 +371,7 @@ async function mountDashboard(
     ["#updated", createNode()],
     ["#snackbar", createNode()],
   ]);
-  for (const selector of ["#runs", "#outcome-overview", "#run-controls"]) {
+  for (const selector of ["#runs", "#run-intelligence", "#outcome-overview", "#run-controls"]) {
     nodeAt(nodes, selector).hidden = true;
   }
   const sessionValues = new Map([
@@ -513,6 +525,7 @@ function createNode(tagName = "DIV"): FakeNode {
       for (const callback of [...(this.listeners[event] ?? [])]) callback(detail);
     },
     append(...children: unknown[]) { this.children.push(...children); },
+    appendChild(child: unknown) { this.children.push(child); return child; },
     replaceChildren(...children: unknown[]) { this.children = [...children]; },
     click() { this.dispatch("click"); },
   };

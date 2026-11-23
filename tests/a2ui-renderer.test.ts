@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseHTML } from "linkedom";
 import { A2UI_CATALOG_ID } from "../a2ui/protocol";
-import { A2uiDomRenderer } from "../dashboard/analysis/a2ui-renderer";
+import { A2uiDomRenderer } from "../dashboard/a2ui-renderer";
 
 describe("A2UI analysis DOM renderer", () => {
   afterEach(() => vi.unstubAllGlobals());

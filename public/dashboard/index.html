@@ -17,7 +17,6 @@
       </div>
       <nav class="dashboard-nav" aria-label="Soyuz dashboards">
         <a href="/dashboard/" aria-current="page">Recent runs</a>
-        <a href="/dashboard/analysis/">Run analysis</a>
       </nav>
       <div class="auth-controls">
         <p id="account" class="meta" hidden></p>
@@ -28,7 +27,7 @@
       <header class="page-header">
         <div class="page-header__content">
           <h1 class="page-header__title" id="page-title" aria-describedby="page-description">Recent runs</h1>
-          <p class="page-header__description" id="page-description">See the latest 30 runs, their progress, activity, and files. This dashboard is read-only.</p>
+          <p class="page-header__description" id="page-description">Review run health, timing, outcomes, activity, and publication status. Request an advisory JEV assessment for relevant runs.</p>
         </div>
       </header>
       <p id="notice" class="notice notice--info" role="status" aria-live="polite">Sign in with GitHub to see your recent runs.</p>
@@ -58,11 +57,13 @@
           </div>
         </div>
         <div class="toolbar__group toolbar__group--end run-controls__actions" role="group" aria-label="Run list actions">
-          <button id="refresh" class="button button--secondary" type="button">Refresh runs</button>
+          <button id="refresh" class="button button--secondary" type="button" aria-describedby="refresh-help updated">Refresh runs</button>
+          <p id="refresh-help" class="field__help">Automatic refresh runs hourly. Use this button to refresh now.</p>
           <p id="updated" class="meta" aria-live="polite"></p>
         </div>
         <p id="run-count" class="toolbar__summary" aria-live="polite" aria-atomic="true"></p>
       </div>
+      <section id="run-intelligence" aria-label="Run operations overview" hidden></section>
       <section id="outcome-overview" aria-label="Retained run outcome overview" hidden></section>
       <section id="runs" aria-label="Recent runs" hidden></section>
       <button id="load-more" class="button button--secondary load-more" type="button" hidden>Load more runs</button>

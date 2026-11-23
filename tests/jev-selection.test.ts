@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { suggestedJevProfile } from "../dashboard/analysis/jev-selection";
+import { suggestedJevProfile } from "../dashboard/jev-selection";
 import { JEV_PROFILE_CONTRACTS } from "../src/jev/profiles";
 
 describe("JEV profile suggestion", () => {
-  it("[JEV-SELECT-01] suggests outcome review for completed runs", () => {
-    expect(suggestedJevProfile({ status: "completed" })).toBe("kaseki_output_review_v2");
+  it("[JEV-SELECT-01] suggests outcome review for completed runs with a summary", () => {
+    expect(suggestedJevProfile({ status: "completed", outcomeSummary: "Checks passed." })).toBe("kaseki_output_review_v2");
+  });
+  it("[JEV-SELECT-01] does not suggest output review when a completed run has no summary", () => {
+    expect(suggestedJevProfile({ status: "completed", outcomeSummary: null })).toBeNull();
   });
 
   it.each(["failed", "admission_failed"])(

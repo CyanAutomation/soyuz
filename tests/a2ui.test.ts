@@ -56,6 +56,13 @@ describe("Soyuz A2UI protocol boundary", () => {
     expect(validateA2uiMessages([...messages, update], { expectedSurfaceId: surfaceId }).ok).toBe(false);
   });
 
+  it("rejects navigation to an unapproved dashboard route", () => {
+    const messages = validMessages() as any[];
+    messages[0].createSurface.components[7].action.event.name = "navigate_dashboard";
+    messages[0].createSurface.components[7].action.event.context = { path: "/dashboard/analysis/" };
+    expect(validateA2uiMessages(messages, { expectedSurfaceId: surfaceId }).ok).toBe(false);
+  });
+
   it("rejects a cyclic or over-limit component graph", () => {
     const cyclic = validMessages() as any[];
     cyclic[0].createSurface.components[0].children = ["root"];

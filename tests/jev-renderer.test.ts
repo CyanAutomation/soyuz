@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseHTML } from "linkedom";
-import { renderJevResult } from "../dashboard/analysis/jev-renderer";
+import { renderJevResult } from "../dashboard/jev-renderer";
 
 describe("fixed JEV result renderer", () => {
   afterEach(() => vi.unstubAllGlobals());

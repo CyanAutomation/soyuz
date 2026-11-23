@@ -1,11 +1,11 @@
 import { DataModel, type SurfaceModel } from "@a2ui/web_core/state";
 import { MessageProcessor } from "@a2ui/web_core/processing";
 import { STRICT_VALIDATION } from "@a2ui/web_core/validating";
-import { basicCatalog } from "../../a2ui/catalog";
-import { A2uiStreamValidator, validateA2uiMessages } from "../../a2ui/protocol";
+import { basicCatalog } from "../a2ui/catalog";
+import { validateA2uiMessages } from "../a2ui/protocol";
 
-export interface AnalysisAction {
-  name: "select_run" | "refresh_runs" | "reset_filters" | "navigate_dashboard";
+export interface DashboardA2uiAction {
+  name: "select_run" | "refresh_runs" | "reset_filters";
   context: Record<string, unknown>;
 }
 
@@ -22,7 +22,7 @@ export class A2uiDomRenderer {
 
   constructor(
     private readonly target: HTMLElement,
-    private readonly onAction: (action: AnalysisAction) => void,
+    private readonly onAction: (action: DashboardA2uiAction) => void,
   ) {
     this.document = target.ownerDocument;
   }
@@ -140,7 +140,7 @@ export class A2uiDomRenderer {
                 context[key] = this.resolveValue(surface, value, contextPath);
               }
             }
-            this.onAction({ name: action.event.name as AnalysisAction["name"], context });
+            this.onAction({ name: action.event.name as DashboardA2uiAction["name"], context });
           });
         }
         return node;

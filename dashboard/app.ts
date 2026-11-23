@@ -5,6 +5,11 @@ import { createSnackBarController } from "./snackbar.js";
 import { createDefinitionList, setButtonBusy, setNotice as renderNotice, type NoticeTone } from "./ui/components.js";
 import { createRunCard, type DashboardRunSummary } from "./run-card.js";
 import { createOutcomeOverviewCard, type RunOutcomesOverview } from "./outcome-overview.js";
+import { A2uiDomRenderer, type DashboardA2uiAction } from "./a2ui-renderer.js";
+import { createRunOperationsSurface, projectRunOperations } from "./run-operations.js";
+import type { JEV_PROFILE_ID } from "./jev-selection.js";
+import type { JevAssessmentState, JevRating, JevResult } from "./jev-panel.js";
+import { DASHBOARD_REFRESH_INTERVAL_MS } from "./refresh-policy.js";
 import { safeHttpUrlForDisplay } from "./ui/safe-url.js";
 import {
   formatEventLabel,
@@ -26,6 +31,7 @@ interface OAuthTokenResponse {
 interface DashboardRunListResponse {
   runs: DashboardRunSummary[];
   nextCursor: string | null;
+  publicationStatusAvailable: boolean;
 }
 
 interface DashboardRunDetail extends DashboardRunSummary {
@@ -38,6 +44,14 @@ interface DashboardRunDetail extends DashboardRunSummary {
   failureMessage: string | null;
   exitCode: number | null;
 }
+
+interface LoadedRunDetails {
+  detail: DashboardRunDetail;
+  artifacts: DashboardArtifact[];
+  eventPage: DashboardRunEventsResponse;
+}
+
+interface JevDecisionResponse extends JevResult {}
 
 interface DashboardArtifact {
   id: string;
@@ -67,6 +81,7 @@ interface DashboardRunEvent {
 const notice = requiredElement<HTMLElement>("#notice");
 const runsSection = requiredElement<HTMLElement>("#runs");
 const outcomeOverview = requiredElement<HTMLElement>("#outcome-overview");
+const runIntelligence = requiredElement<HTMLElement>("#run-intelligence");
 const runControls = requiredElement<HTMLElement>("#run-controls");
 const connectButton = requiredElement<HTMLButtonElement>("#connect");
 const accountLabel = requiredElement<HTMLElement>("#account");
@@ -79,7 +94,6 @@ const loadMoreButton = requiredElement<HTMLButtonElement>("#load-more");
 const updatedLabel = requiredElement<HTMLElement>("#updated");
 const snackbar = createSnackBarController(requiredElement<HTMLElement>("#snackbar"));
 const oauthKeys = ["state", "verifier", "clientId", "redirectUri"] as const;
-const RUN_REFRESH_INTERVAL_MS = 30_000;
 let accessToken: string | null = null;
 let oauthClientId: string | null = null;
 let runRefreshTimer: ReturnType<typeof setInterval> | null = null;
@@ -88,6 +102,10 @@ let isLoadingRuns = false;
 let pendingRunReset = false;
 let runsById = new Map<string, DashboardRunSummary>();
 const expandedRunIds = new Set<string>();
+const runDetailsById = new Map<string, LoadedRunDetails>();
+const jevStatesByRunId = new Map<string, JevAssessmentState>();
+let publicationStatusAvailable = true;
+const runOperationsRenderer = new A2uiDomRenderer(runIntelligence, handleRunOperationsAction);
 
 populateStatusFilter();
 setDashboardVisible(false);
@@ -202,6 +220,10 @@ async function signOut() {
   stopRunRefresh();
   runsSection.replaceChildren();
   outcomeOverview.replaceChildren();
+  runOperationsRenderer.clear();
+  runDetailsById.clear();
+  jevStatesByRunId.clear();
+  expandedRunIds.clear();
   setDashboardVisible(false);
   setNotice("Signing out…", "info");
 
@@ -221,10 +243,14 @@ function clearLocalSession(message: string, tone: NoticeTone = "info"): void {
   stopRunRefresh();
   nextCursor = null;
   runsById = new Map();
+  runDetailsById.clear();
+  jevStatesByRunId.clear();
   expandedRunIds.clear();
   loadMoreButton.hidden = true;
   updatedLabel.textContent = "";
   runsSection.replaceChildren();
+  outcomeOverview.replaceChildren();
+  runOperationsRenderer.clear();
   setDashboardVisible(false);
   renderAuthUi(connectButton, accountLabel, "signed-out");
   setNotice(message, tone);
@@ -279,9 +305,12 @@ async function loadRuns(options: { reset: boolean; quiet?: boolean; refreshFirst
     }));
     if (!token || token !== accessToken || !Array.isArray(result.runs)) return;
     if (options.reset) runsById = new Map();
+    if (options.reset || options.refreshFirstPage) runDetailsById.clear();
+    publicationStatusAvailable = result.publicationStatusAvailable !== false;
     for (const run of result.runs) runsById.set(run.runId, run);
     if (options.reset || cursor || options.refreshFirstPage) nextCursor = result.nextCursor;
     if (!(options.refreshFirstPage && expandedRunIds.size > 0)) renderRuns();
+    renderRunOperations();
     void loadOutcomeOverview(token);
     loadMoreButton.hidden = !nextCursor;
     updatedLabel.textContent = `Last refreshed ${new Date().toLocaleTimeString()}`;
@@ -339,10 +368,114 @@ function renderRuns(): void {
     : `Showing ${runs.length} of ${loadedRuns.length} ${matching}retained ${runLabel}`;
 }
 
+function renderRunOperations(): void {
+  runOperationsRenderer.render(
+    createRunOperationsSurface(),
+    projectRunOperations([...runsById.values()], Date.now(), publicationStatusAvailable) as unknown as Record<string, unknown>,
+  );
+}
+
+function handleRunOperationsAction(action: DashboardA2uiAction): void {
+  switch (action.name) {
+    case "select_run": {
+      const runId = action.context.runId;
+      if (typeof runId !== "string" || !runsById.has(runId)) return;
+      const card = [...runsSection.querySelectorAll<HTMLElement>(".run-card")]
+        .find((item) => item.dataset.runId === runId);
+      if (!card) return;
+      card.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      const details = card.querySelector<HTMLDetailsElement>(".run-card__details");
+      if (!details) return;
+      expandedRunIds.add(runId);
+      details.open = true;
+      if (details.dataset.loaded !== "yes" && details.dataset.loading !== "yes") {
+        const content = details.querySelector<HTMLElement>(".details-content");
+        if (content) void loadRunDetails(runId, details, content);
+      }
+      break;
+    }
+    case "refresh_runs":
+      void loadRuns({ reset: true });
+      break;
+    case "reset_filters":
+      statusFilter.value = "";
+      runSearch.value = "";
+      runSort.value = "newest";
+      expandedRunIds.clear();
+      void loadRuns({ reset: true });
+      break;
+  }
+}
+
+async function runJevAssessment(runId: string, profileId: JEV_PROFILE_ID): Promise<void> {
+  const token = accessToken;
+  if (!token) return;
+  jevStatesByRunId.set(runId, { profileId, status: "loading" });
+  renderRuns();
+  try {
+    const result = await apiJson<JevDecisionResponse>("/dashboard/api/analysis/decisions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ profileId, runId }),
+    });
+    if (token !== accessToken) return;
+    jevStatesByRunId.set(runId, {
+      status: "complete",
+      profileId,
+      result,
+      rating: null,
+      message: "Advisory result received. Review the run record before taking consequential action.",
+    });
+  } catch (error) {
+    if (token !== accessToken) return;
+    const message = error instanceof HttpError && error.status === 429
+      ? "The JEV request limit was reached. Wait a minute before trying again."
+      : "JEV could not validate a response for this run. No action was taken.";
+    jevStatesByRunId.set(runId, { profileId, status: "error", message });
+  }
+  renderRuns();
+}
+
+async function submitJevFeedback(runId: string, profileId: JEV_PROFILE_ID, rating: JevRating): Promise<void> {
+  const token = accessToken;
+  const current = jevStatesByRunId.get(runId);
+  if (!token || current?.status !== "complete" || !current.result || current.feedbackBusy) return;
+  jevStatesByRunId.set(runId, { ...current, feedbackBusy: true, feedbackMessage: "Saving rating…" });
+  renderRuns();
+  try {
+    await apiJson("/dashboard/api/analysis/feedback", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ profileId, runId, rating }),
+    });
+    if (token !== accessToken) return;
+    jevStatesByRunId.set(runId, {
+      ...current,
+      rating,
+      feedbackBusy: false,
+      feedbackMessage: "Rating recorded; JEV's answer was not saved.",
+    });
+  } catch (error) {
+    if (token !== accessToken) return;
+    jevStatesByRunId.set(runId, {
+      ...current,
+      feedbackBusy: false,
+      feedbackMessage: error instanceof HttpError && error.status === 429
+        ? "The feedback limit was reached. Wait a minute before trying again."
+        : "The rating could not be recorded. Please try again.",
+    });
+  }
+  renderRuns();
+}
+
 function renderRun(run: DashboardRunSummary): HTMLElement {
-  return createRunCard(run, {
+  const card = createRunCard(run, {
     ownerDocument: document,
+    now: Date.now(),
     expanded: expandedRunIds.has(run.runId),
+    jevState: jevStatesByRunId.get(run.runId),
+    onJevAssess: runJevAssessment,
+    onJevFeedback: submitJevFeedback,
     onCopyId: (runId) => {
       const clipboard = navigator.clipboard;
       if (!clipboard) {
@@ -358,13 +491,17 @@ function renderRun(run: DashboardRunSummary): HTMLElement {
       if (expanded) {
         expandedRunIds.add(currentRun.runId);
         if (details.dataset.loaded !== "yes" && details.dataset.loading !== "yes") {
-          void loadRunDetails(currentRun.runId, details, content);
+          const cached = runDetailsById.get(currentRun.runId);
+          if (cached) renderLoadedRunDetails(details, content, cached);
+          else void loadRunDetails(currentRun.runId, details, content);
         }
       } else {
         expandedRunIds.delete(currentRun.runId);
       }
     },
   });
+  card.dataset.runId = run.runId;
+  return card;
 }
 
 async function loadRunDetails(runId: string, details: HTMLDetailsElement, content: HTMLElement): Promise<void> {
@@ -383,11 +520,9 @@ async function loadRunDetails(runId: string, details: HTMLDetailsElement, conten
       apiJson<DashboardRunEventsResponse>(`/dashboard/api/runs/${encodeURIComponent(runId)}/events?limit=100`),
     ]);
     if (token !== accessToken) return;
-    content.replaceChildren();
-    appendRunSummary(content, detail);
-    appendRunEvents(content, runId, eventPage);
-    appendRunArtifacts(content, runId, artifacts.artifacts);
-    details.dataset.loaded = "yes";
+    const loaded = { detail, artifacts: artifacts.artifacts, eventPage };
+    runDetailsById.set(runId, loaded);
+    renderLoadedRunDetails(details, content, loaded);
   } catch {
     if (token !== accessToken) return;
     content.replaceChildren();
@@ -403,6 +538,14 @@ async function loadRunDetails(runId: string, details: HTMLDetailsElement, conten
   } finally {
     delete details.dataset.loading;
   }
+}
+
+function renderLoadedRunDetails(details: HTMLDetailsElement, content: HTMLElement, loaded: LoadedRunDetails): void {
+  content.replaceChildren();
+  appendRunSummary(content, loaded.detail);
+  appendRunEvents(content, loaded.detail.runId, loaded.eventPage);
+  appendRunArtifacts(content, loaded.detail.runId, loaded.artifacts);
+  details.dataset.loaded = "yes";
 }
 
 function appendRunSummary(container: HTMLElement, detail: DashboardRunDetail): void {
@@ -424,6 +567,9 @@ function appendRunSummary(container: HTMLElement, detail: DashboardRunDetail): v
     ["Failure class", formatMachineLabel(detail.failureClass)],
     ["Failure details", detail.failureMessage ? detail.failureMessage.slice(0, 1_000) : "Not reported"],
     ["Published URL", publishedUrl || "Not reported"],
+    ["Publication state", detail.publicationStatusAvailable === false ? "Unavailable" : detail.publication ? formatMachineLabel(detail.publication.state) : detail.legacyPublished ? "Legacy published" : "No record"],
+    ["Publication attempts", detail.publication ? String(detail.publication.attemptCount) : "Not reported"],
+    ["Next publication retry", detail.publication?.nextAttemptAt ? formatTimestamp(detail.publication.nextAttemptAt) : "Not scheduled"],
   ], "data-list run-summary-facts");
   section.append(heading, summary, facts);
   if (publishedUrl) {
@@ -584,6 +730,7 @@ function populateStatusFilter(): void {
 function setDashboardVisible(visible: boolean): void {
   runControls.hidden = !visible;
   outcomeOverview.hidden = !visible;
+  runIntelligence.hidden = !visible;
   runsSection.hidden = !visible;
 }
 
@@ -591,9 +738,11 @@ function setNotice(message: string, tone: NoticeTone): void {
   renderNotice(notice, message, tone);
 }
 
-async function apiJson<T = unknown>(path: string): Promise<T> {
+async function apiJson<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
   try {
-    return await fetchJson<T>(path, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" });
+    const headers = new Headers(init.headers);
+    headers.set("authorization", `Bearer ${accessToken}`);
+    return await fetchJson<T>(path, { ...init, headers, cache: "no-store" });
   } catch (error) {
     clearSessionWhenUnauthorized(error);
     throw error;
@@ -628,7 +777,7 @@ function formatBytes(bytes: number): string {
 
 function startRunRefresh(): void {
   stopRunRefresh();
-  runRefreshTimer = setInterval(() => void refreshRunsInBackground(), RUN_REFRESH_INTERVAL_MS);
+  runRefreshTimer = setInterval(() => void refreshRunsInBackground(), DASHBOARD_REFRESH_INTERVAL_MS);
 }
 
 function stopRunRefresh(): void {

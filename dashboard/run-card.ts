@@ -1,4 +1,8 @@
 import { createBadge, createCard, createDefinitionList, createTimestamp } from "./ui/components.js";
+import { calculateRunMetrics, formatDuration } from "./run-metrics.js";
+import { suggestedJevProfile } from "./jev-selection.js";
+import { createJevAssessmentPanel, type JevAssessmentState, type JevRating } from "./jev-panel.js";
+import type { JEV_PROFILE_ID } from "./jev-selection.js";
 import {
   formatMachineLabel,
   formatRepositoryName,
@@ -21,13 +25,28 @@ export interface DashboardRunSummary {
   stage: string | null;
   operationalHealth: "unknown" | "healthy" | "suspect_stalled";
   lastHeartbeatAt: string | null;
+  outcomeSummary?: string | null;
+  legacyPublished?: boolean;
+  publication?: DashboardPublicationSummary | null;
+  publicationStatusAvailable?: boolean;
   failureClass?: string | null;
   failureMessage?: string | null;
 }
 
+export interface DashboardPublicationSummary {
+  state: string;
+  attemptCount: number;
+  nextAttemptAt: string | null;
+  completedAt?: string | null;
+}
+
 export interface RunCardOptions {
   ownerDocument?: Document;
+  now?: number;
   expanded?: boolean;
+  jevState?: JevAssessmentState;
+  onJevAssess?: (runId: string, profileId: JEV_PROFILE_ID) => void;
+  onJevFeedback?: (runId: string, profileId: JEV_PROFILE_ID, rating: JevRating) => void;
   onCopyId?: (runId: string) => void;
   onDetailsToggle?: (
     run: DashboardRunSummary,
@@ -61,6 +80,11 @@ export function createRunCard(run: DashboardRunSummary, options: RunCardOptions 
   if (statusPresentation.active && run.operationalHealth === "suspect_stalled") {
     statuses.append(createBadge("Health: Suspect stalled", "warning", ownerDocument));
   }
+  if (run.publication) {
+    statuses.append(createBadge(`Publication: ${formatMachineLabel(run.publication.state)}`, publicationTone(run.publication.state), ownerDocument));
+  } else if (run.legacyPublished) {
+    statuses.append(createBadge("Publication: Legacy published", "success", ownerDocument));
+  }
   header.append(identity, statuses);
 
   const identifiers = ownerDocument.createElement("div");
@@ -93,6 +117,21 @@ export function createRunCard(run: DashboardRunSummary, options: RunCardOptions 
 
   body.append(identifiers, createTimestamp("Created", run.createdAt, "run-card__created", ownerDocument));
 
+  const metrics = calculateRunMetrics(run, options.now);
+  body.append(createDefinitionList([
+    ["Run age", formatDuration(metrics.runAgeMs)],
+    ["Queue", formatDuration(metrics.queueDurationMs)],
+    ["Execution", formatDuration(metrics.executionDurationMs)],
+    ["Heartbeat age", formatDuration(metrics.heartbeatAgeMs)],
+  ], "data-list run-card__metrics", ownerDocument));
+
+  if (run.outcomeSummary) {
+    const outcome = ownerDocument.createElement("p");
+    outcome.className = "run-card__outcome";
+    outcome.textContent = run.outcomeSummary.slice(0, 500);
+    body.append(outcome);
+  }
+
   const progress = ownerDocument.createElement("p");
   progress.className = "run-card__progress";
   progress.textContent = statusPresentation.active
@@ -123,6 +162,19 @@ export function createRunCard(run: DashboardRunSummary, options: RunCardOptions 
     : lastHeartbeat;
   health.hidden = !statusPresentation.active || run.operationalHealth !== "suspect_stalled";
   body.append(health);
+
+  const jevProfile = suggestedJevProfile(run);
+  if (jevProfile) {
+    const jevState = options.jevState?.profileId === jevProfile ? options.jevState : { status: "idle" as const };
+    body.append(createJevAssessmentPanel({
+      runId: run.runId,
+      profileId: jevProfile,
+      state: jevState,
+      onAssess: (runId, profileId) => options.onJevAssess?.(runId, profileId),
+      onFeedback: (rating) => options.onJevFeedback?.(run.runId, jevProfile, rating),
+      ownerDocument,
+    }));
+  }
 
   const metadata = ownerDocument.createElement("details");
   metadata.className = "run-card__metadata";
@@ -155,4 +207,20 @@ export function createRunCard(run: DashboardRunSummary, options: RunCardOptions 
 
 function formatOptionalTimestamp(value: string | null): string {
   return value ? formatTimestamp(value) : "Not reported";
+}
+
+function publicationTone(state: string): "active" | "warning" | "success" | "danger" | "neutral" {
+  switch (state) {
+    case "pending":
+    case "publishing":
+      return "active";
+    case "retryable_failure":
+      return "warning";
+    case "published":
+      return "success";
+    case "blocked":
+      return "danger";
+    default:
+      return "neutral";
+  }
 }

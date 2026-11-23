@@ -10,7 +10,7 @@ export const A2UI_MAX_DEPTH = 8;
 export const A2UI_MAX_MESSAGES = 100;
 
 const ALLOWED_COMPONENTS = new Set(["Column", "Row", "Card", "Text", "Button", "Divider", "List"]);
-const ALLOWED_ACTIONS = new Set(["select_run", "refresh_runs", "reset_filters", "navigate_dashboard"]);
+const ALLOWED_ACTIONS = new Set(["select_run", "refresh_runs", "reset_filters"]);
 const ALLOWED_DATA_ROOTS = new Set([
   "runs",
   "statusCounts",
@@ -18,6 +18,7 @@ const ALLOWED_DATA_ROOTS = new Set([
   "selectedRunId",
   "events",
   "artifacts",
+  "ops",
 ]);
 
 export interface A2uiValidationResult {
@@ -44,7 +45,7 @@ export function validateA2uiMessages(messages: unknown[], options: A2uiValidatio
     const result = validator.finish();
     return { ...result, messages: validator.messages };
   } catch {
-    return { ok: false, reason: "The generated A2UI message stream is invalid." };
+    return { ok: false, reason: "The A2UI message stream is invalid." };
   } finally {
     validator.dispose();
   }
@@ -180,7 +181,7 @@ function inspectUntrustedFields(value: unknown, parentKey = ""): void {
       continue;
     }
     if ((key === "@path" || (key === "path" && typeof child === "string")) && !isAllowedDataPath(child)) {
-      throw new Error("A2UI binding points outside the analysis data model.");
+      throw new Error("A2UI binding points outside the dashboard data model.");
     }
     inspectUntrustedFields(child, key);
   }
@@ -193,7 +194,7 @@ function isAllowedAction(value: unknown): boolean {
   const event = action.event as Record<string, unknown>;
   if (!ALLOWED_ACTIONS.has(String(event.name))) return false;
   const context = event.context;
-  if (context === undefined) return event.name !== "select_run" && event.name !== "navigate_dashboard";
+  if (context === undefined) return event.name !== "select_run";
   if (!context || typeof context !== "object" || Array.isArray(context)) return false;
   const fields = context as Record<string, unknown>;
 
@@ -203,8 +204,6 @@ function isAllowedAction(value: unknown): boolean {
     case "refresh_runs":
     case "reset_filters":
       return Object.keys(fields).length === 0;
-    case "navigate_dashboard":
-      return Object.keys(fields).length === 1 && fields.path === "/dashboard/analysis/";
     default:
       return false;
   }

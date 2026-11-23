@@ -11,11 +11,8 @@ function readDashboardPage(path) {
 }
 
 describe("dashboard page composition", () => {
-  it.each([
-    ["public/dashboard/index.html", "Recent runs", "/dashboard/"],
-    ["public/dashboard/analysis/index.html", "Run analysis", "/dashboard/analysis/"],
-  ])("[DASHBOARD-PAGE-SEMANTICS-01] uses one in-main page header and identifies the current destination in %s", (path, title, currentHref) => {
-    const document = readDashboardPage(path);
+  it("[DASHBOARD-PAGE-SEMANTICS-01] keeps run operations on one dashboard page", () => {
+    const document = readDashboardPage("public/dashboard/index.html");
     const main = document.querySelector("main");
     const headers = document.querySelectorAll("main > header");
     const headings = document.querySelectorAll("main h1");
@@ -25,11 +22,14 @@ describe("dashboard page composition", () => {
     expect(headers).toHaveLength(1);
     expect(headings).toHaveLength(1);
     expect(headers[0].contains(headings[0])).toBe(true);
-    expect(headings[0].textContent).toBe(title);
+    expect(headings[0].textContent).toBe("Recent runs");
     expect(headings[0].getAttribute("aria-describedby")).toBe("page-description");
     expect(main.querySelector("#page-description")).not.toBeNull();
     expect(currentLinks).toHaveLength(1);
-    expect(currentLinks[0].getAttribute("href")).toBe(currentHref);
+    expect(currentLinks[0].getAttribute("href")).toBe("/dashboard/");
+    expect(document.querySelectorAll('nav a[href^="/dashboard/"]')).toHaveLength(1);
+    expect(document.querySelector("#analysis-question")).toBeNull();
+    expect(document.querySelector("#run-intelligence")).not.toBeNull();
   });
 
   it("[DASHBOARD-RUN-CONTROLS-01] groups run search, filters, and actions while retaining labelled native controls", () => {
@@ -46,25 +46,10 @@ describe("dashboard page composition", () => {
     expect(toolbar.querySelector('label[for="run-sort"]')).not.toBeNull();
     expect(toolbar.querySelector('label[for="status-filter"]')).not.toBeNull();
     expect(toolbar.querySelector("#run-count").getAttribute("aria-live")).toBe("polite");
+    expect(toolbar.querySelector("#refresh").textContent).toBe("Refresh runs");
+    expect(toolbar.querySelector("#refresh").getAttribute("aria-describedby")).toBe("refresh-help updated");
+    expect(toolbar.querySelector("#refresh-help").textContent).toContain("Automatic refresh runs hourly");
+    expect(toolbar.querySelector("#updated").getAttribute("aria-live")).toBe("polite");
   });
 
-  it("[DASHBOARD-ANALYSIS-FORM-01] gives analysis and JEV fields accessible labels and help", () => {
-    const document = readDashboardPage("public/dashboard/analysis/index.html");
-    const question = document.querySelector("#analysis-question");
-    const profile = document.querySelector("#analysis-jev-profile");
-    const runId = document.querySelector("#analysis-jev-run-id");
-
-    expect(document.querySelector('label[for="analysis-question"]')?.textContent).toBe("What would you like to know?");
-    expect(question.hasAttribute("required")).toBe(true);
-    expect(question.getAttribute("aria-describedby")).toBe("analysis-question-help");
-    expect(document.querySelector("#analysis-question-help")?.textContent).toContain("generated view is read-only");
-
-    expect(document.querySelector('label[for="analysis-jev-profile"]')?.textContent).toBe("Decision profile");
-    expect(document.querySelector('label[for="analysis-jev-run-id"]')?.textContent).toBe("Run to assess");
-    expect(runId.hasAttribute("required")).toBe(true);
-    expect(runId.getAttribute("aria-describedby")).toBe("analysis-jev-run-help");
-    expect(document.querySelector("#analysis-jev-run-help")?.textContent).toContain("enter its retained run UUID");
-    expect(document.querySelector("#analysis-jev-disclosure > summary")?.textContent).toBe("Decision support with JEV");
-    expect(profile.tagName).toBe("SELECT");
-  });
 });
