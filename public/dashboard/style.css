@@ -134,6 +134,17 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -.04em; }
 .outcome-overview__section h3 { margin: 0 0 var(--space-2); font-size: .95rem; }
 .outcome-overview__section ul { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); margin: 0; padding-left: 1.25rem; }
 .outcome-overview__empty { margin: var(--space-4) 0 0; }
+.jev-feedback-overview { margin: var(--space-4) 0 var(--space-5); }
+.jev-feedback-overview__profile { margin-top: var(--space-4); }
+.jev-feedback-overview__profile h3 { margin: 0 0 var(--space-2); font-size: .95rem; }
+.ui-metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); gap: var(--space-3); }
+.ui-metric { display: grid; align-content: start; gap: var(--space-1); min-width: 0; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); }
+.ui-metric__label { color: var(--color-muted); font-size: .82rem; font-weight: 650; }
+.ui-metric__value { font-size: 1.2rem; overflow-wrap: anywhere; }
+.ui-metric__detail { margin: 0; color: var(--color-muted); font-size: .85rem; }
+.ui-summary-list { margin-top: var(--space-4); }
+.ui-summary-list h3 { margin: 0 0 var(--space-2); font-size: .95rem; }
+.ui-summary-list ul { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); margin: 0; padding-left: 1.25rem; }
 .run-card .card__footer { display: grid; align-items: stretch; gap: var(--space-3); }
 .run-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
 .run-card__statuses { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }

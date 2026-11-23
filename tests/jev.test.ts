@@ -64,6 +64,19 @@ function validAnswers(profileId: JevProfileId): Record<string, unknown> {
       }
       return answers;
     }
+    case "run_retry_review_v1":
+      return {
+        recovery: {
+          type: "choice", choice: "recovered",
+          probabilities: { recovered: 0.8, partial: 0.1, not_recovered: 0.05, unclear: 0.05 }, confidence: null,
+        },
+        evidence_strength: {
+          type: "score", score: 2,
+          legend: { "0": "Insufficient", "1": "Some concrete detail", "2": "Clear and specific" },
+          probabilities: { "0": 0.05, "1": 0.1, "2": 0.85 }, confidence: null,
+        },
+        needs_followup: { type: "noul", noul: 0.1, probabilities: { false: 0.9, true: 0.1 }, confidence: null },
+      };
   }
 }
 
@@ -113,6 +126,38 @@ describe("Soyuz to Senku decision client", () => {
       canonicalRun: { status: "completed", failureClass: null, exitCode: -1, changedFileCount: null },
       summary: "😀".repeat(2_000),
     });
+  });
+
+  it("[JEV-RETRY-INPUT-01] builds a bounded source/retry comparison without prompts, URLs, or artifacts", () => {
+    const source = {
+      status: "failed", failure_class: "validation_failure", exit_code: 1,
+      result_json: JSON.stringify({ summary: "Original failure summary.", changedFileCount: 2, publishedUrl: "https://private.example.invalid" }),
+      request_json: JSON.stringify({ taskPrompt: "private task prompt" }), repo_url: "https://private.example.invalid/repo",
+    } as Parameters<typeof buildSenkuInput>[1];
+    const retry = {
+      status: "completed", failure_class: null, exit_code: 0,
+      result_json: JSON.stringify({ summary: "Retry completed with checks passing.", changedFileCount: 3, artifact: "private artifact" }),
+      request_json: JSON.stringify({ taskPrompt: "private retry prompt" }), repo_url: "https://private.example.invalid/repo",
+    } as Parameters<typeof buildSenkuInput>[1];
+
+    const input = buildSenkuInput("run_retry_review_v1", retry, source);
+    expect(input).toEqual({
+      retryComparison: {
+        source: {
+          status: "failed", failureClass: "validation_failure", exitCode: 1,
+          changedFileCount: 2, summary: "Original failure summary.",
+        },
+        retry: {
+          status: "completed", failureClass: null, exitCode: 0,
+          changedFileCount: 3, summary: "Retry completed with checks passing.",
+        },
+      },
+    });
+    const serialized = JSON.stringify(input);
+    expect(serialized).not.toContain("private task prompt");
+    expect(serialized).not.toContain("private retry prompt");
+    expect(serialized).not.toContain("private.example.invalid");
+    expect(serialized).not.toContain("private artifact");
   });
 
   it("sends the versioned profile envelope and machine token through one binding call", async () => {

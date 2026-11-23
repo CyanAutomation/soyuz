@@ -43,4 +43,12 @@ export const JEV_PROFILE_CONTRACTS: Readonly<Record<JevProfileId, JevProfileCont
       },
     },
   },
+  run_retry_review_v1: {
+    version: "1",
+    answers: {
+      recovery: { type: "choice", choices: ["recovered", "partial", "not_recovered", "unclear"] },
+      evidence_strength: { type: "score", legend: ["Insufficient", "Some concrete detail", "Clear and specific"] },
+      needs_followup: { type: "noul" },
+    },
+  },
 };

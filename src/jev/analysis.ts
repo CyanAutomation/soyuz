@@ -39,7 +39,22 @@ export async function handleJevAnalysisRequest(
 
   try {
     const row = await readRun(env, parsed.data.runId);
-    const input = buildSenkuInput(parsed.data.profileId, row);
+    let sourceRow: RetainedRun | undefined;
+    if (parsed.data.profileId === "run_retry_review_v1") {
+      if (!row.retry_of) throw new RunApplicationError(409, "JEV_PROFILE_NOT_APPLICABLE", "Retry comparison is available only for runs linked to an earlier run.");
+      try {
+        sourceRow = await readRun(env, row.retry_of);
+      } catch (error) {
+        if (error instanceof RunApplicationError && error.status === 404) {
+          throw new RunApplicationError(409, "JEV_PROFILE_NOT_APPLICABLE", "The source run for this retry is no longer available.");
+        }
+        throw error;
+      }
+      if (sourceRow.origin_type !== row.origin_type || sourceRow.origin_id !== row.origin_id) {
+        throw new RunApplicationError(409, "JEV_PROFILE_NOT_APPLICABLE", "Retry comparison is unavailable for this run relationship.");
+      }
+    }
+    const input = buildSenkuInput(parsed.data.profileId, row, sourceRow);
     const decision = await requestSenkuDecision(env, parsed.data.profileId, input, senkuBinding);
     outcome = "success";
     model = decision.model;
@@ -91,7 +106,7 @@ export async function handleJevAnalysisRequest(
 
 type RetainedRun = Awaited<ReturnType<typeof readRun>>;
 
-export function buildSenkuInput(profileId: JevProfileId, row: RetainedRun): Record<string, unknown> {
+export function buildSenkuInput(profileId: JevProfileId, row: RetainedRun, sourceRow?: RetainedRun): Record<string, unknown> {
   switch (profileId) {
     case "run_operations_triage_v1":
       return {
@@ -129,9 +144,35 @@ export function buildSenkuInput(profileId: JevProfileId, row: RetainedRun): Reco
         summary,
       };
     }
+    case "run_retry_review_v1": {
+      if (!sourceRow) throw new RunApplicationError(409, "JEV_PROFILE_NOT_APPLICABLE", "Retry comparison is unavailable for this run.");
+      return { retryComparison: { source: retryEvidence(sourceRow), retry: retryEvidence(row) } };
+    }
     default:
       return assertNever(profileId);
   }
+}
+
+function retryEvidence(row: RetainedRun): Record<string, unknown> {
+  const result = parseResult(row);
+  const summary = typeof result?.summary === "string"
+    ? Array.from(result.summary).slice(0, 2_000).join("")
+    : null;
+  const changedFileCount = typeof result?.changedFileCount === "number"
+    && Number.isSafeInteger(result.changedFileCount)
+    && result.changedFileCount >= 0
+    && result.changedFileCount <= 1_000_000
+    ? result.changedFileCount
+    : null;
+  const exitCode = typeof row.exit_code === "number" && Number.isInteger(row.exit_code)
+    && row.exit_code >= -1 && row.exit_code <= 255 ? row.exit_code : null;
+  return {
+    status: row.status,
+    failureClass: typeof row.failure_class === "string" && row.failure_class.length <= 128 ? row.failure_class : null,
+    exitCode,
+    changedFileCount,
+    summary,
+  };
 }
 
 function assertNever(value: never): never {

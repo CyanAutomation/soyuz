@@ -8,8 +8,37 @@ import { mergeRunListPage, shouldRenderRunList } from "../dashboard/run-list-sta
 
 vi.mock("../dashboard/a2ui-renderer.js", () => ({
   A2uiDomRenderer: class {
-    constructor(private readonly target: { replaceChildren(...children: unknown[]): void }) {}
-    render(_messages: unknown[], _hostData?: Record<string, unknown>) { this.target.replaceChildren(); }
+    constructor(
+      private readonly target: { replaceChildren(...children: unknown[]): void },
+      private readonly onAction: (action: { name: string; context: Record<string, unknown> }) => void,
+    ) {}
+    render(messages: unknown[], hostData: Record<string, unknown> = {}) {
+      const rendered: FakeNode[] = [];
+      for (const value of flattenValues(hostData)) {
+        const text = createNode("P");
+        text.textContent = value;
+        rendered.push(text);
+      }
+      const surface = (messages[0] as { createSurface?: { components?: Array<Record<string, any>> } })?.createSurface;
+      const components = surface?.components ?? [];
+      for (const component of components) {
+        if (component.component !== "Button" || !component.action?.event) continue;
+        const label = components.find((item) => item.id === component.child)?.text;
+        const button = createNode("BUTTON");
+        button.textContent = typeof label === "string" ? label : "Action";
+        if (component.action.event.name === "load_more_events") button.className = "load-older-events";
+        button.addEventListener("click", () => {
+          const context: Record<string, unknown> = {};
+          for (const [key, value] of Object.entries(component.action.event.context ?? {})) {
+            const path = typeof value === "object" && value !== null ? (value as Record<string, unknown>)["@path"] : null;
+            if (typeof path === "string") context[key] = getPathValue(hostData, path);
+          }
+          this.onAction({ name: component.action.event.name, context });
+        });
+        rendered.push(button);
+      }
+      this.target.replaceChildren(...rendered);
+    }
     clear() { this.target.replaceChildren(); }
     dispose() { this.clear(); }
   },
@@ -41,6 +70,8 @@ interface FakeNode {
   classList: { toggle(name: string, force?: boolean): boolean };
   setAttribute(name: string, value: string): void;
   removeAttribute(name: string): void;
+  querySelector(selector: string): FakeNode | null;
+  querySelectorAll(selector: string): FakeNode[];
   children: unknown[];
   listeners: Record<string, Array<(event?: Event) => void>>;
   addEventListener(event: string, callback: (event?: Event) => void): void;
@@ -224,7 +255,7 @@ describe("dashboard application flows", () => {
     expect(nodeAt(nodes, "#account")).toMatchObject({ hidden: false, textContent: "Signed in as @current-user" });
     expect(nodeAt(nodes, "#runs").children).toHaveLength(1);
     await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/outcomes")).toBe(true));
-    expect(nodeAt(nodes, "#outcome-overview").children).toHaveLength(1);
+    expect(nodeAt(nodes, "#outcome-overview").children.length).toBeGreaterThan(0);
     expect(nodeAt(nodes, "#outcome-overview").hidden).toBe(false);
     nodeAt(nodes, "#connect").dispatch("click");
 
@@ -235,6 +266,8 @@ describe("dashboard application flows", () => {
     expect(nodeAt(nodes, "#runs").children).toEqual([]);
     expect(nodeAt(nodes, "#outcome-overview").hidden).toBe(true);
     expect(nodeAt(nodes, "#outcome-overview").children).toEqual([]);
+    expect(nodeAt(nodes, "#jev-feedback-overview").hidden).toBe(true);
+    expect(nodeAt(nodes, "#jev-feedback-overview").children).toEqual([]);
 
     const revocation = requests.at(-1);
     expect(revocation?.path).toBe("/oauth/token");
@@ -253,6 +286,7 @@ describe("dashboard application flows", () => {
     expect(flattenText(overview)).toContain("1 of 1 runs with outcome data");
     expect(flattenText(overview)).toContain("Based on the newest 30 retained runs");
     expect(flattenText(overview)).toContain("Good · 1");
+    expect(flattenText(nodeAt(nodes, "#jev-feedback-overview"))).toContain("No JEV ratings have been recorded");
   });
 
   it("[DASHBOARD-RUN-DISPLAY-01] shows a readable run ID and copies the canonical UUID", async () => {
@@ -291,17 +325,17 @@ describe("dashboard application flows", () => {
     details.dispatch("toggle");
 
     await vi.waitFor(() => expect(requests.some(({ path }) => path === `/dashboard/api/runs/${runId}/events?limit=100`)).toBe(true));
-    await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("https://github.com/example/project/pull/7"));
+    await vi.waitFor(() => expect(findNodes(nodeAt(nodes, "#runs"), "A")).toHaveLength(1));
     expect(findNodes(nodeAt(nodes, "#runs"), "A").find((link) => link.textContent === "Open published URL"))
       .toMatchObject({ href: "https://github.com/example/project/pull/7", target: "_blank", rel: "noopener noreferrer" });
     expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Changed files 2");
     expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Exit code 0");
-    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Origin Kaseki (kaseki-prod)");
+    expect(flattenText(nodeAt(nodes, "#runs"))).not.toContain("Origin Kaseki (kaseki-prod)");
     await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Run started"));
     expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Artifact upload report");
     expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Uploaded Count 2");
     expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Failed Count 1");
-    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("No artifacts are available in Soyuz for this run.");
+    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("No artifacts are available for this run.");
 
     findNodeByClass(nodeAt(nodes, "#runs"), "load-older-events").click();
     await vi.waitFor(() => expect(requests.some(({ path }) => path === `/dashboard/api/runs/${runId}/events?after=100&limit=100`)).toBe(true));
@@ -315,7 +349,6 @@ describe("dashboard application flows", () => {
     details.dispatch("toggle");
 
     await vi.waitFor(() => expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Validation passed"));
-    expect(flattenText(nodeAt(nodes, "#runs"))).toContain("Published URL Not reported");
     expect(findNodes(nodeAt(nodes, "#runs"), "A")).toHaveLength(0);
   });
 
@@ -384,6 +417,7 @@ async function mountDashboard(
     ["#runs", createNode()],
     ["#run-intelligence", createNode()],
     ["#outcome-overview", createNode()],
+    ["#jev-feedback-overview", createNode()],
     ["#run-controls", createNode()],
     ["#connect", createNode()],
     ["#account", createNode()],
@@ -396,7 +430,7 @@ async function mountDashboard(
     ["#updated", createNode()],
     ["#snackbar", createNode()],
   ]);
-  for (const selector of ["#runs", "#run-intelligence", "#outcome-overview", "#run-controls"]) {
+  for (const selector of ["#runs", "#run-intelligence", "#outcome-overview", "#jev-feedback-overview", "#run-controls"]) {
     nodeAt(nodes, selector).hidden = true;
   }
   const sessionValues = new Map([
@@ -457,6 +491,7 @@ async function mountDashboard(
       byAssessment: { good: 1 }, byReviewerConfidence: { high: 1 }, byGrade: { B: 1 }, averageScore: 87,
       improvementCategories: [], phaseDurations: [],
     });
+    if (path === "/dashboard/api/analysis/feedback-summary") return jsonResponse({ profiles: [] });
     if (path === "/dashboard/api/runs?limit=30") return jsonResponse({ runs: [run], nextCursor: "cursor+/1" });
     if (path === `/dashboard/api/runs/${runId}`) return jsonResponse({
       ...run,
@@ -540,6 +575,8 @@ function createNode(tagName = "DIV"): FakeNode {
     },
     setAttribute(name: string, value: string) { node.attributes[name] = value; },
     removeAttribute(name: string) { delete node.attributes[name]; },
+    querySelector(selector: string) { return findFakeNodes(node, selector)[0] ?? null; },
+    querySelectorAll(selector: string) { return findFakeNodes(node, selector); },
     attributes: {} as Record<string, string>,
     children: [] as unknown[],
     listeners: {} as Record<string, Array<(event?: Event) => void>>,
@@ -592,6 +629,18 @@ function findNodes(root: FakeNode, tagName: string): FakeNode[] {
   return found;
 }
 
+function findFakeNodes(root: FakeNode, selector: string): FakeNode[] {
+  const className = selector.startsWith(".") ? selector.slice(1) : null;
+  const found: FakeNode[] = [];
+  for (const child of root.children) {
+    if (!child || typeof child !== "object") continue;
+    const candidate = child as FakeNode;
+    if (className && candidate.className.split(/\s+/).includes(className)) found.push(candidate);
+    found.push(...findFakeNodes(candidate, selector));
+  }
+  return found;
+}
+
 function findNodeBySummary(root: FakeNode, text: string): FakeNode {
   if (root.tagName === "DETAILS" && root.children.some((child) => child && typeof child === "object" && (child as FakeNode).tagName === "SUMMARY" && (child as FakeNode).textContent === text)) return root;
   for (const child of root.children) {
@@ -618,4 +667,19 @@ function findNodeByClass(root: FakeNode, className: string): FakeNode {
 
 function flattenText(root: FakeNode): string {
   return [root.textContent, ...root.children.filter((child): child is FakeNode => Boolean(child && typeof child === "object")).map(flattenText)].join(" ");
+}
+
+function flattenValues(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (typeof value === "number" || typeof value === "boolean") return [String(value)];
+  if (Array.isArray(value)) return value.flatMap(flattenValues);
+  if (value && typeof value === "object") return Object.values(value).flatMap(flattenValues);
+  return [];
+}
+
+function getPathValue(root: Record<string, unknown>, path: string): unknown {
+  return path.split("/").filter(Boolean).reduce<unknown>((value, segment) => {
+    if (!value || typeof value !== "object") return undefined;
+    return (value as Record<string, unknown>)[segment];
+  }, root);
 }

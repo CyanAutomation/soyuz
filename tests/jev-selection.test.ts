@@ -6,6 +6,21 @@ describe("JEV profile suggestion", () => {
   it("[JEV-SELECT-01] suggests outcome review for completed runs with a summary", () => {
     expect(suggestedJevProfile({ status: "completed", outcomeSummary: "Checks passed." })).toBe("kaseki_output_review_v2");
   });
+  it("[JEV-RETRY-REVIEW-01] suggests retry review for terminal runs with retry lineage", () => {
+    for (const status of ["completed", "failed", "cancelled", "admission_failed"]) {
+      expect(suggestedJevProfile({ status, retryOf: "00000000-0000-4000-8000-000000000001" })).toBe("run_retry_review_v1");
+    }
+  });
+  it("[JEV-RETRY-REVIEW-01] leaves active retries to operational triage", () => {
+    expect(suggestedJevProfile({ status: "running", retryOf: "00000000-0000-4000-8000-000000000001", operationalHealth: "suspect_stalled" })).toBe("run_operations_triage_v1");
+    expect(suggestedJevProfile({ status: "running", retryOf: "00000000-0000-4000-8000-000000000001", operationalHealth: "healthy" })).toBeNull();
+  });
+  it("[JEV-RETRY-REVIEW-01] ignores non-string statuses when selecting retry review", () => {
+    const retryOf = "00000000-0000-4000-8000-000000000001";
+
+    expect(suggestedJevProfile({ status: null, retryOf })).toBeNull();
+    expect(suggestedJevProfile({ status: { toString: () => "failed" }, retryOf })).toBeNull();
+  });
   it("[JEV-SELECT-01] does not suggest output review when a completed run has no summary", () => {
     expect(suggestedJevProfile({ status: "completed", outcomeSummary: null })).toBeNull();
   });
@@ -49,6 +64,17 @@ describe("JEV profile suggestion", () => {
         "Partial or limited outcome evidence",
         "Successful and clearly reported outcome",
       ],
+    });
+  });
+
+  it("[JEV-RETRY-REVIEW-01] exposes a versioned bounded retry comparison answer contract", () => {
+    expect(JEV_PROFILE_CONTRACTS.run_retry_review_v1).toMatchObject({
+      version: "1",
+      answers: {
+        recovery: { type: "choice", choices: ["recovered", "partial", "not_recovered", "unclear"] },
+        evidence_strength: { type: "score" },
+        needs_followup: { type: "noul" },
+      },
     });
   });
 });

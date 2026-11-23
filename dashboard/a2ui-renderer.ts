@@ -2,10 +2,10 @@ import { DataModel, type SurfaceModel } from "@a2ui/web_core/state";
 import { MessageProcessor } from "@a2ui/web_core/processing";
 import { STRICT_VALIDATION } from "@a2ui/web_core/validating";
 import { basicCatalog } from "../a2ui/catalog";
-import { validateA2uiMessages } from "../a2ui/protocol";
+import { validateA2uiMessages, type A2uiActionName } from "../a2ui/protocol";
 
 export interface DashboardA2uiAction {
-  name: "select_run" | "refresh_runs" | "reset_filters";
+  name: A2uiActionName;
   context: Record<string, unknown>;
 }
 
@@ -159,7 +159,7 @@ export class A2uiDomRenderer {
     const event = value.event;
     button.addEventListener("click", () => {
       this.onAction({
-        name: event.name as DashboardA2uiAction["name"],
+        name: event.name as A2uiActionName,
         context: this.resolveActionContext(surface, event.context, contextPath),
       });
     });
@@ -189,7 +189,7 @@ export class A2uiDomRenderer {
     const path = DataModel.resolvePath(relativePath, contextPath);
     const items: unknown = surface.dataModel.get(path);
     if (!Array.isArray(items)) return;
-    for (let index = 0; index < Math.min(items.length, 30); index += 1) {
+    for (let index = 0; index < Math.min(items.length, 100); index += 1) {
       const itemContext = DataModel.resolvePath(String(index), path);
       target.appendChild(this.renderComponent(surface, componentId, itemContext, ancestry));
     }

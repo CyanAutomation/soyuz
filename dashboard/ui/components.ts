@@ -30,6 +30,12 @@ export interface FieldParts {
   error: HTMLParagraphElement | null;
 }
 
+export interface MetricItem {
+  label: string;
+  value: string;
+  detail?: string;
+}
+
 export interface ActionButtonOptions {
   variant?: "primary" | "secondary";
   className?: string;
@@ -132,6 +138,58 @@ export function createDefinitionList(
     list.appendChild(item);
   }
   return list;
+}
+
+/** Reusable semantic metric tiles for compact dashboard summaries. */
+export function createMetricGrid(
+  metrics: readonly MetricItem[],
+  className = "",
+  ownerDocument: Document = document,
+): HTMLElement {
+  const grid = ownerDocument.createElement("div");
+  grid.className = ["ui-metric-grid", className].filter(Boolean).join(" ");
+  for (const metric of metrics) {
+    const item = ownerDocument.createElement("article");
+    item.className = "ui-metric";
+    const label = ownerDocument.createElement("span");
+    label.className = "ui-metric__label";
+    label.textContent = metric.label;
+    const value = ownerDocument.createElement("strong");
+    value.className = "ui-metric__value";
+    value.textContent = metric.value;
+    item.appendChild(label);
+    item.appendChild(value);
+    if (metric.detail) {
+      const detail = ownerDocument.createElement("p");
+      detail.className = "ui-metric__detail";
+      detail.textContent = metric.detail;
+      item.appendChild(detail);
+    }
+    grid.appendChild(item);
+  }
+  return grid;
+}
+
+/** Reusable titled list for short, text-only summaries. */
+export function createSummaryList(
+  titleText: string,
+  items: readonly string[],
+  ownerDocument: Document = document,
+  className = "",
+): HTMLElement {
+  const section = ownerDocument.createElement("section");
+  section.className = ["ui-summary-list", className].filter(Boolean).join(" ");
+  const heading = ownerDocument.createElement("h3");
+  heading.textContent = titleText;
+  const list = ownerDocument.createElement("ul");
+  for (const text of items) {
+    const item = ownerDocument.createElement("li");
+    item.textContent = text;
+    list.appendChild(item);
+  }
+  section.appendChild(heading);
+  section.appendChild(list);
+  return section;
 }
 
 /** Build a labelled field and associate its help and validation messages with the control. */

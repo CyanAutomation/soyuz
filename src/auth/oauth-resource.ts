@@ -46,6 +46,10 @@ export async function handleDashboardApiRequest(
     return handleJevFeedbackRequest(request, env, access.context.props.githubUserId, requestId);
   }
   if (request.method !== "GET") return errorResponse(requestId, 405, "METHOD_NOT_ALLOWED", "The dashboard is read-only except for authenticated JEV decision and feedback requests.");
+  if (segments.length === 2 && segments[0] === "analysis" && segments[1] === "feedback-summary") {
+    const { handleJevFeedbackSummaryRequest } = await import("../jev/feedback");
+    return handleJevFeedbackSummaryRequest(env, requestId);
+  }
   return routeDashboardApiRequest(request, env, url, segments, requestId, access.context, context);
 }
 
