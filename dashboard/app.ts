@@ -1,4 +1,5 @@
 import { fetchJson, HttpError } from "./api.js";
+import { jevAssessmentErrorMessage } from "./jev-errors.js";
 import { revokeAccessToken } from "./auth-api.js";
 import { renderAuthUi } from "./auth-ui.js";
 import { createSnackBarController } from "./snackbar.js";
@@ -478,9 +479,7 @@ async function runJevAssessment(runId: string, profileId: JEV_PROFILE_ID): Promi
     });
   } catch (error) {
     if (token !== accessToken) return;
-    const message = error instanceof HttpError && error.status === 429
-      ? "The JEV request limit was reached. Wait a minute before trying again."
-      : "JEV could not validate a response for this run. No action was taken.";
+    const message = jevAssessmentErrorMessage(error);
     jevStatesByRunId.set(runId, { profileId, status: "error", message });
   }
   renderRuns();

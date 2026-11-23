@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchJson } from "../dashboard/api.ts";
+import { fetchJson, HttpError } from "../dashboard/api.ts";
+import { jevAssessmentErrorMessage } from "../dashboard/jev-errors.ts";
 import { renderAuthUi } from "../dashboard/auth-ui.ts";
 import { revokeAccessToken } from "../dashboard/auth-api.ts";
 import { buildRunListPath, isActiveRunStatus } from "../dashboard/run-list.ts";
@@ -171,7 +172,31 @@ describe("dashboard API responses", () => {
     expect(formatRepositoryName("not a url")).toBe("not a url");
   });
 
-  it("[DASHBOARD-API-ERROR-01] preserves HTTP failures without decoding a non-JSON error body", async () => {
+  it("[DASHBOARD-API-ERROR-01] extracts safe error identifiers without exposing server messages", async () => {
+    const response = {
+      ok: false,
+      status: 502,
+      json: vi.fn().mockResolvedValue({
+        error: {
+          code: "JEV_PROVIDER_UNAVAILABLE",
+          message: "upstream private diagnostic",
+          requestId: "dec-00000000-0000-4000-8000-000000000123",
+        },
+      }),
+    };
+    const fetcher = vi.fn().mockResolvedValue(response);
+
+    await expect(fetchJson("/api", {}, fetcher)).rejects.toMatchObject({
+      name: "HttpError",
+      message: "request failed",
+      status: 502,
+      code: "JEV_PROVIDER_UNAVAILABLE",
+      requestId: "dec-00000000-0000-4000-8000-000000000123",
+    });
+    expect(response.json).toHaveBeenCalledOnce();
+  });
+
+  it("[DASHBOARD-API-ERROR-02] preserves HTTP failures when an error body is not JSON", async () => {
     const response = {
       ok: false,
       status: 500,
@@ -183,8 +208,25 @@ describe("dashboard API responses", () => {
       name: "HttpError",
       message: "request failed",
       status: 500,
+      code: undefined,
+      requestId: undefined,
     });
-    expect(response.json).not.toHaveBeenCalled();
+    expect(response.json).toHaveBeenCalledOnce();
+  });
+
+  it("[DASHBOARD-JEV-ERROR-01] turns known provider failures into actionable safe messages", () => {
+    const unavailable = new HttpError("request failed", 502, "JEV_PROVIDER_UNAVAILABLE", "dec-00000000-0000-4000-8000-000000000123");
+    expect(jevAssessmentErrorMessage(unavailable)).toBe(
+      "JEV could not reach its decision service. Retry shortly. No action was taken. Reference: dec-00000000-0000-4000-8000-000000000123.",
+    );
+    expect(jevAssessmentErrorMessage(new HttpError("request failed", 504, "JEV_PROVIDER_TIMEOUT")))
+      .toBe("JEV analysis timed out. Retry shortly. No action was taken.");
+    expect(jevAssessmentErrorMessage(new HttpError("request failed", 502, "UNRECOGNIZED_CODE")))
+      .toBe("JEV could not validate a response for this run. No action was taken.");
+    expect(jevAssessmentErrorMessage(new HttpError("request failed", 502, "JEV_PROVIDER_UNAVAILABLE", "<script>")))
+      .toBe("JEV could not reach its decision service. Retry shortly. No action was taken.");
+    expect(jevAssessmentErrorMessage(new HttpError("request failed", 429)))
+      .toBe("The JEV request limit was reached. Wait a minute before trying again.");
   });
 
   it("[DASHBOARD-AUTH-STATUS-01] preserves HTTP status so the dashboard can clear an expired or rejected sign-in", async () => {
