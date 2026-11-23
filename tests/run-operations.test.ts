@@ -41,6 +41,7 @@ describe("run operations A2UI surface", () => {
       run({ runId: "00000000-0000-4000-8000-000000000104", status: "completed", completedAt: "2026-11-22T12:04:00.000Z", outcomeSummary: "Updated the project safely." }),
       run({ runId: "00000000-0000-4000-8000-000000000105", status: "completed", publication: { state: "retryable_failure", attemptCount: 2, nextAttemptAt: "2026-11-22T12:15:00.000Z" } }),
       run({ runId: "00000000-0000-4000-8000-000000000106", status: "completed", legacyPublished: true }),
+      run({ runId: "00000000-0000-4000-8000-000000000107", status: "cancelled", completedAt: "2026-11-22T12:05:00.000Z" }),
     ], now);
 
     expect(projection.ops.activeRuns.map((item) => item.runId)).toEqual(["00000000-0000-4000-8000-000000000101"]);
@@ -52,6 +53,7 @@ describe("run operations A2UI surface", () => {
       "00000000-0000-4000-8000-000000000104",
       "00000000-0000-4000-8000-000000000105",
       "00000000-0000-4000-8000-000000000106",
+      "00000000-0000-4000-8000-000000000107",
     ]);
     expect(projection.ops.publicationRuns.map((item) => item.publicationState)).toEqual([
       "Retryable failure",
