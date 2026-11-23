@@ -4,6 +4,7 @@ import { renderAuthUi } from "../dashboard/auth-ui.ts";
 import { revokeAccessToken } from "../dashboard/auth-api.ts";
 import { buildRunListPath, isActiveRunStatus } from "../dashboard/run-list.ts";
 import { safeHttpUrlForDisplay } from "../dashboard/ui/safe-url.ts";
+import { mergeRunListPage, shouldRenderRunList } from "../dashboard/run-list-state.ts";
 
 vi.mock("../dashboard/a2ui-renderer.js", () => ({
   A2uiDomRenderer: class {
@@ -81,6 +82,30 @@ describe("dashboard API responses", () => {
     for (const status of ["cancelled", "completed", "failed", "admission_failed", "unknown"]) {
       expect(isActiveRunStatus(status), status).toBe(false);
     }
+  });
+
+  it("[DASHBOARD-RUN-LIST-STATE-01] merges pages by run ID and replaces stale pages on reset", () => {
+    const initial = mergeRunListPage(new Map(), [
+      { runId: "run-a", status: "running" },
+      { runId: "run-b", status: "queued" },
+    ], true);
+    const appended = mergeRunListPage(initial, [
+      { runId: "run-b", status: "completed" },
+      { runId: "run-c", status: "running" },
+    ], false);
+
+    expect([...appended.values()]).toEqual([
+      { runId: "run-a", status: "running" },
+      { runId: "run-b", status: "completed" },
+      { runId: "run-c", status: "running" },
+    ]);
+    expect([...mergeRunListPage(appended, [{ runId: "run-d", status: "failed" }], true).keys()]).toEqual(["run-d"]);
+  });
+
+  it("[DASHBOARD-RUN-LIST-STATE-02] preserves expanded details during a quiet first-page refresh", () => {
+    expect(shouldRenderRunList(true, 1)).toBe(false);
+    expect(shouldRenderRunList(true, 0)).toBe(true);
+    expect(shouldRenderRunList(false, 1)).toBe(true);
   });
 
   it("[DASHBOARD-PRESENTATION-01] uses one readable status catalog for filters and run cards", () => {

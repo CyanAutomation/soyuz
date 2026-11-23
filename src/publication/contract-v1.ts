@@ -26,7 +26,7 @@ const FileChangeSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("delete"), path: FilePath, baseBlobSha: z.string().regex(GIT_SHA) }).strict(),
 ]);
 
-export const PublicationArtifactSchema = z.object({
+const PublicationArtifactSchema = z.object({
   contractVersion: z.literal("1"),
   artifactId: z.string().regex(UUID7),
   runId: z.string().regex(UUID7),
@@ -77,56 +77,11 @@ export async function validatePublicationArtifact(input: unknown, expected: {
   baseRef: string;
 }, expectedDigest?: string): Promise<{ artifact: PublicationArtifact; digest: string }> {
   const parsed = PublicationArtifactSchema.parse(input);
-  const errors: string[] = [];
-  if (parsed.runId !== expected.runId || parsed.artifactId !== expected.artifactId) errors.push("artifact identity mismatch");
-  const destination = githubRepository(expected.repositoryUrl);
-  if (!destination || parsed.repository.owner !== destination.owner || parsed.repository.name !== destination.name) errors.push("repository mismatch");
-  if (parsed.baseRef !== expected.baseRef) errors.push("base branch mismatch");
-  if (parsed.baseRef.includes("..") || /\.lock(?:\/|$)/.test(parsed.baseRef) || parsed.baseRef.includes("@{")) {
-    errors.push("unsafe base branch reference");
-  }
-  if (parsed.fileCount !== parsed.files.length) errors.push("file count mismatch");
-
-  let totalBytes = 0;
-  const paths: string[] = [];
-  for (const file of parsed.files) {
-    const path = file.path;
-    const folded = path.toLowerCase().normalize("NFC");
-    const segments = path.split("/");
-    if (path.startsWith("/") || path.includes("\\") || path.includes(":") || path.normalize("NFC") !== path
-      || /[\p{Cc}\p{Cf}\p{Cs}\p{Cn}]/u.test(path)
-      || segments.some((part) => part === "" || part === "." || part === ".." || part.toLowerCase() === ".git" || /[. ]$/.test(part)
-        || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(part))) errors.push("unsafe file path");
-    if (folded === ".github/workflows" || folded.startsWith(".github/workflows/")) errors.push("workflow changes are unsupported");
-    if (folded === ".gitattributes" || folded.endsWith("/.gitattributes")) errors.push("gitattributes changes are unsupported");
-    paths.push(folded);
-    if ("content" in file) {
-      try {
-        const decoded = atob(file.content.data);
-        if (btoa(decoded) !== file.content.data) errors.push("non-canonical base64 content");
-        const bytes = Uint8Array.from(decoded, (character) => character.charCodeAt(0));
-        if (bytes.byteLength !== file.content.byteLength || bytes.byteLength > 1_048_576) errors.push("content length mismatch");
-        totalBytes += bytes.byteLength;
-        const digest = await digestHex(bytes);
-        if (digest !== file.content.sha256) errors.push("content digest mismatch");
-        const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-        if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(text)) errors.push("binary control byte in content");
-        if (text.startsWith("version https://git-lfs.github.com/spec/v1\n")) errors.push("Git LFS content is unsupported");
-      } catch {
-        errors.push("invalid base64 or UTF-8 content");
-      }
-    }
-  }
-  if (parsed.totalBytes !== totalBytes || totalBytes > 5_242_880) errors.push("artifact byte count mismatch");
-  const unique = new Set(paths);
-  if (unique.size !== paths.length) errors.push("duplicate case-folded file path");
-  const sorted = [...parsed.files].sort((a, b) => compareUtf8(a.path, b.path));
-  if (sorted.some((file, index) => file.path !== parsed.files[index]?.path)) errors.push("file list is not sorted");
-  for (const path of paths) {
-    const parts = path.split("/");
-    for (let index = 1; index < parts.length; index += 1) {
-      if (unique.has(parts.slice(0, index).join("/"))) errors.push("file path conflicts with a parent path");
-    }
+  const errors = validateArtifactMetadata(parsed, expected);
+  const fileValidation = await validateArtifactFiles(parsed.files);
+  errors.push(...fileValidation.errors);
+  if (parsed.totalBytes !== fileValidation.totalBytes || fileValidation.totalBytes > 5_242_880) {
+    errors.push("artifact byte count mismatch");
   }
 
   const canonical = canonicalJson(parsed);
@@ -135,6 +90,102 @@ export async function validatePublicationArtifact(input: unknown, expected: {
   if (expectedDigest && expectedDigest !== digest) errors.push("artifact digest mismatch");
   if (errors.length) throw new PublicationContractError(errors);
   return { artifact: parsed, digest };
+}
+
+function validateArtifactMetadata(artifact: PublicationArtifact, expected: {
+  runId: string;
+  artifactId: string;
+  repositoryUrl: string;
+  baseRef: string;
+}): string[] {
+  const errors: string[] = [];
+  if (artifact.runId !== expected.runId || artifact.artifactId !== expected.artifactId) errors.push("artifact identity mismatch");
+  const destination = githubRepository(expected.repositoryUrl);
+  if (!destination || artifact.repository.owner !== destination.owner || artifact.repository.name !== destination.name) {
+    errors.push("repository mismatch");
+  }
+  if (artifact.baseRef !== expected.baseRef) errors.push("base branch mismatch");
+  if (isUnsafeBaseRef(artifact.baseRef)) errors.push("unsafe base branch reference");
+  if (artifact.fileCount !== artifact.files.length) errors.push("file count mismatch");
+  return errors;
+}
+
+function isUnsafeBaseRef(baseRef: string): boolean {
+  return baseRef.includes("..") || /\.lock(?:\/|$)/.test(baseRef) || baseRef.includes("@{");
+}
+
+type PublicationFileContent = Extract<PublicationArtifact["files"][number], { content: unknown }>["content"];
+
+async function validateArtifactFiles(files: PublicationArtifact["files"]): Promise<{ errors: string[]; totalBytes: number }> {
+  const errors: string[] = [];
+  const foldedPaths: string[] = [];
+  let totalBytes = 0;
+  for (const file of files) {
+    const folded = file.path.toLowerCase().normalize("NFC");
+    errors.push(...validateFilePath(file.path, folded));
+    foldedPaths.push(folded);
+    if ("content" in file) {
+      const content = await validateFileContent(file.content);
+      errors.push(...content.errors);
+      totalBytes += content.byteLength;
+    }
+  }
+
+  const unique = new Set(foldedPaths);
+  if (unique.size !== foldedPaths.length) errors.push("duplicate case-folded file path");
+  const sorted = [...files].sort((left, right) => compareUtf8(left.path, right.path));
+  if (sorted.some((file, index) => file.path !== files[index]?.path)) errors.push("file list is not sorted");
+  for (let index = 0; index < countParentPathConflicts(foldedPaths); index += 1) {
+    errors.push("file path conflicts with a parent path");
+  }
+  return { errors, totalBytes };
+}
+
+function validateFilePath(path: string, folded: string): string[] {
+  const errors: string[] = [];
+  const unsafe = path.startsWith("/") || path.includes("\\") || path.includes(":") || path.normalize("NFC") !== path
+    || /[\p{Cc}\p{Cf}\p{Cs}\p{Cn}]/u.test(path)
+    || path.split("/").some(isUnsafePathSegment);
+  if (unsafe) errors.push("unsafe file path");
+  if (folded === ".github/workflows" || folded.startsWith(".github/workflows/")) errors.push("workflow changes are unsupported");
+  if (folded === ".gitattributes" || folded.endsWith("/.gitattributes")) errors.push("gitattributes changes are unsupported");
+  return errors;
+}
+
+function isUnsafePathSegment(segment: string): boolean {
+  return segment === "" || segment === "." || segment === ".." || segment.toLowerCase() === ".git"
+    || /[. ]$/.test(segment) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(segment);
+}
+
+function countParentPathConflicts(paths: string[]): number {
+  const unique = new Set(paths);
+  let conflicts = 0;
+  for (const path of paths) {
+    const segments = path.split("/");
+    for (let index = 1; index < segments.length; index += 1) {
+      if (unique.has(segments.slice(0, index).join("/"))) conflicts += 1;
+    }
+  }
+  return conflicts;
+}
+
+async function validateFileContent(content: PublicationFileContent): Promise<{ errors: string[]; byteLength: number }> {
+  const errors: string[] = [];
+  let byteLength = 0;
+  try {
+    const decoded = atob(content.data);
+    if (btoa(decoded) !== content.data) errors.push("non-canonical base64 content");
+    const bytes = Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+    byteLength = bytes.byteLength;
+    if (byteLength !== content.byteLength || byteLength > 1_048_576) errors.push("content length mismatch");
+    if (await digestHex(bytes) !== content.sha256) errors.push("content digest mismatch");
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(text)) errors.push("binary control byte in content");
+    if (text.startsWith("version https://git-lfs.github.com/spec/v1\n")) errors.push("Git LFS content is unsupported");
+  } catch {
+    errors.push("invalid base64 or UTF-8 content");
+  }
+  return { errors, byteLength };
 }
 
 export function githubRepository(urlValue: string): { owner: string; name: string } | null {
@@ -168,7 +219,7 @@ function compareUtf8(left: string, right: string): number {
   return a.length - b.length;
 }
 
-export class PublicationContractError extends Error {
+class PublicationContractError extends Error {
   constructor(readonly issues: string[]) {
     super("Publication manifest is invalid");
   }

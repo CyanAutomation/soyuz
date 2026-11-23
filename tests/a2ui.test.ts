@@ -43,6 +43,9 @@ describe("Soyuz A2UI protocol boundary", () => {
     ["a non-allowlisted component", (messages: any[]) => { messages[0].createSurface.components[1].component = "Image"; }],
     ["a function call", (messages: any[]) => { messages[0].createSurface.components[1].text = { "@call": "fetch" }; }],
     ["an unsupported action", (messages: any[]) => { messages[0].createSurface.components[7].action.event.name = "cancel_run"; }],
+    ["extra action fields", (messages: any[]) => { messages[0].createSurface.components[7].action.extra = true; }],
+    ["a select binding outside run data", (messages: any[]) => { messages[0].createSurface.components[7].action.event.context.runId = { "@path": "/secrets/token" }; }],
+    ["a write-capable action context", (messages: any[]) => { messages[0].createSurface.components[7].action.event.context.other = "value"; }],
     ["an unexpected surface", (messages: any[]) => { messages[0].createSurface.surfaceId = "another-surface"; }],
   ])("rejects %s", (_description, mutate) => {
     const messages = validMessages() as any[];
@@ -85,6 +88,28 @@ describe("Soyuz A2UI protocol boundary", () => {
     const stream = new A2uiStreamValidator({ expectedSurfaceId: surfaceId });
     expect(() => stream.pushLine("not json")).toThrow();
     stream.dispose();
+  });
+
+  it("keeps the streaming validator closed after finish and enforces line size limits", () => {
+    const stream = new A2uiStreamValidator({ expectedSurfaceId: surfaceId });
+    stream.pushMessage(validMessages()[0]);
+    expect(stream.finish()).toMatchObject({ ok: true, surfaceId });
+    expect(() => stream.pushMessage(validMessages()[0])).toThrow("outside supported limits");
+    stream.dispose();
+
+    const oversized = new A2uiStreamValidator();
+    expect(() => oversized.pushLine("x".repeat(32_001))).toThrow("outside supported limits");
+    oversized.dispose();
+  });
+
+  it("rejects deeply nested calls and prototype-sensitive data paths", () => {
+    const nestedCall = validMessages() as any[];
+    nestedCall[0].createSurface.components[1].text = { nested: [{ "@call": "fetch" }] };
+    expect(validateA2uiMessages(nestedCall, { expectedSurfaceId: surfaceId }).ok).toBe(false);
+
+    const unsafePath = validMessages() as any[];
+    unsafePath[0].createSurface.components[5].text = { "@path": "/runs/__proto__/token" };
+    expect(validateA2uiMessages(unsafePath, { expectedSurfaceId: surfaceId }).ok).toBe(false);
   });
 
   it("allows only fixed renderer actions", () => {

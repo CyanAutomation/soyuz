@@ -35,4 +35,58 @@ describe("Kirisame v1 compatibility fixtures", () => {
   it("accepts the canonical open PR result fixture", () => {
     expect(PublicationResultSchema.parse(resultFixture.value)).toEqual(resultFixture.value);
   });
+
+  it("rejects unsafe and case-colliding file paths", async () => {
+    const request = requestFixture.value as PublicationRequest;
+    const expected = {
+      runId: request.runId,
+      artifactId: request.artifact.artifactId,
+      repositoryUrl: `https://github.com/${request.repository.owner}/${request.repository.name}`,
+      baseRef: request.baseRef,
+    };
+
+    const traversal = structuredClone(request.artifact);
+    traversal.files[0]!.path = "../private.txt";
+    await expect(validatePublicationArtifact(traversal, expected)).rejects.toMatchObject({
+      issues: expect.arrayContaining(["unsafe file path"]),
+    });
+
+    const collision = structuredClone(request.artifact);
+    collision.files.push({ ...collision.files[0]!, path: collision.files[0]!.path.toLowerCase() });
+    collision.fileCount = collision.files.length;
+    collision.totalBytes *= 2;
+    await expect(validatePublicationArtifact(collision, expected)).rejects.toMatchObject({
+      issues: expect.arrayContaining(["duplicate case-folded file path"]),
+    });
+  });
+
+  it("rejects workflow edits, provenance mismatches, and tampered file contents", async () => {
+    const request = requestFixture.value as PublicationRequest;
+    const expected = {
+      runId: request.runId,
+      artifactId: request.artifact.artifactId,
+      repositoryUrl: `https://github.com/${request.repository.owner}/${request.repository.name}`,
+      baseRef: request.baseRef,
+    };
+
+    const workflow = structuredClone(request.artifact);
+    workflow.files[0]!.path = ".github/workflows/release.yml";
+    await expect(validatePublicationArtifact(workflow, expected)).rejects.toMatchObject({
+      issues: expect.arrayContaining(["workflow changes are unsupported"]),
+    });
+
+    const wrongRepository = structuredClone(request.artifact);
+    wrongRepository.repository.name = "another-project";
+    await expect(validatePublicationArtifact(wrongRepository, expected)).rejects.toMatchObject({
+      issues: expect.arrayContaining(["repository mismatch"]),
+    });
+
+    const tampered = structuredClone(request.artifact);
+    const tamperedFile = tampered.files[0]!;
+    if (!("content" in tamperedFile)) throw new Error("The fixture must contain file content.");
+    tamperedFile.content.data = btoa("tampered content");
+    await expect(validatePublicationArtifact(tampered, expected)).rejects.toMatchObject({
+      issues: expect.arrayContaining(["content length mismatch", "content digest mismatch"]),
+    });
+  });
 });

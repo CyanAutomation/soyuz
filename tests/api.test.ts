@@ -11,6 +11,7 @@ import { dispatchPublication, PUBLICATION_DISPATCH_BATCH_SIZE, PUBLICATION_LEASE
 import { MockPublisherEntrypoint } from "../src/publication/mock-publisher";
 import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
 import { oauthProviderOptions } from "../src/auth/oauth";
+import { handleDashboardApiRequest } from "../src/auth/oauth-resource";
 
 const CLIENT_TOKEN = "client-test-token-value-long-enough";
 const KASEKI_TOKEN = "kaseki-submit-token-value-long-enough";
@@ -524,6 +525,39 @@ function withSupersededClaimOnNextBatch(
 
 describe("Soyuz Worker API", () => {
   beforeEach(clearDatabase);
+
+  it("rejects unframed and malformed publication manifest uploads before indexing them", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const workerId = "manifest-framing-host";
+    const claimCallbackId = "018f0000-0000-7000-8000-00000000003a";
+    const runId = await startRunningRun(bindings, workerId, claimCallbackId, crypto.randomUUID());
+    const path = `/v1/worker/runs/${runId}/publication-manifests/018f0000-0000-7000-8000-00000000003b`;
+    const workerHeaders = {
+      "x-soyuz-worker-id": workerId,
+      "x-soyuz-claim-callback-id": claimCallbackId,
+      "content-type": "application/json",
+    };
+
+    const unframed = await callBinary(bindings, path, {
+      method: "PUT",
+      token: WORKER_TOKEN,
+      headers: workerHeaders,
+      body: "{}",
+    });
+    expect(unframed.response.status).toBe(411);
+    expect((unframed.body as any).error.code).toBe("CONTENT_LENGTH_REQUIRED");
+
+    const malformed = "{not-json";
+    const invalidJson = await callBinary(bindings, path, {
+      method: "PUT",
+      token: WORKER_TOKEN,
+      headers: { ...workerHeaders, "content-length": String(new TextEncoder().encode(malformed).byteLength) },
+      body: malformed,
+    });
+    expect(invalidJson.response.status).toBe(400);
+    expect((invalidJson.body as any).error.code).toBe("MANIFEST_INVALID");
+  });
 
   it("[PUBLICATION-INTENT-01] requires authenticated host validation evidence and replays one immutable intent", async () => {
     const r2 = memoryArtifactBucket();
@@ -1073,6 +1107,32 @@ describe("Soyuz Worker API", () => {
     const revoked = await call(bindings, "/dashboard/api/runs", { token: accessToken });
     expect(revoked.response.status).toBe(403);
     expect(revoked.body.error.code).toBe("ACCESS_DENIED");
+  });
+
+  it("[OAUTH-RESOURCE-ROUTE-01] requires read scope and rejects unknown dashboard resources", async () => {
+    const { bindings } = testEnv({ oauth: true });
+    const resourceContext = {
+      auth: { token: "opaque-token", audience: "https://soyuz.test/", scope: [] },
+      props: { githubUserId: "123", githubLogin: "allowed-test-user" },
+    };
+    const noScope = await handleDashboardApiRequest(
+      new Request("https://soyuz.test/dashboard/api/me"),
+      bindings,
+      resourceContext as unknown as ExecutionContext,
+    );
+    expect(noScope.status).toBe(403);
+
+    const readContext = {
+      ...resourceContext,
+      auth: { ...resourceContext.auth, scope: ["soyuz:read"] },
+    } as unknown as ExecutionContext;
+    const unknown = await handleDashboardApiRequest(
+      new Request("https://soyuz.test/dashboard/api/not-a-resource"),
+      bindings,
+      readContext,
+    );
+    expect(unknown.status).toBe(404);
+    expect(await unknown.json()).toMatchObject({ error: { code: "NOT_FOUND" } });
   });
 
   it("[OAUTH-RATE-LIMIT-01] limits public OAuth client registration by connecting IP", async () => {

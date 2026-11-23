@@ -19,6 +19,7 @@ import {
   RUN_STATUS_OPTIONS,
 } from "./presentation.js";
 import { buildRunListPath, filterAndSortRuns, type RunSortOrder } from "./run-list.js";
+import { mergeRunListPage, shouldRenderRunList } from "./run-list-state.js";
 
 interface OAuthRegistration {
   client_id: string;
@@ -287,53 +288,75 @@ async function loadRuns(options: { reset: boolean; quiet?: boolean; refreshFirst
     if (options.reset) pendingRunReset = true;
     return;
   }
-  const cursor = options.reset || options.refreshFirstPage ? null : nextCursor;
-  if (!options.reset && !options.refreshFirstPage && !cursor) return;
+  const cursor = runListRequestCursor(options, nextCursor);
+  if (cursor === undefined) return;
 
-  isLoadingRuns = true;
-  loadMoreButton.disabled = true;
-  if (!options.quiet) {
-    const loadingMore = !options.reset && !options.refreshFirstPage;
-    setButtonBusy(loadingMore ? loadMoreButton : refreshButton, true, loadingMore ? "Loading more…" : "Loading runs…");
-    runsSection.setAttribute("aria-busy", "true");
-    setNotice(loadingMore ? "Loading more runs…" : "Loading recent runs…", "info");
-  }
+  startRunListLoad(options);
   try {
     const result = await apiJson<DashboardRunListResponse>(buildRunListPath({
       status: statusFilter.value || null,
       cursor,
     }));
-    if (!token || token !== accessToken || !Array.isArray(result.runs)) return;
-    if (options.reset) runsById = new Map();
-    if (options.reset || options.refreshFirstPage) runDetailsById.clear();
-    publicationStatusAvailable = result.publicationStatusAvailable !== false;
-    for (const run of result.runs) runsById.set(run.runId, run);
-    if (options.reset || cursor || options.refreshFirstPage) nextCursor = result.nextCursor;
-    if (!(options.refreshFirstPage && expandedRunIds.size > 0)) renderRuns();
-    renderRunOperations();
-    void loadOutcomeOverview(token);
-    loadMoreButton.hidden = !nextCursor;
-    updatedLabel.textContent = `Last refreshed ${new Date().toLocaleTimeString()}`;
-    setNotice("", "info");
+    if (acceptRunListResponse(token, options, result)) void loadOutcomeOverview(token);
   } catch {
-    if (token === accessToken) {
-      if (!options.quiet) setNotice("We couldn't load runs. Please try again shortly.", "danger");
-    }
+    showRunListError(token, options);
   } finally {
-    runsSection.removeAttribute("aria-busy");
-    if (token === accessToken) {
-      isLoadingRuns = false;
-      if (!options.quiet) {
-        setButtonBusy(refreshButton, false);
-        setButtonBusy(loadMoreButton, false);
-      }
-      loadMoreButton.disabled = !nextCursor;
-      if (pendingRunReset) {
-        pendingRunReset = false;
-        void loadRuns({ reset: true });
-      }
-    }
+    finishRunListLoad(token, options);
   }
+}
+
+function runListRequestCursor(
+  options: { reset: boolean; refreshFirstPage?: boolean },
+  currentCursor: string | null,
+): string | null | undefined {
+  if (options.reset || options.refreshFirstPage) return null;
+  return currentCursor || undefined;
+}
+
+function startRunListLoad(options: { reset: boolean; quiet?: boolean; refreshFirstPage?: boolean }): void {
+  isLoadingRuns = true;
+  loadMoreButton.disabled = true;
+  if (options.quiet) return;
+  const loadingMore = !options.reset && !options.refreshFirstPage;
+  setButtonBusy(loadingMore ? loadMoreButton : refreshButton, true, loadingMore ? "Loading more…" : "Loading runs…");
+  runsSection.setAttribute("aria-busy", "true");
+  setNotice(loadingMore ? "Loading more runs…" : "Loading recent runs…", "info");
+}
+
+function acceptRunListResponse(
+  token: string,
+  options: { reset: boolean; refreshFirstPage?: boolean },
+  result: DashboardRunListResponse,
+): boolean {
+  if (token !== accessToken || !Array.isArray(result.runs)) return false;
+  runsById = mergeRunListPage(runsById, result.runs, options.reset);
+  if (options.reset || options.refreshFirstPage) runDetailsById.clear();
+  publicationStatusAvailable = result.publicationStatusAvailable !== false;
+  nextCursor = result.nextCursor;
+  if (shouldRenderRunList(Boolean(options.refreshFirstPage), expandedRunIds.size)) renderRuns();
+  renderRunOperations();
+  loadMoreButton.hidden = !nextCursor;
+  updatedLabel.textContent = `Last refreshed ${new Date().toLocaleTimeString()}`;
+  setNotice("", "info");
+  return true;
+}
+
+function showRunListError(token: string, options: { quiet?: boolean }): void {
+  if (token === accessToken && !options.quiet) setNotice("We couldn't load runs. Please try again shortly.", "danger");
+}
+
+function finishRunListLoad(token: string, options: { quiet?: boolean }): void {
+  runsSection.removeAttribute("aria-busy");
+  if (token !== accessToken) return;
+  isLoadingRuns = false;
+  if (!options.quiet) {
+    setButtonBusy(refreshButton, false);
+    setButtonBusy(loadMoreButton, false);
+  }
+  loadMoreButton.disabled = !nextCursor;
+  if (!pendingRunReset) return;
+  pendingRunReset = false;
+  void loadRuns({ reset: true });
 }
 
 async function loadOutcomeOverview(token: string): Promise<void> {
