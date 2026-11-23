@@ -1,4 +1,4 @@
-import { A2UI_CATALOG_ID } from "../a2ui/protocol.js";
+import { a2uiButton, a2uiCard, a2uiColumn, a2uiList, a2uiText, createFixedA2uiSurface, type A2uiComponentDefinition } from "../a2ui/surface-primitives.js";
 import { getRunStatusPresentation, formatMachineLabel } from "./presentation.js";
 import { calculateRunMetrics, formatDuration, type RunTimingInput } from "./run-metrics.js";
 
@@ -92,41 +92,29 @@ export function createRunOperationsSurface(): unknown[] {
     { id: "completed", title: "Completed runs", path: "/ops/completedRuns", summary: "/ops/completedSummary" },
     { id: "publication", title: "Publication status", path: "/ops/publicationRuns", summary: "/ops/publicationSummary" },
   ];
-  const components: Array<Record<string, unknown>> = [
-    { id: "root", component: "Column", children: ["heading", "groupList"] },
-    { id: "heading", component: "Text", text: "Run operations" },
-    { id: "groupList", component: "Column", children: groups.map((group) => `${group.id}Group`) },
+  const components: A2uiComponentDefinition[] = [
+    a2uiColumn("root", ["heading", "groupList"]),
+    a2uiText("heading", "Run operations"),
+    a2uiColumn("groupList", groups.map((group) => `${group.id}Group`)),
   ];
 
   for (const group of groups) {
     components.push(
-      { id: `${group.id}Group`, component: "Card", child: `${group.id}Content` },
-      { id: `${group.id}Content`, component: "Column", children: [`${group.id}Title`, `${group.id}Summary`, `${group.id}Runs`] },
-      { id: `${group.id}Title`, component: "Text", text: group.title },
-      { id: `${group.id}Summary`, component: "Text", text: { "@path": group.summary } },
-      { id: `${group.id}Runs`, component: "List", children: { path: group.path, componentId: `${group.id}Run` } },
-      { id: `${group.id}Run`, component: "Card", child: `${group.id}RunContent` },
-      { id: `${group.id}RunContent`, component: "Column", children: [`${group.id}DisplayId`, `${group.id}RunSummary`, `${group.id}ViewLabel`, `${group.id}ViewButton`] },
-      { id: `${group.id}DisplayId`, component: "Text", text: { "@path": "displayId" } },
-      { id: `${group.id}RunSummary`, component: "Text", text: { "@path": "summary" } },
-      { id: `${group.id}ViewLabel`, component: "Text", text: "View run" },
-      {
-        id: `${group.id}ViewButton`,
-        component: "Button",
-        child: `${group.id}ViewLabel`,
-        action: { event: { name: "select_run", context: { runId: { "@path": "runId" } } } },
-      },
+      a2uiCard(`${group.id}Group`, `${group.id}Content`),
+      a2uiColumn(`${group.id}Content`, [`${group.id}Title`, `${group.id}Summary`, `${group.id}Runs`]),
+      a2uiText(`${group.id}Title`, group.title),
+      a2uiText(`${group.id}Summary`, { "@path": group.summary }),
+      a2uiList(`${group.id}Runs`, group.path, `${group.id}Run`),
+      a2uiCard(`${group.id}Run`, `${group.id}RunContent`),
+      a2uiColumn(`${group.id}RunContent`, [`${group.id}DisplayId`, `${group.id}RunSummary`, `${group.id}ViewLabel`, `${group.id}ViewButton`]),
+      a2uiText(`${group.id}DisplayId`, { "@path": "displayId" }),
+      a2uiText(`${group.id}RunSummary`, { "@path": "summary" }),
+      a2uiText(`${group.id}ViewLabel`, "View run"),
+      a2uiButton(`${group.id}ViewButton`, `${group.id}ViewLabel`, "select_run", { runId: { "@path": "runId" } }),
     );
   }
 
-  return [{
-    version: "1.0",
-    createSurface: {
-      surfaceId: "soyuz-run-operations",
-      catalogId: A2UI_CATALOG_ID,
-      components,
-    },
-  }];
+  return createFixedA2uiSurface("soyuz-run-operations", components);
 }
 
 function projectRun(run: RunOperationsInput, now: number): RunOperationsItem {

@@ -623,3 +623,31 @@ beforeEach(clearDatabase);
     expect(invalid.response.status).toBe(400);
     expect((await bindings.DB.prepare("SELECT COUNT(*) AS count FROM jev_feedback").first<{ count: number }>())?.count).toBe(1);
   });
+
+  it("[JEV-FEEDBACK-SUMMARY-01] returns aggregate ratings by profile without user or answer data", async () => {
+    const { bindings, jevDecisionLimiter } = testEnv({ oauth: true });
+    const run = await submit(bindings, {});
+    const runId = run.body.data.id as string;
+    const token = await createOAuthAccessToken(bindings);
+    const now = new Date().toISOString();
+    await bindings.DB.prepare(`
+      INSERT INTO jev_feedback (run_id, profile_id, github_user_id, rating, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)
+    `).bind(
+      runId, "run_operations_triage_v1", "123", "helpful", now, now,
+      runId, "run_operations_triage_v1", "456", "not_helpful", now, now,
+      runId, "run_retry_review_v1", "123", "helpful", now, now,
+    ).run();
+
+    const response = await call(bindings, "/dashboard/api/analysis/feedback-summary", { token });
+    expect(response.response.status).toBe(200);
+    expect(response.body.data.profiles).toContainEqual({
+      profileId: "run_operations_triage_v1", helpfulCount: 1, notHelpfulCount: 1, totalCount: 2,
+    });
+    expect(response.body.data.profiles).toContainEqual({
+      profileId: "run_retry_review_v1", helpfulCount: 1, notHelpfulCount: 0, totalCount: 1,
+    });
+    expect(JSON.stringify(response.body.data)).not.toContain("123");
+    expect(JSON.stringify(response.body.data)).not.toContain("answers");
+    expect(jevDecisionLimiter.limit).not.toHaveBeenCalled();
+  });

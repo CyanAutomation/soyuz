@@ -116,4 +116,15 @@ describe("Soyuz A2UI protocol boundary", () => {
     const allowed = validateA2uiMessages(validMessages(), { expectedSurfaceId: surfaceId });
     expect(allowed.ok).toBe(true);
   });
+
+  it("[JEV-A2UI-01] permits a host-owned assessment action bound only to a run ID", () => {
+    const messages = validMessages() as any[];
+    const action = messages[0].createSurface.components[7].action.event;
+    action.name = "assess_run";
+    action.context.runId = { "@path": "/selectedRun/runId" };
+    expect(validateA2uiMessages(messages, { expectedSurfaceId: surfaceId }).ok).toBe(true);
+
+    action.context.profileId = "run_retry_review_v1";
+    expect(validateA2uiMessages(messages, { expectedSurfaceId: surfaceId }).ok).toBe(false);
+  });
 });

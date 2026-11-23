@@ -1,4 +1,4 @@
-export type JevProfileId = "run_operations_triage_v1" | "kaseki_output_review_v1" | "kaseki_output_review_v2";
+export type JevProfileId = "run_operations_triage_v1" | "kaseki_output_review_v1" | "kaseki_output_review_v2" | "run_retry_review_v1";
 
 interface AnswerView {
   key: string;
@@ -31,6 +31,14 @@ export const JEV_PROFILE_VIEWS: Readonly<Record<JevProfileId, { title: string; a
       { key: "outcome_alignment", title: "Outcome alignment", type: "choice", labels: { consistent: "Consistent", unclear: "Unclear", inconsistent: "Inconsistent" } },
       { key: "evidence_strength", title: "Evidence strength", type: "score" },
       { key: "recorded_outcome", title: "Recorded outcome score", type: "score" },
+    ],
+  },
+  run_retry_review_v1: {
+    title: "Run retry comparison",
+    answers: [
+      { key: "recovery", title: "Recovery assessment", type: "choice", labels: { recovered: "Recovered", partial: "Partially recovered", not_recovered: "Not recovered", unclear: "Unclear" } },
+      { key: "evidence_strength", title: "Evidence strength", type: "score" },
+      { key: "needs_followup", title: "Needs followup", type: "noul" },
     ],
   },
 };

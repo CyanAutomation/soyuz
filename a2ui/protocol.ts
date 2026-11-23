@@ -9,8 +9,18 @@ const A2UI_MAX_COMPONENTS = 100;
 const A2UI_MAX_DEPTH = 8;
 const A2UI_MAX_MESSAGES = 100;
 
+export type A2uiActionName =
+  | "select_run"
+  | "refresh_runs"
+  | "reset_filters"
+  | "assess_run"
+  | "load_more_events"
+  | "download_artifact";
+
 const ALLOWED_COMPONENTS = new Set(["Column", "Row", "Card", "Text", "Button", "Divider", "List"]);
-const ALLOWED_ACTIONS = new Set(["select_run", "refresh_runs", "reset_filters"]);
+const ALLOWED_ACTIONS = new Set<A2uiActionName>([
+  "select_run", "refresh_runs", "reset_filters", "assess_run", "load_more_events", "download_artifact",
+]);
 const ALLOWED_DATA_ROOTS = new Set([
   "runs",
   "statusCounts",
@@ -19,6 +29,8 @@ const ALLOWED_DATA_ROOTS = new Set([
   "events",
   "artifacts",
   "ops",
+  "outcomes",
+  "jevFeedback",
 ]);
 
 export interface A2uiValidationResult {
@@ -216,7 +228,8 @@ function assertAllowedAction(value: unknown): asserts value is Record<string, un
 
 function isAllowedAction(value: unknown): boolean {
   const event = readActionEvent(value);
-  return Boolean(event && ALLOWED_ACTIONS.has(String(event.name)) && isAllowedActionContext(event));
+  return Boolean(event && typeof event.name === "string"
+    && ALLOWED_ACTIONS.has(event.name as A2uiActionName) && isAllowedActionContext(event));
 }
 
 function readActionEvent(value: unknown): Record<string, unknown> | null {
@@ -227,12 +240,16 @@ function readActionEvent(value: unknown): Record<string, unknown> | null {
 }
 
 function isAllowedActionContext(event: Record<string, unknown>): boolean {
-  if (event.context === undefined) return event.name !== "select_run";
+  if (event.context === undefined) return event.name === "refresh_runs" || event.name === "reset_filters";
   if (!isRecord(event.context)) return false;
 
   switch (event.name) {
     case "select_run":
-      return isSelectRunContext(event.context);
+    case "assess_run":
+    case "load_more_events":
+      return isRunIdContext(event.context);
+    case "download_artifact":
+      return isDownloadArtifactContext(event.context);
     case "refresh_runs":
     case "reset_filters":
       return Object.keys(event.context).length === 0;
@@ -241,8 +258,16 @@ function isAllowedActionContext(event: Record<string, unknown>): boolean {
   }
 }
 
-function isSelectRunContext(context: Record<string, unknown>): boolean {
+function isRunIdContext(context: Record<string, unknown>): boolean {
   return Object.keys(context).length === 1 && "runId" in context && isUuidOrRunBinding(context.runId);
+}
+
+function isDownloadArtifactContext(context: Record<string, unknown>): boolean {
+  return Object.keys(context).length === 2
+    && "runId" in context
+    && "artifactId" in context
+    && isUuidOrRunBinding(context.runId)
+    && isUuidOrRunBinding(context.artifactId);
 }
 
 function isUuidOrRunBinding(value: unknown): boolean {

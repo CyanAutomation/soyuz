@@ -4,11 +4,14 @@ import { renderAuthUi } from "./auth-ui.js";
 import { createSnackBarController } from "./snackbar.js";
 import { createDefinitionList, setButtonBusy, setNotice as renderNotice, type NoticeTone } from "./ui/components.js";
 import { createRunCard, type DashboardRunSummary } from "./run-card.js";
-import { createOutcomeOverviewCard, type RunOutcomesOverview } from "./outcome-overview.js";
+import { createOutcomeOverviewCard, createOutcomeOverviewSurface, projectOutcomeOverview, type RunOutcomesOverview } from "./outcome-overview.js";
 import { A2uiDomRenderer, type DashboardA2uiAction } from "./a2ui-renderer.js";
 import { createRunOperationsSurface, projectRunOperations } from "./run-operations.js";
 import type { JEV_PROFILE_ID } from "./jev-selection.js";
+import { suggestedJevProfile } from "./jev-selection.js";
 import type { JevAssessmentState, JevRating, JevResult } from "./jev-panel.js";
+import { createJevFeedbackOverviewCard, type JevFeedbackSummary } from "./jev-feedback-overview.js";
+import { createRunDetailsSurface, projectRunDetails } from "./run-details-surface.js";
 import { DASHBOARD_REFRESH_INTERVAL_MS } from "./refresh-policy.js";
 import { safeHttpUrlForDisplay } from "./ui/safe-url.js";
 import {
@@ -82,6 +85,7 @@ interface DashboardRunEvent {
 const notice = requiredElement<HTMLElement>("#notice");
 const runsSection = requiredElement<HTMLElement>("#runs");
 const outcomeOverview = requiredElement<HTMLElement>("#outcome-overview");
+const jevFeedbackOverview = requiredElement<HTMLElement>("#jev-feedback-overview");
 const runIntelligence = requiredElement<HTMLElement>("#run-intelligence");
 const runControls = requiredElement<HTMLElement>("#run-controls");
 const connectButton = requiredElement<HTMLButtonElement>("#connect");
@@ -105,8 +109,11 @@ let runsById = new Map<string, DashboardRunSummary>();
 const expandedRunIds = new Set<string>();
 const runDetailsById = new Map<string, LoadedRunDetails>();
 const jevStatesByRunId = new Map<string, JevAssessmentState>();
+const loadingEventRunIds = new Set<string>();
 let publicationStatusAvailable = true;
 const runOperationsRenderer = new A2uiDomRenderer(runIntelligence, handleRunOperationsAction);
+const outcomeOverviewRenderer = new A2uiDomRenderer(outcomeOverview, () => undefined);
+const runDetailsRenderers = new Map<string, A2uiDomRenderer>();
 
 populateStatusFilter();
 setDashboardVisible(false);
@@ -221,9 +228,13 @@ async function signOut() {
   stopRunRefresh();
   runsSection.replaceChildren();
   outcomeOverview.replaceChildren();
+  jevFeedbackOverview.replaceChildren();
   runOperationsRenderer.clear();
+  outcomeOverviewRenderer.clear();
+  clearRunDetailsRenderers();
   runDetailsById.clear();
   jevStatesByRunId.clear();
+  loadingEventRunIds.clear();
   expandedRunIds.clear();
   setDashboardVisible(false);
   setNotice("Signing out…", "info");
@@ -246,12 +257,16 @@ function clearLocalSession(message: string, tone: NoticeTone = "info"): void {
   runsById = new Map();
   runDetailsById.clear();
   jevStatesByRunId.clear();
+  loadingEventRunIds.clear();
   expandedRunIds.clear();
   loadMoreButton.hidden = true;
   updatedLabel.textContent = "";
   runsSection.replaceChildren();
   outcomeOverview.replaceChildren();
+  jevFeedbackOverview.replaceChildren();
   runOperationsRenderer.clear();
+  outcomeOverviewRenderer.clear();
+  clearRunDetailsRenderers();
   setDashboardVisible(false);
   renderAuthUi(connectButton, accountLabel, "signed-out");
   setNotice(message, tone);
@@ -360,19 +375,31 @@ function finishRunListLoad(token: string, options: { quiet?: boolean }): void {
 }
 
 async function loadOutcomeOverview(token: string): Promise<void> {
-  try {
-    const overview = await apiJson<RunOutcomesOverview>("/dashboard/api/outcomes");
-    if (token !== accessToken) return;
-    outcomeOverview.replaceChildren(createOutcomeOverviewCard(overview, document));
-  } catch {
-    // The run list remains useful if retained outcome data is temporarily unavailable.
+  const [overviewResult, feedbackResult] = await Promise.allSettled([
+    apiJson<RunOutcomesOverview>("/dashboard/api/outcomes"),
+    apiJson<JevFeedbackSummary>("/dashboard/api/analysis/feedback-summary"),
+  ]);
+  if (token !== accessToken) return;
+  if (overviewResult.status === "fulfilled") {
+    try {
+      outcomeOverviewRenderer.render(createOutcomeOverviewSurface(), projectOutcomeOverview(overviewResult.value) as unknown as Record<string, unknown>);
+    } catch {
+      outcomeOverviewRenderer.clear();
+      outcomeOverview.replaceChildren(createOutcomeOverviewCard(overviewResult.value, document));
+    }
   }
+  jevFeedbackOverview.replaceChildren(createJevFeedbackOverviewCard(
+    feedbackResult.status === "fulfilled" ? feedbackResult.value : { profiles: [] },
+    document,
+    feedbackResult.status === "fulfilled",
+  ));
 }
 
 function renderRuns(): void {
   const loadedRuns = [...runsById.values()];
   const order = runSort.value as RunSortOrder;
   const runs = filterAndSortRuns(loadedRuns, runSearch.value, order);
+  clearRunDetailsRenderers();
   runsSection.replaceChildren(...runs.map(renderRun));
   if (runs.length === 0) {
     const empty = document.createElement("p");
@@ -524,6 +551,12 @@ function renderRun(run: DashboardRunSummary): HTMLElement {
     },
   });
   card.dataset.runId = run.runId;
+  if (expandedRunIds.has(run.runId)) {
+    const details = card.querySelector<HTMLDetailsElement>(".run-card__details");
+    const content = details?.querySelector<HTMLElement>(".details-content");
+    const cached = runDetailsById.get(run.runId);
+    if (details && content && cached) renderLoadedRunDetails(details, content, cached);
+  }
   return card;
 }
 
@@ -564,11 +597,112 @@ async function loadRunDetails(runId: string, details: HTMLDetailsElement, conten
 }
 
 function renderLoadedRunDetails(details: HTMLDetailsElement, content: HTMLElement, loaded: LoadedRunDetails): void {
+  runDetailsRenderers.get(loaded.detail.runId)?.dispose();
+  runDetailsRenderers.delete(loaded.detail.runId);
   content.replaceChildren();
-  appendRunSummary(content, loaded.detail);
-  appendRunEvents(content, loaded.detail.runId, loaded.eventPage);
-  appendRunArtifacts(content, loaded.detail.runId, loaded.artifacts);
+  const runId = loaded.detail.runId;
+  const profileId = suggestedJevProfile(loaded.detail);
+  const projection = projectRunDetails({
+    run: {
+      runId,
+      displayId: loaded.detail.displayId,
+      status: loaded.detail.status,
+      stage: loaded.detail.stage,
+      taskMode: loaded.detail.taskMode,
+      publishMode: loaded.detail.publishMode,
+      origin: loaded.detail.origin,
+      retryOf: loaded.detail.retryOf,
+      outcomeSummary: loaded.detail.outcomeSummary,
+      failureClass: loaded.detail.failureClass ?? null,
+      exitCode: loaded.detail.exitCode,
+      changedFileCount: loaded.detail.changedFileCount,
+      publicationStatusAvailable: loaded.detail.publicationStatusAvailable !== false,
+      publication: loaded.detail.publication ?? null,
+      legacyPublished: loaded.detail.legacyPublished === true,
+    },
+    events: loaded.eventPage.events.map((event) => ({
+      sequence: event.sequence, type: event.type, stage: event.stage, step: event.step,
+      timestamp: event.timestamp, payload: event.payload,
+    })),
+    artifacts: loaded.artifacts,
+  });
+  const renderer = new A2uiDomRenderer(content, (action) => handleRunDetailsAction(runId, loaded, action));
+  try {
+    renderer.render(createRunDetailsSurface({ showJevAction: Boolean(profileId), showLoadMore: loaded.eventPage.hasMore }), projection as unknown as Record<string, unknown>);
+    runDetailsRenderers.set(runId, renderer);
+  } catch {
+    renderer.dispose();
+    appendRunSummary(content, loaded.detail);
+    appendRunEvents(content, loaded.detail.runId, loaded.eventPage);
+    appendRunArtifacts(content, loaded.detail.runId, loaded.artifacts);
+  }
+  if (loaded.detail.failureMessage) {
+    const failure = document.createElement("p");
+    failure.className = "notice notice--warning";
+    failure.textContent = `Failure details · ${loaded.detail.failureMessage.slice(0, 1_000)}`;
+    content.appendChild(failure);
+  }
+  const publishedUrl = typeof loaded.detail.publishedUrl === "string" ? safeHttpUrlForDisplay(loaded.detail.publishedUrl) : null;
+  if (publishedUrl) {
+    const link = document.createElement("a");
+    link.href = publishedUrl;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = "Open published URL";
+    content.appendChild(link);
+  }
   details.dataset.loaded = "yes";
+}
+
+function handleRunDetailsAction(runId: string, loaded: LoadedRunDetails, action: DashboardA2uiAction): void {
+  if (action.context.runId !== runId) return;
+  switch (action.name) {
+    case "assess_run": {
+      const profileId = suggestedJevProfile(loaded.detail);
+      if (profileId) void runJevAssessment(runId, profileId);
+      break;
+    }
+    case "download_artifact": {
+      const artifactId = action.context.artifactId;
+      const artifact = typeof artifactId === "string" ? loaded.artifacts.find((item) => item.id === artifactId) : undefined;
+      if (artifact) void downloadArtifact(runId, artifact);
+      break;
+    }
+    case "load_more_events":
+      void loadMoreDetailEvents(runId, loaded);
+      break;
+  }
+}
+
+async function loadMoreDetailEvents(runId: string, loaded: LoadedRunDetails): Promise<void> {
+  const token = accessToken;
+  if (!token || !loaded.eventPage.hasMore || loadingEventRunIds.has(runId)) return;
+  loadingEventRunIds.add(runId);
+  try {
+    const page = await apiJson<DashboardRunEventsResponse>(
+      `/dashboard/api/runs/${encodeURIComponent(runId)}/events?after=${encodeURIComponent(loaded.eventPage.nextAfter)}&limit=100`,
+    );
+    if (token !== accessToken) return;
+    if (page.nextAfter <= loaded.eventPage.nextAfter && page.events.length > 0) return;
+    loaded.eventPage = {
+      events: [...loaded.eventPage.events, ...page.events].slice(-500),
+      nextAfter: page.nextAfter,
+      hasMore: page.hasMore,
+    };
+    const details = [...runsSection.querySelectorAll<HTMLElement>(".run-card")]
+      .find((item) => item.dataset.runId === runId)?.querySelector<HTMLDetailsElement>(".run-card__details");
+    const content = details?.querySelector<HTMLElement>(".details-content");
+    if (details && content) renderLoadedRunDetails(details, content, loaded);
+  } catch {
+    if (token === accessToken) setNotice("We couldn't load more run activity. Please try again.", "warning");
+  } finally {
+    loadingEventRunIds.delete(runId);
+  }
+}
+
+function clearRunDetailsRenderers(): void {
+  for (const renderer of runDetailsRenderers.values()) renderer.dispose();
+  runDetailsRenderers.clear();
 }
 
 function appendRunSummary(container: HTMLElement, detail: DashboardRunDetail): void {
@@ -753,6 +887,7 @@ function populateStatusFilter(): void {
 function setDashboardVisible(visible: boolean): void {
   runControls.hidden = !visible;
   outcomeOverview.hidden = !visible;
+  jevFeedbackOverview.hidden = !visible;
   runIntelligence.hidden = !visible;
   runsSection.hidden = !visible;
 }

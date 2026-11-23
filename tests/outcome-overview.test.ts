@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseHTML } from "linkedom";
-import { createOutcomeOverviewCard, type RunOutcomesOverview } from "../dashboard/outcome-overview";
+import { validateA2uiMessages } from "../a2ui/protocol";
+import { createOutcomeOverviewCard, createOutcomeOverviewSurface, projectOutcomeOverview, type RunOutcomesOverview } from "../dashboard/outcome-overview";
 
 describe("shared run outcome overview", () => {
   it("[DASHBOARD-OUTCOME-OVERVIEW-01] presents the retained outcome aggregates in readable content", () => {
@@ -43,6 +44,26 @@ describe("shared run outcome overview", () => {
     expect(definitionValue(card, "Assessments")).toBe("Not reported");
     expect(definitionValue(card, "Reviewer confidence")).toBe("Not reported");
     expect(definitionValue(card, "Scorecard grades")).toBe("Not reported");
+  });
+
+  it("[DASHBOARD-OUTCOME-A2UI-01] projects aggregates into the fixed validated A2UI surface", () => {
+    const overview: RunOutcomesOverview = {
+      scope: { retainedRuns: 30, includedRuns: 12, runsWithOutcomeSummary: 8 },
+      byAssessment: { good: 5 }, byReviewerConfidence: { high: 5 }, byGrade: { A: 3 }, averageScore: 84.5,
+      improvementCategories: [{ category: "validation", priority: "medium", count: 6 }],
+      phaseDurations: [{ phase: "coding", count: 8, averageMs: 120_000 }],
+    };
+    const projection = projectOutcomeOverview(overview);
+    const surface = createOutcomeOverviewSurface();
+
+    expect(validateA2uiMessages(surface, { expectedSurfaceId: "soyuz-outcome-overview" }).ok).toBe(true);
+    expect(projection.outcomes).toMatchObject({
+      scopeSummary: "8 of 12 runs with outcome data",
+      averageScore: "84.5 / 100",
+    });
+    expect(projection.outcomes.improvementCategories[0]?.summary).toBe("Validation · Medium · 6");
+    expect(projection.outcomes.phaseDurations[0]?.summary).toBe("Coding · 8 runs · 2 min average");
+    expect(JSON.stringify(projection)).not.toContain("prompt");
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { parseHTML } from "linkedom";
-import { createActionButton, createBadge, createCard, createDefinitionList, createField, setButtonBusy, setNotice } from "../dashboard/ui/components";
+import { createActionButton, createBadge, createCard, createDefinitionList, createField, createMetricGrid, createSummaryList, setButtonBusy, setNotice } from "../dashboard/ui/components";
 import { createRunCard } from "../dashboard/run-card";
 
 function createDocument() {
@@ -82,6 +82,32 @@ describe("shared dashboard UI components", () => {
         ["DT", "Repository", "DD", "CyanAutomation/soyuz"],
         ["DT", "Status", "DD", "Running"],
       ]);
+  });
+
+  it("[DASHBOARD-METRICS-PRIMITIVE-01] creates reusable text-safe metric cards", () => {
+    const document = createDocument();
+    const grid = createMetricGrid([
+      { label: "Helpful ratings", value: "8", detail: "Across retained runs" },
+      { label: "Not helpful", value: "2" },
+    ], "jev-feedback-metrics", document);
+
+    expect(grid.className).toContain("ui-metric-grid");
+    expect(grid.className).toContain("jev-feedback-metrics");
+    expect([...grid.querySelectorAll(".ui-metric")].map((metric) => metric.textContent)).toEqual([
+      "Helpful ratings8Across retained runs",
+      "Not helpful2",
+    ]);
+    expect(grid.querySelector("script")).toBeNull();
+  });
+
+  it("[DASHBOARD-SUMMARY-LIST-PRIMITIVE-01] creates a reusable titled summary list", () => {
+    const document = createDocument();
+    const list = createSummaryList("Common improvement areas", ["Validation · Medium · 6", "Retry behavior · Low · 2"], document);
+
+    expect(list.querySelector("h3")?.textContent).toBe("Common improvement areas");
+    expect([...list.querySelectorAll("li")].map((item) => item.textContent)).toEqual([
+      "Validation · Medium · 6", "Retry behavior · Low · 2",
+    ]);
   });
 
   it("[DASHBOARD-RUN-METRICS-01] shows computed timings as distinct facts and keeps publication separate from execution", () => {
