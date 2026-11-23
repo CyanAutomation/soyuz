@@ -1,4 +1,5 @@
 import { createActionButton, createBadge, createCard, setButtonBusy, setNotice, type NoticeTone } from "./ui/components.js";
+import { defaultJevFailureMessage } from "./jev-errors.js";
 import { JEV_PROFILE_VIEWS, renderJevResult, type JevProfileId } from "./jev-renderer.js";
 
 export type JevRating = "helpful" | "not_helpful";
@@ -57,7 +58,7 @@ export function createJevAssessmentPanel(options: JevAssessmentPanelOptions): HT
     : options.state.status === "complete"
       ? options.state.message ?? "Advisory result received. Verify the run record before taking consequential action."
       : options.state.status === "error"
-        ? options.state.message ?? "JEV could not validate a response for this run. No action was taken."
+        ? options.state.message ?? defaultJevFailureMessage
         : "This assessment runs only when you choose it.";
   setNotice(notice, noticeText, noticeTone);
 

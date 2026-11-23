@@ -1,6 +1,6 @@
 import { HttpError } from "./api.js";
 
-const FALLBACK_MESSAGE = "JEV could not validate a response for this run. No action was taken.";
+export const defaultJevFailureMessage = "JEV assessment failed. No action was taken.";
 
 const JEV_ERROR_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
   JEV_PROVIDER_UNAVAILABLE: "JEV could not reach its decision service. Retry shortly. No action was taken.",
@@ -15,11 +15,11 @@ const JEV_ERROR_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
 
 /** Maps API failures to user-facing copy without displaying arbitrary server text. */
 export function jevAssessmentErrorMessage(error: unknown): string {
-  if (!(error instanceof HttpError)) return FALLBACK_MESSAGE;
+  if (!(error instanceof HttpError)) return defaultJevFailureMessage;
   if (error.status === 429) return "The JEV request limit was reached. Wait a minute before trying again.";
 
   const message = error.code ? JEV_ERROR_MESSAGES[error.code] : undefined;
-  if (!message) return FALLBACK_MESSAGE;
+  if (!message) return defaultJevFailureMessage;
   const requestId = error.requestId && /^[a-zA-Z0-9-]{1,128}$/.test(error.requestId) ? error.requestId : undefined;
   return requestId ? `${message} Reference: ${requestId}.` : message;
 }
