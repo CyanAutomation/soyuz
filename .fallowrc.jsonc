@@ -2,6 +2,7 @@
   // Wrangler serves these dashboard assets from HTML links rather than JS imports.
   "entry": [
     "dashboard/app.ts",
-    "public/dashboard/style.css"
+    "public/dashboard/style.css",
+    "scripts/oauth-fixture-worker.mjs"
   ]
 }

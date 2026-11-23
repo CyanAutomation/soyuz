@@ -10,6 +10,10 @@ function readDashboardPage(path) {
   return parseHTML(readFileSync(resolve(projectRoot, path), "utf8")).document;
 }
 
+function readProjectFile(path) {
+  return readFileSync(resolve(projectRoot, path), "utf8");
+}
+
 describe("dashboard page composition", () => {
   it("[DASHBOARD-PAGE-SEMANTICS-01] keeps run operations on one dashboard page", () => {
     const document = readDashboardPage("public/dashboard/index.html");
@@ -50,6 +54,35 @@ describe("dashboard page composition", () => {
     expect(toolbar.querySelector("#refresh").getAttribute("aria-describedby")).toBe("refresh-help updated");
     expect(toolbar.querySelector("#refresh-help").textContent).toContain("Automatic refresh runs hourly");
     expect(toolbar.querySelector("#updated").getAttribute("aria-live")).toBe("polite");
+  });
+
+  it("[DASHBOARD-APP-CONTRACT-01] keeps app-required elements and run-card styles in sync with the page", () => {
+    const document = readDashboardPage("public/dashboard/index.html");
+    const app = readProjectFile("dashboard/app.ts");
+    const stylesheet = readProjectFile("public/dashboard/style.css");
+    const requiredIds = [...app.matchAll(/requiredElement<[^>]+>\("#([^"]+)"\)/g)].map((match) => match[1]);
+    const styledRunCardClasses = [
+      "run-card",
+      "run-card__header",
+      "run-card__identity",
+      "run-card__statuses",
+      "run-card__ref",
+      "run-card__id",
+      "run-card__technical-id",
+      "run-card__copy-id",
+      "run-card__identifiers",
+      "run-card__metrics",
+      "run-card__outcome",
+      "run-card__progress",
+      "run-card__health",
+      "run-card__metadata",
+    ];
+
+    expect(requiredIds.length).toBeGreaterThan(0);
+    for (const id of requiredIds) expect(document.getElementById(id), `missing #${id}`).not.toBeNull();
+    for (const className of styledRunCardClasses) {
+      expect(stylesheet, `missing .${className} style`).toMatch(new RegExp(`\\.${className}(?![\\w-])`));
+    }
   });
 
 });

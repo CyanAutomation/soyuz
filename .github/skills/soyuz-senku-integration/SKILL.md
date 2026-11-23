@@ -11,7 +11,7 @@ Read `docs/SENKU-INTEGRATION.md`, `docs/RUN-OPERATIONS.md`, and the deployment s
 
 - Service Binding and required secret configuration: `wrangler.jsonc` and `src/env.ts`.
 - Fixed request, timeout, response-size bound, and response validation: `src/jev/senku-client.ts`.
-- Soyuz-side response contracts and profile IDs: `src/jev/response-contracts.ts` and `src/jev/profile-ids.ts`.
+- Soyuz-side response validation and profile IDs: `src/jev/senku-response.ts`, `src/jev/profiles.ts`, and `src/jev/profile-ids.ts`.
 - Server-built inputs and decision handling: `src/jev/analysis.ts`; authenticated dashboard dispatch is in `src/auth/oauth-resource.ts`.
 - Cross-Worker test: `scripts/senku-cross-worker.test.ts`.
 

@@ -61,7 +61,19 @@ export function createRunCard(run: DashboardRunSummary, options: RunCardOptions 
   const ownerDocument = options.ownerDocument ?? document;
   const { element: card, header, body, footer } = createCard({ className: "run-card" }, ownerDocument);
   header.className += " run-card__header";
+  appendRunHeader(header, run, ownerDocument);
+  appendRunFacts(body, run, options.now, ownerDocument);
 
+  const statusPresentation = getRunStatusPresentation(run.status);
+  appendRunOutcomeAndProgress(body, run, statusPresentation, ownerDocument);
+  appendRunFailureAndHealth(body, run, statusPresentation, ownerDocument);
+  appendJevPanel(body, run, options, ownerDocument);
+  appendRunMetadata(footer, run, options, ownerDocument);
+  appendRunDetails(footer, run, options, ownerDocument);
+  return card;
+}
+
+function appendRunHeader(header: HTMLElement, run: DashboardRunSummary, ownerDocument: Document): void {
   const identity = ownerDocument.createElement("div");
   identity.className = "run-card__identity";
   const heading = ownerDocument.createElement("h2");
@@ -86,45 +98,32 @@ export function createRunCard(run: DashboardRunSummary, options: RunCardOptions 
     statuses.append(createBadge("Publication: Legacy published", "success", ownerDocument));
   }
   header.append(identity, statuses);
+}
 
+function appendRunFacts(body: HTMLElement, run: DashboardRunSummary, now: number | undefined, ownerDocument: Document): void {
   const identifiers = ownerDocument.createElement("div");
   identifiers.className = "run-card__identifiers";
   const displayId = ownerDocument.createElement("p");
   displayId.className = "run-card__id";
   displayId.textContent = `Soyuz run · ${run.displayId}`;
   identifiers.append(displayId);
-
-  const technicalId = ownerDocument.createElement("p");
-  technicalId.className = "run-card__technical-id";
-  const technicalIdLabel = ownerDocument.createElement("span");
-  technicalIdLabel.textContent = "Technical ID · ";
-  const technicalIdCode = ownerDocument.createElement("code");
-  technicalIdCode.textContent = run.runId;
-  technicalId.append(technicalIdLabel, technicalIdCode);
-  const copyIdButton = ownerDocument.createElement("button");
-  copyIdButton.className = "button button--secondary run-card__copy-id";
-  copyIdButton.type = "button";
-  copyIdButton.textContent = "Copy ID";
-  copyIdButton.setAttribute("aria-label", "Copy technical run ID");
-  copyIdButton.addEventListener("click", () => options.onCopyId?.(run.runId));
-
-  const facts = createDefinitionList([
-    ["Created", formatOptionalTimestamp(run.createdAt)],
-    ["Queued", formatOptionalTimestamp(run.queuedAt)],
-    ["Started", formatOptionalTimestamp(run.startedAt)],
-    ["Completed", formatOptionalTimestamp(run.completedAt)],
-  ], "data-list run-facts", ownerDocument);
-
   body.append(identifiers, createTimestamp("Created", run.createdAt, "run-card__created", ownerDocument));
 
-  const metrics = calculateRunMetrics(run, options.now);
+  const metrics = calculateRunMetrics(run, now);
   body.append(createDefinitionList([
     ["Run age", formatDuration(metrics.runAgeMs)],
     ["Queue", formatDuration(metrics.queueDurationMs)],
     ["Execution", formatDuration(metrics.executionDurationMs)],
     ["Heartbeat age", formatDuration(metrics.heartbeatAgeMs)],
   ], "data-list run-card__metrics", ownerDocument));
+}
 
+function appendRunOutcomeAndProgress(
+  body: HTMLElement,
+  run: DashboardRunSummary,
+  statusPresentation: ReturnType<typeof getRunStatusPresentation>,
+  ownerDocument: Document,
+): void {
   if (run.outcomeSummary) {
     const outcome = ownerDocument.createElement("p");
     outcome.className = "run-card__outcome";
@@ -143,7 +142,14 @@ export function createRunCard(run: DashboardRunSummary, options: RunCardOptions 
       ? `Finished · ${formatTimestamp(run.completedAt)}`
       : "Run finished";
   body.append(progress);
+}
 
+function appendRunFailureAndHealth(
+  body: HTMLElement,
+  run: DashboardRunSummary,
+  statusPresentation: ReturnType<typeof getRunStatusPresentation>,
+  ownerDocument: Document,
+): void {
   if (run.status === "failed") {
     const failure = ownerDocument.createElement("p");
     failure.className = "notice notice--danger run-card__failure";
@@ -162,33 +168,66 @@ export function createRunCard(run: DashboardRunSummary, options: RunCardOptions 
     : lastHeartbeat;
   health.hidden = !statusPresentation.active || run.operationalHealth !== "suspect_stalled";
   body.append(health);
+}
 
+function appendJevPanel(body: HTMLElement, run: DashboardRunSummary, options: RunCardOptions, ownerDocument: Document): void {
   const jevProfile = suggestedJevProfile(run);
-  if (jevProfile) {
-    const jevState = options.jevState?.profileId === jevProfile ? options.jevState : { status: "idle" as const };
-    body.append(createJevAssessmentPanel({
-      runId: run.runId,
-      profileId: jevProfile,
-      state: jevState,
-      onAssess: (runId, profileId) => options.onJevAssess?.(runId, profileId),
-      onFeedback: (rating) => options.onJevFeedback?.(run.runId, jevProfile, rating),
-      ownerDocument,
-    }));
-  }
+  if (!jevProfile) return;
+  const jevState = options.jevState?.profileId === jevProfile ? options.jevState : { status: "idle" as const };
+  body.append(createJevAssessmentPanel({
+    runId: run.runId,
+    profileId: jevProfile,
+    state: jevState,
+    onAssess: (runId, profileId) => options.onJevAssess?.(runId, profileId),
+    onFeedback: (rating) => options.onJevFeedback?.(run.runId, jevProfile, rating),
+    ownerDocument,
+  }));
+}
 
+function appendRunMetadata(footer: HTMLElement, run: DashboardRunSummary, options: RunCardOptions, ownerDocument: Document): void {
   const metadata = ownerDocument.createElement("details");
   metadata.className = "run-card__metadata";
-  const metadataSummary = ownerDocument.createElement("summary");
-  metadataSummary.textContent = "More run metadata · technical ID and timestamps";
-  const metadataContent = ownerDocument.createElement("div");
-  metadataContent.className = "details-content";
-  const metadataIdentifiers = ownerDocument.createElement("div");
-  metadataIdentifiers.className = "run-card__identifiers";
-  metadataIdentifiers.append(technicalId, copyIdButton);
-  metadataContent.append(metadataIdentifiers, facts);
-  metadata.append(metadataSummary, metadataContent);
+  const summary = ownerDocument.createElement("summary");
+  summary.textContent = "More run metadata · technical ID and timestamps";
+  const content = ownerDocument.createElement("div");
+  content.className = "details-content";
+  const identifiers = ownerDocument.createElement("div");
+  identifiers.className = "run-card__identifiers";
+  const { technicalId, copyButton } = createTechnicalId(run, options, ownerDocument);
+  identifiers.append(technicalId, copyButton);
+  content.append(identifiers, createMetadataFacts(run, ownerDocument));
+  metadata.append(summary, content);
   footer.append(metadata);
+}
 
+function createTechnicalId(run: DashboardRunSummary, options: RunCardOptions, ownerDocument: Document) {
+  const technicalId = ownerDocument.createElement("p");
+  technicalId.className = "run-card__technical-id";
+  const labelText = ownerDocument.createElement("span");
+  labelText.textContent = "Technical ID · ";
+  const code = ownerDocument.createElement("code");
+  code.textContent = run.runId;
+  technicalId.append(labelText, code);
+
+  const copyButton = ownerDocument.createElement("button");
+  copyButton.className = "button button--secondary run-card__copy-id";
+  copyButton.type = "button";
+  copyButton.textContent = "Copy ID";
+  copyButton.setAttribute("aria-label", "Copy technical run ID");
+  copyButton.addEventListener("click", () => options.onCopyId?.(run.runId));
+  return { technicalId, copyButton };
+}
+
+function createMetadataFacts(run: DashboardRunSummary, ownerDocument: Document): HTMLElement {
+  return createDefinitionList([
+    ["Created", formatOptionalTimestamp(run.createdAt)],
+    ["Queued", formatOptionalTimestamp(run.queuedAt)],
+    ["Started", formatOptionalTimestamp(run.startedAt)],
+    ["Completed", formatOptionalTimestamp(run.completedAt)],
+  ], "data-list run-facts", ownerDocument);
+}
+
+function appendRunDetails(footer: HTMLElement, run: DashboardRunSummary, options: RunCardOptions, ownerDocument: Document): void {
   const details = ownerDocument.createElement("details");
   details.className = "run-card__details";
   const summary = ownerDocument.createElement("summary");
@@ -201,8 +240,6 @@ export function createRunCard(run: DashboardRunSummary, options: RunCardOptions 
   });
   details.open = options.expanded ?? false;
   footer.append(details);
-
-  return card;
 }
 
 function formatOptionalTimestamp(value: string | null): string {

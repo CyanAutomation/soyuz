@@ -4,46 +4,93 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { compareMigrationHistory } from "./migration-history.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-function fail(message: string): never {
-  console.error(`Production D1 compatibility check failed: ${message}`);
-  process.exit(1);
+
+interface VerificationOptions {
+  configText: string;
+  expectedMigrations: readonly string[];
+  accountId: string;
+  apiToken: string;
+  fetchImpl?: typeof fetch;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-async function main(): Promise<void> {
-  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
-  const apiToken = process.env.CLOUDFLARE_D1_READ_API_TOKEN;
-
-  if (!accountId || !/^[a-f0-9]{32}$/i.test(accountId)) {
-    fail("CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal account ID.");
-  }
-  if (!apiToken) fail("CLOUDFLARE_D1_READ_API_TOKEN is not configured.");
-
+export function configuredDatabaseId(configText: string): string {
   let config: unknown;
   try {
-    config = JSON.parse(readFileSync(path.join(root, "wrangler.jsonc"), "utf8"));
+    config = JSON.parse(configText);
   } catch {
-    fail("wrangler.jsonc must be valid JSON for the migration check.");
+    throw new Error("wrangler.jsonc must be valid JSON for the migration check.");
   }
 
   const databases = isRecord(config) && Array.isArray(config.d1_databases) ? config.d1_databases : [];
   const database = databases.find((binding) => isRecord(binding) && binding.binding === "DB");
   if (!isRecord(database) || typeof database.database_id !== "string" || !database.database_id) {
-    fail("wrangler.jsonc has no DB binding with a database_id.");
+    throw new Error("wrangler.jsonc has no DB binding with a database_id.");
+  }
+  return database.database_id;
+}
+
+function appliedMigrationNames(payload: unknown): string[] {
+  if (!isRecord(payload) || payload.success !== true || !Array.isArray(payload.result)) {
+    throw new Error("Cloudflare did not return a successful migration-history query.");
   }
 
-  const expected = readdirSync(path.join(root, "migrations"))
-    .filter((name) => /^\d+_[a-z0-9_-]+\.sql$/i.test(name))
-    .sort();
-  if (expected.length === 0) fail("no numbered SQL migrations were found.");
+  const results = payload.result.flatMap((query) => {
+    if (!isRecord(query) || !Array.isArray(query.results)) {
+      throw new Error("the D1 migration-history query returned an unexpected result shape.");
+    }
+    return query.results;
+  });
+  if (results.some((row) => !isRecord(row) || typeof row.name !== "string")) {
+    throw new Error("the D1 migration-history query returned an unexpected result shape.");
+  }
+  return results.map((row) => (row as { name: string }).name);
+}
 
+function migrationMismatchMessage(missing: readonly string[], unexpected: readonly string[], outOfOrder: boolean): string {
+  const details = [
+    missing.length ? `missing: ${missing.join(", ")}` : "",
+    unexpected.length ? `unexpected: ${unexpected.join(", ")}` : "",
+    outOfOrder ? "applied migrations are out of order" : "",
+  ].filter(Boolean).join("; ");
+  return `production D1 history does not match the repository (${details}). Apply or reconcile migrations before deploying the Worker.`;
+}
+
+export async function verifyProductionMigrations({
+  configText,
+  expectedMigrations,
+  accountId,
+  apiToken,
+  fetchImpl = fetch,
+}: VerificationOptions): Promise<number> {
+  if (!accountId || !/^[a-f0-9]{32}$/i.test(accountId)) {
+    throw new Error("CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal account ID.");
+  }
+  if (!apiToken) throw new Error("CLOUDFLARE_D1_READ_API_TOKEN is not configured.");
+  if (expectedMigrations.length === 0) throw new Error("no numbered SQL migrations were found.");
+
+  const databaseId = configuredDatabaseId(configText);
+  const applied = await readAppliedMigrations(accountId, databaseId, apiToken, fetchImpl);
+  const comparison = compareMigrationHistory(expectedMigrations, applied);
+  if (!comparison.consistent) {
+    throw new Error(migrationMismatchMessage(comparison.missing, comparison.unexpected, comparison.outOfOrder));
+  }
+  return applied.length;
+}
+
+async function readAppliedMigrations(
+  accountId: string,
+  databaseId: string,
+  apiToken: string,
+  fetchImpl: typeof fetch,
+): Promise<string[]> {
   let response: Response;
   try {
-    response = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/${database.database_id}/query`,
+    response = await fetchImpl(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/${databaseId}/query`,
       {
         method: "POST",
         headers: {
@@ -55,39 +102,35 @@ async function main(): Promise<void> {
       },
     );
   } catch {
-    fail("the read-only D1 migration-history request could not reach Cloudflare.");
+    throw new Error("the read-only D1 migration-history request could not reach Cloudflare.");
   }
 
-  if (!response.ok) fail(`Cloudflare returned HTTP ${response.status} for the migration-history query.`);
-
+  if (!response.ok) throw new Error(`Cloudflare returned HTTP ${response.status} for the migration-history query.`);
   let payload: unknown;
   try {
     payload = await response.json();
   } catch {
-    fail("Cloudflare returned invalid JSON for the migration-history query.");
+    throw new Error("Cloudflare returned invalid JSON for the migration-history query.");
   }
-  if (!isRecord(payload) || payload.success !== true) {
-    fail("Cloudflare did not return a successful migration-history query.");
-  }
+  return appliedMigrationNames(payload);
+}
 
-  const results = Array.isArray(payload.result)
-    ? payload.result.flatMap((query) => isRecord(query) && Array.isArray(query.results) ? query.results : [])
-    : [];
-  if (results.some((row) => !isRecord(row) || typeof row.name !== "string")) {
-    fail("the D1 migration-history query returned an unexpected result shape.");
+async function main(): Promise<void> {
+  try {
+    const expectedMigrations = readdirSync(path.join(root, "migrations"))
+      .filter((name) => /^\d+_[a-z0-9_-]+\.sql$/i.test(name))
+      .sort();
+    const count = await verifyProductionMigrations({
+      configText: readFileSync(path.join(root, "wrangler.jsonc"), "utf8"),
+      expectedMigrations,
+      accountId: process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
+      apiToken: process.env.CLOUDFLARE_D1_READ_API_TOKEN ?? "",
+    });
+    console.log(`Production D1 migration history is compatible (${count} migrations).`);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : "Unexpected migration compatibility failure.");
+    process.exitCode = 1;
   }
-  const applied = results.map((row) => (row as { name: string }).name);
-  const comparison = compareMigrationHistory(expected, applied);
-  if (!comparison.consistent) {
-    const details = [
-      comparison.missing.length ? `missing: ${comparison.missing.join(", ")}` : "",
-      comparison.unexpected.length ? `unexpected: ${comparison.unexpected.join(", ")}` : "",
-      comparison.outOfOrder ? "applied migrations are out of order" : "",
-    ].filter(Boolean).join("; ");
-    fail(`production D1 history does not match the repository (${details}). Apply or reconcile migrations before deploying the Worker.`);
-  }
-
-  console.log(`Production D1 migration history is compatible (${applied.length} migrations).`);
 }
 
 const invokedPath = process.argv[1];

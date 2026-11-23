@@ -27,6 +27,6 @@ Read artifact and retention sections in `docs/CONTRACT.md`, `docs/ARCHITECTURE.m
 
 ## Verify the lifecycle
 
-Update focused cases in `tests/api.test.ts`, `tests/dashboard-api.test.ts`, and migration tests as appropriate. Artifact upload, expiry, and deletion retry coverage currently lives in `tests/api.test.ts`. Cover stale/wrong worker claims, size mismatch and overflow, duplicate IDs and metadata conflicts, inaccessible or expired artifacts, cache behavior, partial storage failure, and retried deletion work where affected. Use local R2/D1 test bindings; do not validate by uploading or deleting production objects.
+Update focused cases in `tests/api/artifacts-api.test.ts`, `tests/api/reconciliation-api.test.ts`, `tests/dashboard-api.test.ts`, and migration tests as appropriate. Artifact upload, expiry, and deletion retry coverage lives in `tests/api/artifacts-api.test.ts`. Cover stale/wrong worker claims, size mismatch and overflow, duplicate IDs and metadata conflicts, inaccessible or expired artifacts, cache behavior, partial storage failure, and retried deletion work where affected. Use local R2/D1 test bindings; do not validate by uploading or deleting production objects.
 
 Use `npm test` and `npm run typecheck` for verification when requested. Apply schema changes only to local D1 with `npm run db:migrate:local`; remote migrations require the separate procedure in the deployment guide.

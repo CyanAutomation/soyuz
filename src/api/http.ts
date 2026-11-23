@@ -1,6 +1,6 @@
 import { isUuid } from "../lib/uuid";
 
-export const MAX_JSON_BODY_BYTES = 96 * 1024;
+const MAX_JSON_BODY_BYTES = 96 * 1024;
 
 export interface ApiErrorOptions {
   details?: unknown;
@@ -105,16 +105,6 @@ function requestTooLargeError(maxBytes: number): ApiError {
     ? "Request body exceeds the 96 KB limit"
     : `Request body exceeds the ${maxBytes} byte limit`;
   return new ApiError(413, "REQUEST_TOO_LARGE", message);
-}
-
-export async function requestWithBoundedBody(request: Request, maxBytes = MAX_JSON_BODY_BYTES): Promise<Request> {
-  if (request.method !== "POST" || request.body === null) return request;
-  const bytes = await readRequestBodyBytes(request, maxBytes);
-  const headers = new Headers(request.headers);
-  headers.delete("content-length");
-  const body = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(body).set(bytes);
-  return new Request(request, { headers, body });
 }
 
 export async function parseJsonBody(request: Request, requestId: string): Promise<unknown> {

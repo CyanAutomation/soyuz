@@ -1,6 +1,6 @@
-import { JevProfileIdSchema, type JevProfileId } from "./profile-ids";
+import type { JevProfileId } from "./profile-ids";
 
-export { JEV_PROFILE_IDS, JevProfileIdSchema } from "./profile-ids";
+export { JevProfileIdSchema } from "./profile-ids";
 export type { JevProfileId } from "./profile-ids";
 
 export type AnswerContract =
@@ -44,6 +44,3 @@ export const JEV_PROFILE_CONTRACTS: Readonly<Record<JevProfileId, JevProfileCont
     },
   },
 };
-
-export type { JevProfileId as SoyuzJevProfileId };
-export { JevProfileIdSchema as SoyuzJevProfileIdSchema };

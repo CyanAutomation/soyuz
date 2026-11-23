@@ -67,6 +67,10 @@ function validAnswers(profileId: JevProfileId): Record<string, unknown> {
   }
 }
 
+function answerRecord(profileId: JevProfileId, key: string): Record<string, unknown> {
+  return validAnswers(profileId)[key] as Record<string, unknown>;
+}
+
 function senkuResponse(profileId: JevProfileId, overrides: Record<string, unknown> = {}): Response {
   const answers = validAnswers(profileId);
   const payload = {
@@ -177,13 +181,36 @@ describe("Soyuz to Senku decision client", () => {
     ["missing answer", { answers: {} }],
     ["unexpected answer", { answers: { ...validAnswers("run_operations_triage_v1"), extra: { type: "noul" } } }],
     ["invalid answer", { answers: { ...validAnswers("run_operations_triage_v1"), needs_followup: { type: "noul", noul: 1.1 } } }],
+    ["invalid Noul probability total", { answers: { ...validAnswers("run_operations_triage_v1"), needs_followup: { type: "noul", noul: 0.8, probabilities: { false: 0.1, true: 0.8 }, confidence: null } } }],
+    ["invalid choice label", { answers: { ...validAnswers("run_operations_triage_v1"), likely_area: { ...answerRecord("run_operations_triage_v1", "likely_area"), choice: "other" } } }],
+    ["invalid score range", { answers: { ...validAnswers("run_operations_triage_v1"), severity: { ...answerRecord("run_operations_triage_v1", "severity"), score: 4 } } }],
+    ["mismatched score legend", { answers: { ...validAnswers("run_operations_triage_v1"), severity: { ...answerRecord("run_operations_triage_v1", "severity"), legend: { "0": "Routine", "1": "Urgent", "2": "Needs review" } } } }],
+    ["invalid confidence", { answers: { ...validAnswers("run_operations_triage_v1"), likely_area: { ...answerRecord("run_operations_triage_v1", "likely_area"), confidence: 2 } } }],
     ["wrong result", { result: {} }],
     ["invalid attempt count", { attemptCount: 2 }],
     ["invalid usage", { usage: { input_tokens: -1 } }],
+    ["invalid output token count", { usage: { output_tokens: -1 } }],
+    ["invalid total token count", { usage: { total_tokens: -1 } }],
+    ["invalid cost", { usage: { cost: -1 } }],
+    ["unexpected usage key", { usage: { provider_token: 1 } }],
+    ["negative duration", { durationMs: -1 }],
+    ["blank model name", { model: "   " }],
   ])("rejects malformed Senku response: %s", async (_name, overrides) => {
     const binding = { fetch: vi.fn(async () => senkuResponse("run_operations_triage_v1", overrides)) } as unknown as Fetcher;
     await expect(requestSenkuDecision(environment(), "run_operations_triage_v1", TRIAGE_INPUT, binding))
       .rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+  });
+
+  it.each([
+    ["valid correlation ID", "dec-00000000-0000-4000-8000-000000000003", "dec-00000000-0000-4000-8000-000000000003"],
+    ["invalid correlation ID", "upstream-private-id", undefined],
+  ])("only returns a safe correlation ID for malformed responses with a %s", async (_case, requestId, expectedRequestId) => {
+    const binding = {
+      fetch: vi.fn(async () => senkuResponse("run_operations_triage_v1", { requestId, answers: {} })),
+    } as unknown as Fetcher;
+
+    await expect(requestSenkuDecision(environment(), "run_operations_triage_v1", TRIAGE_INPUT, binding))
+      .rejects.toMatchObject({ code: "INVALID_RESPONSE", senkuRequestId: expectedRequestId });
   });
 
   it("handles invalid JSON and oversized responses", async () => {
