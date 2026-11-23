@@ -424,6 +424,10 @@ beforeEach(clearDatabase);
       publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
         .bind(data.runId).first<PublicationRow>();
       expect(publication?.attempt_count).toBe(attempt);
+      const intent = await bindings.DB.prepare("SELECT state, retained_until FROM publication_intents WHERE publication_id = ?")
+        .bind(publication!.publication_id).first<{ state: string; retained_until: string | null }>();
+      expect(intent?.state).toBe("consumed");
+      expect(intent?.retained_until).toBeNull();
       if (attempt < 8) {
         expect(publication?.state).toBe("retryable_failure");
         at = new Date(Date.parse(publication!.next_attempt_at!) + 1);

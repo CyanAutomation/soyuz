@@ -288,6 +288,7 @@ async function recordPublicationOutcome(
   if (result.outcome === "retryable_failure") {
     const retryAfter = result.error?.retryAfterSeconds;
     await scheduleRetry(env, current, attemptId, result.error?.code ?? "GITHUB_UNAVAILABLE", retryAfter, at);
+    return;
   } else if (result.outcome === "blocked") {
     await finishAttempt(env, current, attemptId, {
       state: "blocked", errorCode: result.error?.code ?? "PUBLISHING_BLOCKED", eventType: "publication.blocked", at,
