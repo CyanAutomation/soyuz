@@ -1,0 +1,198 @@
+{
+  "kind": "health",
+  "finding_counts": {
+    "dashboard/a2ui-renderer.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "dashboard/app.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 3
+      }
+    },
+    "dashboard/jev-panel.ts": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "dashboard/jev-renderer.ts": {
+      "complexity_high": {
+        "count": 1
+      }
+    },
+    "dashboard/run-card.ts": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "scripts/soyuz-production-smoke.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "scripts/verify-production-migrations.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "src/api/artifacts.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "src/api/publications.ts": {
+      "complexity_moderate": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 4
+      }
+    },
+    "src/api/run-outcomes.ts": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "src/api/runs.ts": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "src/api/worker-artifacts.ts": {
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 3
+      }
+    },
+    "src/api/workers.ts": {
+      "crap_moderate": {
+        "count": 3
+      }
+    },
+    "src/auth/oauth.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "src/contracts/worker-callbacks.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "src/jev/analysis.ts": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "src/jev/senku-client.ts": {
+      "complexity_critical": {
+        "count": 2
+      },
+      "crap_critical": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 2
+      }
+    },
+    "src/publication/contract-v1.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "src/publication/lifecycle.ts": {
+      "complexity_high": {
+        "count": 2
+      },
+      "crap_high": {
+        "count": 3
+      }
+    },
+    "src/publication/mock-publisher.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "src/publication/policy.ts": {
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "src/publication/rpc-v1.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      }
+    },
+    "src/utcp/manual.ts": {
+      "crap_moderate": {
+        "count": 1
+      }
+    },
+    "tests/dashboard-api.test.ts": {
+      "complexity_high": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      }
+    },
+    "tests/support/kaseki-protocol-simulator.ts": {
+      "complexity_critical": {
+        "count": 1
+      },
+      "crap_critical": {
+        "count": 1
+      },
+      "crap_high": {
+        "count": 1
+      },
+      "crap_moderate": {
+        "count": 1
+      }
+    }
+  },
+  "runtime_coverage_findings": [],
+  "target_keys": [
+    "src/index.ts:high impact",
+    "src/auth/oauth-resource.ts:hidden coupling",
+    "a2ui/protocol.ts:high impact",
+    "src/publication/contract-v1.ts:high impact",
+    "src/application/runs.ts:hidden coupling",
+    "src/auth/bearer.ts:high impact",
+    "src/jev/senku-client.ts:untested risk",
+    "src/api/worker-artifacts.ts:untested risk",
+    "dashboard/app.ts:hidden coupling",
+    "tests/dashboard-api.test.ts:hidden coupling",
+    "tests/support/kaseki-protocol-simulator.ts:complexity",
+    "dashboard/jev-renderer.ts:complexity",
+    "scripts/soyuz-production-smoke.ts:untested risk"
+  ],
+  "file_lines_categories": true
+}

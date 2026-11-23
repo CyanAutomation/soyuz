@@ -51,6 +51,29 @@ describe("A2UI analysis DOM renderer", () => {
     renderer.dispose();
   });
 
+  it("renders catalog dividers and bounds model-provided text", () => {
+    const { document } = parseHTML("<html><body><section id='output'></section></body></html>");
+    vi.stubGlobal("document", document);
+    const target = document.querySelector("#output") as HTMLElement;
+    const renderer = new A2uiDomRenderer(target, vi.fn());
+    renderer.render([{
+      version: "1.0",
+      createSurface: {
+        surfaceId: "analysis-bounded-text",
+        catalogId: A2UI_CATALOG_ID,
+        components: [
+          { id: "root", component: "Column", children: ["copy", "divider"] },
+          { id: "copy", component: "Text", text: "x".repeat(2_100) },
+          { id: "divider", component: "Divider" },
+        ],
+      },
+    }]);
+
+    expect(target.querySelector("p")?.textContent).toHaveLength(2_000);
+    expect(target.querySelector("hr")?.className).toBe("a2ui-divider");
+    renderer.dispose();
+  });
+
   it("keeps generated event lists inside a closed native disclosure", () => {
     const { document } = parseHTML("<html><body><section id='output'></section></body></html>");
     vi.stubGlobal("document", document);

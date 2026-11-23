@@ -3,11 +3,11 @@ import { STRICT_VALIDATION } from "@a2ui/web_core/validating";
 import { A2UI_CATALOG_ID, basicCatalog } from "./catalog";
 
 export { A2UI_CATALOG_ID };
-export const A2UI_MAX_MESSAGE_CHARS = 32_000;
-export const A2UI_MAX_STREAM_CHARS = 64_000;
-export const A2UI_MAX_COMPONENTS = 100;
-export const A2UI_MAX_DEPTH = 8;
-export const A2UI_MAX_MESSAGES = 100;
+const A2UI_MAX_MESSAGE_CHARS = 32_000;
+const A2UI_MAX_STREAM_CHARS = 64_000;
+const A2UI_MAX_COMPONENTS = 100;
+const A2UI_MAX_DEPTH = 8;
+const A2UI_MAX_MESSAGES = 100;
 
 const ALLOWED_COMPONENTS = new Set(["Column", "Row", "Card", "Text", "Button", "Divider", "List"]);
 const ALLOWED_ACTIONS = new Set(["select_run", "refresh_runs", "reset_filters"]);
@@ -68,10 +68,6 @@ export class A2uiStreamValidator {
     return [...this.accepted];
   }
 
-  get surfaceId(): string | null {
-    return this.currentSurfaceId;
-  }
-
   pushLine(line: string): unknown {
     if (this.finished) throw new Error("The A2UI message stream is already complete.");
     if (line.length === 0 || line.length > A2UI_MAX_MESSAGE_CHARS) throw new Error("A2UI message is outside supported limits.");
@@ -91,38 +87,9 @@ export class A2uiStreamValidator {
     if (typeof serialized !== "string" || serialized.length > A2UI_MAX_MESSAGE_CHARS) throw new Error("A2UI message is outside supported limits.");
     this.totalChars += serialized.length;
     if (this.totalChars > A2UI_MAX_STREAM_CHARS) throw new Error("The A2UI stream is outside supported limits.");
-    if (!isRecord(value) || value.version !== "1.0") throw new Error("A2UI message does not match protocol v1.0.");
-    const operationKeys = Object.keys(value).filter((key) => key !== "version");
-    if (operationKeys.length !== 1) throw new Error("A2UI message has no unique operation.");
-    const messageType = operationKeys[0];
-    const message = value;
-
-    if (messageType === "createSurface") {
-      if (this.accepted.length !== 0 || this.currentSurfaceId !== null) throw new Error("A2UI stream must create exactly one surface first.");
-      const surface = message.createSurface as Record<string, unknown>;
-      const surfaceId = surface.surfaceId;
-      if (typeof surfaceId !== "string" || (this.options.expectedSurfaceId && surfaceId !== this.options.expectedSurfaceId)) {
-        throw new Error("A2UI surface identifier is unexpected.");
-      }
-      if (surface.catalogId !== A2UI_CATALOG_ID || surface.dataModel !== undefined || surface.sendDataModel === true) {
-        throw new Error("A2UI surface configuration is not allowed.");
-      }
-      this.currentSurfaceId = surfaceId;
-      this.inspectComponents(surface.components);
-    } else if (messageType === "updateComponents") {
-      if (!this.currentSurfaceId) throw new Error("A2UI surface must be created before it can be updated.");
-      const update = message.updateComponents as Record<string, unknown>;
-      if (update.surfaceId !== this.currentSurfaceId) throw new Error("A2UI update targets an unexpected surface.");
-      this.inspectComponents(update.components);
-    } else {
-      throw new Error("This A2UI operation is outside the read-only UI contract.");
-    }
-
-    try {
-      this.processor.processMessages(value as never);
-    } catch {
-      throw new Error("A2UI message does not match the official protocol or catalog schema.");
-    }
+    const { message, operation } = readOperation(value);
+    this.inspectOperation(operation, message);
+    this.processWithCatalog(value);
     this.accepted.push(value);
     return value;
   }
@@ -143,17 +110,64 @@ export class A2uiStreamValidator {
 
   private inspectComponents(raw: unknown): void {
     if (!Array.isArray(raw)) throw new Error("A2UI components must be an array.");
-    for (const component of raw) {
-      if (!component || typeof component !== "object" || Array.isArray(component)) throw new Error("A2UI component is malformed.");
-      const record = component as Record<string, unknown>;
-      if (typeof record.id !== "string" || typeof record.component !== "string" || !ALLOWED_COMPONENTS.has(record.component)) {
-        throw new Error("A2UI component is not in the approved catalog subset.");
-      }
-      this.componentIds.add(record.id);
-      if (this.componentIds.size > A2UI_MAX_COMPONENTS) throw new Error("A2UI surface has too many components.");
-      inspectUntrustedFields(record);
+    for (const component of raw) this.inspectComponent(component);
+  }
+
+  private inspectOperation(operation: string, message: Record<string, any>): void {
+    if (operation === "createSurface") {
+      this.inspectSurfaceCreation(message.createSurface as Record<string, unknown>);
+      return;
+    }
+    if (operation === "updateComponents") {
+      this.inspectComponentUpdate(message.updateComponents as Record<string, unknown>);
+      return;
+    }
+    throw new Error("This A2UI operation is outside the read-only UI contract.");
+  }
+
+  private inspectSurfaceCreation(surface: Record<string, unknown>): void {
+    if (this.accepted.length !== 0 || this.currentSurfaceId !== null) throw new Error("A2UI stream must create exactly one surface first.");
+    const surfaceId = surface.surfaceId;
+    if (typeof surfaceId !== "string" || (this.options.expectedSurfaceId && surfaceId !== this.options.expectedSurfaceId)) {
+      throw new Error("A2UI surface identifier is unexpected.");
+    }
+    if (surface.catalogId !== A2UI_CATALOG_ID || surface.dataModel !== undefined || surface.sendDataModel === true) {
+      throw new Error("A2UI surface configuration is not allowed.");
+    }
+    this.currentSurfaceId = surfaceId;
+    this.inspectComponents(surface.components);
+  }
+
+  private inspectComponentUpdate(update: Record<string, unknown>): void {
+    if (!this.currentSurfaceId) throw new Error("A2UI surface must be created before it can be updated.");
+    if (update.surfaceId !== this.currentSurfaceId) throw new Error("A2UI update targets an unexpected surface.");
+    this.inspectComponents(update.components);
+  }
+
+  private processWithCatalog(value: unknown): void {
+    try {
+      this.processor.processMessages(value as never);
+    } catch {
+      throw new Error("A2UI message does not match the official protocol or catalog schema.");
     }
   }
+
+  private inspectComponent(component: unknown): void {
+    if (!isRecord(component)) throw new Error("A2UI component is malformed.");
+    if (typeof component.id !== "string" || typeof component.component !== "string" || !ALLOWED_COMPONENTS.has(component.component)) {
+      throw new Error("A2UI component is not in the approved catalog subset.");
+    }
+    this.componentIds.add(component.id);
+    if (this.componentIds.size > A2UI_MAX_COMPONENTS) throw new Error("A2UI surface has too many components.");
+    inspectUntrustedFields(component);
+  }
+}
+
+function readOperation(value: unknown): { message: Record<string, any>; operation: string } {
+  if (!isRecord(value) || value.version !== "1.0") throw new Error("A2UI message does not match protocol v1.0.");
+  const operationKeys = Object.keys(value).filter((key) => key !== "version");
+  if (operationKeys.length !== 1) throw new Error("A2UI message has no unique operation.");
+  return { message: value, operation: operationKeys[0]! };
 }
 
 function isRecord(value: unknown): value is Record<string, any> {
@@ -162,51 +176,73 @@ function isRecord(value: unknown): value is Record<string, any> {
 
 function inspectUntrustedFields(value: unknown, parentKey = ""): void {
   if (Array.isArray(value)) {
-    for (const item of value) inspectUntrustedFields(item, parentKey);
+    inspectUntrustedArray(value, parentKey);
     return;
   }
-  if (!value || typeof value !== "object") return;
+  if (!isRecord(value)) return;
 
-  const record = value as Record<string, unknown>;
-  if ("@call" in record || "functionCall" in record) throw new Error("A2UI function calls are disabled.");
+  if ("@call" in value || "functionCall" in value) throw new Error("A2UI function calls are disabled.");
 
   if (parentKey === "action") {
-    if (!isAllowedAction(record)) throw new Error("A2UI action is not approved.");
+    assertAllowedAction(value);
     return;
   }
 
-  for (const [key, child] of Object.entries(record)) {
-    if (key === "action") {
-      if (!isAllowedAction(child)) throw new Error("A2UI action is not approved.");
-      continue;
-    }
-    if ((key === "@path" || (key === "path" && typeof child === "string")) && !isAllowedDataPath(child)) {
-      throw new Error("A2UI binding points outside the dashboard data model.");
-    }
-    inspectUntrustedFields(child, key);
+  for (const [key, child] of Object.entries(value)) inspectUntrustedField(key, child);
+}
+
+function inspectUntrustedArray(values: unknown[], parentKey: string): void {
+  for (const value of values) inspectUntrustedFields(value, parentKey);
+}
+
+function inspectUntrustedField(key: string, value: unknown): void {
+  if (key === "action") {
+    assertAllowedAction(value);
+    return;
   }
+  if (isDataPathField(key, value) && !isAllowedDataPath(value)) {
+    throw new Error("A2UI binding points outside the dashboard data model.");
+  }
+  inspectUntrustedFields(value, key);
+}
+
+function isDataPathField(key: string, value: unknown): boolean {
+  return key === "@path" || (key === "path" && typeof value === "string");
+}
+
+function assertAllowedAction(value: unknown): asserts value is Record<string, unknown> {
+  if (!isAllowedAction(value)) throw new Error("A2UI action is not approved.");
 }
 
 function isAllowedAction(value: unknown): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const event = readActionEvent(value);
+  return Boolean(event && ALLOWED_ACTIONS.has(String(event.name)) && isAllowedActionContext(event));
+}
+
+function readActionEvent(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const action = value as Record<string, unknown>;
-  if (Object.keys(action).length !== 1 || !action.event || typeof action.event !== "object" || Array.isArray(action.event)) return false;
-  const event = action.event as Record<string, unknown>;
-  if (!ALLOWED_ACTIONS.has(String(event.name))) return false;
-  const context = event.context;
-  if (context === undefined) return event.name !== "select_run";
-  if (!context || typeof context !== "object" || Array.isArray(context)) return false;
-  const fields = context as Record<string, unknown>;
+  if (Object.keys(action).length !== 1 || !isRecord(action.event)) return null;
+  return action.event;
+}
+
+function isAllowedActionContext(event: Record<string, unknown>): boolean {
+  if (event.context === undefined) return event.name !== "select_run";
+  if (!isRecord(event.context)) return false;
 
   switch (event.name) {
     case "select_run":
-      return Object.keys(fields).length === 1 && "runId" in fields && isUuidOrRunBinding(fields.runId);
+      return isSelectRunContext(event.context);
     case "refresh_runs":
     case "reset_filters":
-      return Object.keys(fields).length === 0;
+      return Object.keys(event.context).length === 0;
     default:
       return false;
   }
+}
+
+function isSelectRunContext(context: Record<string, unknown>): boolean {
+  return Object.keys(context).length === 1 && "runId" in context && isUuidOrRunBinding(context.runId);
 }
 
 function isUuidOrRunBinding(value: unknown): boolean {

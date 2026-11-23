@@ -14,6 +14,21 @@ const MANIFEST_RETENTION_DAYS = 30;
 const SENSITIVE_VALIDATION_EVIDENCE_LIMIT = 100;
 
 type WorkerAccess = { workerId: string; claimCallbackId: string; run: NonNullable<Awaited<ReturnType<typeof getRun>>> };
+type ManifestArtifactRow = {
+  artifact_id: string;
+  run_id: string;
+  content_digest: string;
+  object_key: string;
+  state: string;
+  worker_id: string;
+  claim_callback_id: string;
+};
+type PublicationIntentInput = ReturnType<typeof PublicationIntentSchema.parse>;
+type UploadedPublicationManifest = {
+  object_key: string;
+  size_bytes: number;
+  artifact: PublicationArtifact;
+};
 
 export async function handleWorkerPublication(
   request: Request,
@@ -98,104 +113,158 @@ async function uploadManifest(
   requestId: string,
 ): Promise<Response> {
   if (!env.ARTIFACTS) return errorResponse(requestId, 503, "ARTIFACT_STORAGE_UNAVAILABLE", "Artifact storage is not configured.");
-  const length = parseContentLength(request.headers.get("content-length"));
-  if (length === null) return errorResponse(requestId, 411, "CONTENT_LENGTH_REQUIRED", "Manifest upload requires a valid Content-Length header.");
-  if (length < 1 || length > MAX_MANIFEST_UPLOAD_BYTES) return errorResponse(requestId, 413, "MANIFEST_TOO_LARGE", "Publication manifests must be no larger than 9 MiB.");
+  const body = await readManifestUpload(request, requestId);
+  if ("response" in body) return body.response;
+  const validation = await validateUploadedManifest(body.value, access, artifactId, requestId);
+  if ("response" in validation) return validation.response;
 
-  let bytes: Uint8Array;
-  let parsed: unknown;
-  try {
-    bytes = await readRequestBodyBytes(request, MAX_MANIFEST_UPLOAD_BYTES);
-    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
-  } catch {
-    return errorResponse(requestId, 400, "MANIFEST_INVALID", "Publication manifest must be valid UTF-8 JSON.");
-  }
-  const destination = githubRepository(access.run.repo_url);
-  if (!destination) return errorResponse(requestId, 409, "PUBLICATION_DESTINATION_INVALID", "Run destination is not a canonical GitHub repository.");
-
-  let validated;
-  try {
-    validated = await validatePublicationArtifact(parsed, {
-      runId: access.run.id,
-      artifactId,
-      repositoryUrl: access.run.repo_url,
-      baseRef: access.run.git_ref,
-    });
-  } catch {
-    return errorResponse(requestId, 422, "MANIFEST_INVALID", "Publication manifest did not satisfy Kirisame contract v1.");
-  }
+  const bytes = body.bytes;
   const rawDigest = await digestHex(bytes);
   const objectKey = `publication-manifests/${access.run.id}/${artifactId}`;
   const now = new Date().toISOString();
   const expiry = new Date(Date.now() + MANIFEST_RETENTION_DAYS * 24 * 60 * 60_000).toISOString();
 
   try {
-    const inserted = await env.DB.prepare(`
-      INSERT OR IGNORE INTO publication_manifest_artifacts (
-        artifact_id, run_id, content_digest, size_bytes, object_key, worker_id, claim_callback_id, state, created_at, expires_at
-      )
-      SELECT ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ? FROM runs
-      WHERE id = ? AND status = 'running' AND worker_id = ?
-        AND (SELECT event_id FROM run_events WHERE run_id = runs.id AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1) = ?
-    `).bind(artifactId, access.run.id, rawDigest, bytes.byteLength, objectKey, access.workerId, access.claimCallbackId, now, expiry,
-      access.run.id, access.workerId, access.claimCallbackId).run();
-    let existing = await env.DB.prepare("SELECT * FROM publication_manifest_artifacts WHERE artifact_id = ?")
-      .bind(artifactId).first<{ artifact_id: string; run_id: string; content_digest: string; object_key: string; state: string; worker_id: string; claim_callback_id: string }>();
-    if (existing && (existing.run_id !== access.run.id || existing.content_digest !== rawDigest)) {
-      return errorResponse(requestId, 409, "ARTIFACT_ID_CONFLICT", "A different publication manifest already uses this artifact ID.");
-    }
-    if (!existing) {
-      return Number(inserted.meta?.changes ?? 0) === 0
-        ? errorResponse(requestId, 409, "STALE_CLAIM", "Worker claim changed during manifest upload.")
-        : errorResponse(requestId, 503, "MANIFEST_INDEX_UNAVAILABLE", "Soyuz could not index the publication manifest.");
-    }
-    if (existing.worker_id !== access.workerId || existing.claim_callback_id !== access.claimCallbackId) {
-      const rebound = await env.DB.prepare(`UPDATE publication_manifest_artifacts
-        SET worker_id = ?, claim_callback_id = ?, state = 'pending'
-        WHERE artifact_id = ? AND run_id = ? AND content_digest = ? AND state IN ('pending', 'ready')
-          AND NOT EXISTS (SELECT 1 FROM publication_intents WHERE artifact_id = ?)
-          AND EXISTS (SELECT 1 FROM runs WHERE id = ? AND status = 'running' AND worker_id = ?
-            AND (SELECT event_id FROM run_events WHERE run_id = runs.id AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1) = ?)`)
-        .bind(access.workerId, access.claimCallbackId, artifactId, access.run.id, rawDigest, artifactId,
-          access.run.id, access.workerId, access.claimCallbackId).run();
-      if (Number(rebound.meta?.changes ?? 0) !== 1) {
-        return errorResponse(requestId, 409, "STALE_CLAIM", "Worker claim changed before the manifest upload could be recovered.");
-      }
-      existing = await env.DB.prepare("SELECT * FROM publication_manifest_artifacts WHERE artifact_id = ?")
-        .bind(artifactId).first<{ artifact_id: string; run_id: string; content_digest: string; object_key: string; state: string; worker_id: string; claim_callback_id: string }>();
-      if (!existing || existing.worker_id !== access.workerId || existing.claim_callback_id !== access.claimCallbackId) {
-        return errorResponse(requestId, 409, "STALE_CLAIM", "Worker claim changed before the manifest upload could be recovered.");
-      }
-    }
+    const reservation = await reserveManifestUpload(env, access, artifactId, rawDigest, bytes.byteLength, objectKey, now, expiry, requestId);
+    if ("response" in reservation) return reservation.response;
     await env.ARTIFACTS.put(objectKey, bytes, {
       httpMetadata: { contentType: "application/json; charset=utf-8" },
-      customMetadata: { runId: access.run.id, artifactId, kind: "publication_manifest", sha256: validated.digest },
+      customMetadata: { runId: access.run.id, artifactId, kind: "publication_manifest", sha256: validation.digest },
     });
-    const ready = await env.DB.prepare(`UPDATE publication_manifest_artifacts SET state = 'ready'
-      WHERE artifact_id = ? AND run_id = ? AND content_digest = ? AND state IN ('pending', 'ready')
-        AND worker_id = ? AND claim_callback_id = ?
-        AND EXISTS (SELECT 1 FROM runs WHERE id = ? AND status = 'running' AND worker_id = ?
-          AND (SELECT event_id FROM run_events WHERE run_id = runs.id AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1) = ?)`)
-      .bind(artifactId, access.run.id, rawDigest, access.workerId, access.claimCallbackId,
-        access.run.id, access.workerId, access.claimCallbackId).run();
-    if (Number(ready.meta?.changes ?? 0) !== 1) {
+    const ready = await markManifestReady(env, access, artifactId, rawDigest);
+    if (!ready) {
       return errorResponse(requestId, 409, "STALE_CLAIM", "Worker claim changed while storing the publication manifest.");
     }
     return successResponse(requestId, {
       artifactId,
       runId: access.run.id,
-      artifactDigest: validated.digest,
+      artifactDigest: validation.digest,
       size: bytes.byteLength,
-      expiresAt: existing.state === "ready" ? undefined : expiry,
-    }, existing.state === "ready" ? 200 : 201);
+      expiresAt: reservation.existing.state === "ready" ? undefined : expiry,
+    }, reservation.existing.state === "ready" ? 200 : 201);
   } catch {
     return errorResponse(requestId, 503, "MANIFEST_STORAGE_UNAVAILABLE", "Soyuz could not store the publication manifest. Retry with the same artifact ID.");
   }
 }
 
+async function readManifestUpload(request: Request, requestId: string): Promise<
+  { bytes: Uint8Array; value: unknown } | { response: Response }
+> {
+  const length = parseContentLength(request.headers.get("content-length"));
+  if (length === null) {
+    return { response: errorResponse(requestId, 411, "CONTENT_LENGTH_REQUIRED", "Manifest upload requires a valid Content-Length header.") };
+  }
+  if (length < 1 || length > MAX_MANIFEST_UPLOAD_BYTES) {
+    return { response: errorResponse(requestId, 413, "MANIFEST_TOO_LARGE", "Publication manifests must be no larger than 9 MiB.") };
+  }
+  try {
+    const bytes = await readRequestBodyBytes(request, MAX_MANIFEST_UPLOAD_BYTES);
+    const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+    return { bytes, value };
+  } catch {
+    return { response: errorResponse(requestId, 400, "MANIFEST_INVALID", "Publication manifest must be valid UTF-8 JSON.") };
+  }
+}
+
+async function validateUploadedManifest(
+  value: unknown,
+  access: WorkerAccess,
+  artifactId: string,
+  requestId: string,
+): Promise<{ artifact: PublicationArtifact; digest: string } | { response: Response }> {
+  if (!githubRepository(access.run.repo_url)) {
+    return { response: errorResponse(requestId, 409, "PUBLICATION_DESTINATION_INVALID", "Run destination is not a canonical GitHub repository.") };
+  }
+  try {
+    return await validatePublicationArtifact(value, {
+      runId: access.run.id,
+      artifactId,
+      repositoryUrl: access.run.repo_url,
+      baseRef: access.run.git_ref,
+    });
+  } catch {
+    return { response: errorResponse(requestId, 422, "MANIFEST_INVALID", "Publication manifest did not satisfy Kirisame contract v1.") };
+  }
+}
+
+async function reserveManifestUpload(
+  env: Env,
+  access: WorkerAccess,
+  artifactId: string,
+  rawDigest: string,
+  size: number,
+  objectKey: string,
+  now: string,
+  expiry: string,
+  requestId: string,
+): Promise<{ existing: ManifestArtifactRow } | { response: Response }> {
+  const inserted = await env.DB.prepare(`
+    INSERT OR IGNORE INTO publication_manifest_artifacts (
+      artifact_id, run_id, content_digest, size_bytes, object_key, worker_id, claim_callback_id, state, created_at, expires_at
+    )
+    SELECT ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ? FROM runs
+    WHERE id = ? AND status = 'running' AND worker_id = ?
+      AND (SELECT event_id FROM run_events WHERE run_id = runs.id AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1) = ?
+  `).bind(artifactId, access.run.id, rawDigest, size, objectKey, access.workerId, access.claimCallbackId, now, expiry,
+    access.run.id, access.workerId, access.claimCallbackId).run();
+  let existing = await readManifestArtifact(env, artifactId);
+  if (existing && (existing.run_id !== access.run.id || existing.content_digest !== rawDigest)) {
+    return { response: errorResponse(requestId, 409, "ARTIFACT_ID_CONFLICT", "A different publication manifest already uses this artifact ID.") };
+  }
+  if (!existing) {
+    const noClaim = Number(inserted.meta?.changes ?? 0) === 0;
+    return { response: noClaim
+      ? errorResponse(requestId, 409, "STALE_CLAIM", "Worker claim changed during manifest upload.")
+      : errorResponse(requestId, 503, "MANIFEST_INDEX_UNAVAILABLE", "Soyuz could not index the publication manifest.") };
+  }
+  if (!isCurrentManifestClaim(existing, access)) {
+    if (!await rebindManifestClaim(env, access, artifactId, rawDigest)) {
+      return { response: errorResponse(requestId, 409, "STALE_CLAIM", "Worker claim changed before the manifest upload could be recovered.") };
+    }
+    const rebound = await readManifestArtifact(env, artifactId);
+    if (!isCurrentManifestClaim(rebound, access)) {
+      return { response: errorResponse(requestId, 409, "STALE_CLAIM", "Worker claim changed before the manifest upload could be recovered.") };
+    }
+    existing = rebound;
+  }
+  return { existing };
+}
+
+async function readManifestArtifact(env: Env, artifactId: string): Promise<ManifestArtifactRow | null> {
+  return env.DB.prepare("SELECT * FROM publication_manifest_artifacts WHERE artifact_id = ?")
+    .bind(artifactId).first<ManifestArtifactRow>();
+}
+
+function isCurrentManifestClaim(row: ManifestArtifactRow | null, access: WorkerAccess): row is ManifestArtifactRow {
+  return Boolean(row && row.worker_id === access.workerId && row.claim_callback_id === access.claimCallbackId);
+}
+
+async function rebindManifestClaim(env: Env, access: WorkerAccess, artifactId: string, rawDigest: string): Promise<boolean> {
+  const rebound = await env.DB.prepare(`UPDATE publication_manifest_artifacts
+    SET worker_id = ?, claim_callback_id = ?, state = 'pending'
+    WHERE artifact_id = ? AND run_id = ? AND content_digest = ? AND state IN ('pending', 'ready')
+      AND NOT EXISTS (SELECT 1 FROM publication_intents WHERE artifact_id = ?)
+      AND EXISTS (SELECT 1 FROM runs WHERE id = ? AND status = 'running' AND worker_id = ?
+        AND (SELECT event_id FROM run_events WHERE run_id = runs.id AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1) = ?)`)
+    .bind(access.workerId, access.claimCallbackId, artifactId, access.run.id, rawDigest, artifactId,
+      access.run.id, access.workerId, access.claimCallbackId).run();
+  return Number(rebound.meta?.changes ?? 0) === 1;
+}
+
+async function markManifestReady(env: Env, access: WorkerAccess, artifactId: string, rawDigest: string): Promise<boolean> {
+  const ready = await env.DB.prepare(`UPDATE publication_manifest_artifacts SET state = 'ready'
+    WHERE artifact_id = ? AND run_id = ? AND content_digest = ? AND state IN ('pending', 'ready')
+      AND worker_id = ? AND claim_callback_id = ?
+      AND EXISTS (SELECT 1 FROM runs WHERE id = ? AND status = 'running' AND worker_id = ?
+        AND (SELECT event_id FROM run_events WHERE run_id = runs.id AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1) = ?)`)
+    .bind(artifactId, access.run.id, rawDigest, access.workerId, access.claimCallbackId,
+      access.run.id, access.workerId, access.claimCallbackId).run();
+  return Number(ready.meta?.changes ?? 0) === 1;
+}
+
 async function registerPublicationIntent(request: Request, env: Env, access: WorkerAccess, requestId: string): Promise<Response> {
   if (!env.ARTIFACTS) return errorResponse(requestId, 503, "ARTIFACT_STORAGE_UNAVAILABLE", "Artifact storage is not configured.");
-  let data: ReturnType<typeof PublicationIntentSchema.parse>;
+  let data: PublicationIntentInput;
   try {
     data = PublicationIntentSchema.parse(await parseJsonBody(request, requestId));
   } catch {
@@ -206,95 +275,165 @@ async function registerPublicationIntent(request: Request, env: Env, access: Wor
   }
 
   try {
-    const uploaded = await env.DB.prepare(`SELECT * FROM publication_manifest_artifacts WHERE artifact_id = ? AND run_id = ?`)
-      .bind(data.artifactId, access.run.id).first<{ artifact_id: string; run_id: string; object_key: string; content_digest: string; size_bytes: number; state: string; worker_id: string; claim_callback_id: string }>();
-    if (!uploaded || uploaded.state !== "ready" || uploaded.worker_id !== access.workerId || uploaded.claim_callback_id !== access.claimCallbackId) {
-      return errorResponse(requestId, 409, "MANIFEST_NOT_AUTHORIZED", "The matching uploaded manifest is unavailable for this worker claim.");
-    }
-    const object = await env.ARTIFACTS.get(uploaded.object_key);
-    if (!object || object.size !== uploaded.size_bytes) return errorResponse(requestId, 409, "MANIFEST_NOT_FOUND", "Publication manifest content is unavailable.");
-    const bytes = new Uint8Array(await object.arrayBuffer());
-    if (await digestHex(bytes) !== uploaded.content_digest) return errorResponse(requestId, 409, "MANIFEST_INTEGRITY_FAILED", "Stored publication manifest failed integrity verification.");
-    const manifestValue: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-    let validated;
-    try {
-      validated = await validatePublicationArtifact(manifestValue, {
-        runId: access.run.id,
-        artifactId: data.artifactId,
-        repositoryUrl: access.run.repo_url,
-        baseRef: access.run.git_ref,
-      }, data.artifactDigest);
-    } catch {
-      return errorResponse(requestId, 422, "ARTIFACT_DIGEST_OR_PROVENANCE_INVALID", "The stored manifest does not match its authorized digest or run destination.");
-    }
-    const evidenceEvent = await findTrustedValidationEvidence(env, access, validated.artifact, data.artifactDigest);
+    const stored = await loadAuthorizedManifest(env, access, data, requestId);
+    if ("response" in stored) return stored.response;
+    const evidenceEvent = await findTrustedValidationEvidence(env, access, stored.artifact, data.artifactDigest);
     if (!evidenceEvent) return errorResponse(requestId, 409, "VALIDATION_EVIDENCE_REQUIRED", "The current authenticated worker claim has not recorded matching successful validation evidence.");
-    if (!isPublicationAllowed(env, validated.artifact.repository, validated.artifact.baseRef, data.mode)) {
+    if (!isPublicationAllowed(env, stored.artifact.repository, stored.artifact.baseRef, data.mode)) {
       return errorResponse(requestId, 403, "PUBLICATION_POLICY_DENIED", "Publication destination, base branch, or mode is not explicitly authorized.");
     }
-
-    const publicationId = createUuidV7();
-    const request: PublicationRequest = {
-      contractVersion: "1",
-      publicationId,
-      runId: access.run.id,
-      repository: validated.artifact.repository,
-      mode: data.mode,
-      baseRef: validated.artifact.baseRef,
-      baseSha: validated.artifact.baseSha,
-      headRef: `kirisame/p/${publicationId}`,
-      ...(data.mode === "pr" ? { title: data.title!, body: data.body! } : {}),
-      artifact: validated.artifact,
-      artifactDigest: data.artifactDigest,
-    };
-    const fingerprint = await digestHex(new TextEncoder().encode(canonicalJson(request)));
-    const now = new Date().toISOString();
-    const inserted = await env.DB.prepare(`
-      INSERT OR IGNORE INTO publication_intents (
-        publication_id, run_id, contract_version, request_fingerprint, artifact_id, artifact_digest, artifact_object_key,
-        repository_owner, repository_name, mode, base_ref, base_sha, head_ref, title, body, worker_id, claim_callback_id,
-        validation_event_id, state, created_at, updated_at
-      )
-      SELECT ?, ?, '1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'authorized', ?, ?
-      FROM runs WHERE id = ? AND status = 'running' AND worker_id = ?
-        AND (SELECT event_id FROM run_events WHERE run_id = runs.id AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1) = ?
-    `).bind(publicationId, access.run.id, fingerprint, data.artifactId, data.artifactDigest, uploaded.object_key,
-      validated.artifact.repository.owner, validated.artifact.repository.name, data.mode, validated.artifact.baseRef,
-      validated.artifact.baseSha, request.headRef, data.title ?? null, data.body ?? null, access.workerId,
-      access.claimCallbackId, evidenceEvent.event_id, now, now, access.run.id, access.workerId, access.claimCallbackId).run();
-
-    let intent = await env.DB.prepare("SELECT * FROM publication_intents WHERE run_id = ?")
-      .bind(access.run.id).first<PublicationIntentRow>();
-    if (!intent) {
-      if (Number(inserted.meta?.changes ?? 0) === 0) return errorResponse(requestId, 409, "STALE_CLAIM", "Worker claim changed during publication authorization.");
-      return errorResponse(requestId, 503, "PUBLICATION_INTENT_UNAVAILABLE", "Soyuz could not persist publication authorization.");
-    }
-    const replayRequest = buildPublicationRequest(intent, validated.artifact);
-    const replayFingerprint = await digestHex(new TextEncoder().encode(canonicalJson(replayRequest)));
-    if (intent.request_fingerprint !== replayFingerprint || intent.artifact_digest !== data.artifactDigest
-      || intent.artifact_id !== data.artifactId || intent.mode !== data.mode
-      || intent.title !== (data.title ?? null) || intent.body !== (data.body ?? null) || intent.state === "abandoned") {
-      return errorResponse(requestId, 409, "PUBLICATION_INTENT_CONFLICT", "A different publication intent already exists for this run.");
-    }
-    if (Number(inserted.meta?.changes ?? 0) === 1) {
-      await env.DB.prepare(`
-        INSERT OR IGNORE INTO publication_events (publication_id, event_id, run_id, event_type, state, occurred_at, metadata_json)
-        VALUES (?, ?, ?, 'publication.requested', 'pending', ?, ?)
-      `).bind(intent.publication_id, createUuidV7(), access.run.id, now,
-        JSON.stringify({ mode: intent.mode, repository: `${intent.repository_owner}/${intent.repository_name}`, artifactDigest: intent.artifact_digest })).run();
-    }
-    if (access.run.status === "completed") await reconcilePublicationEligibility(env, access.run.id);
-    return successResponse(requestId, {
-      publicationId: intent.publication_id,
-      runId: intent.run_id,
-      state: intent.state,
-      mode: intent.mode,
-      artifactDigest: intent.artifact_digest,
-    }, Number(inserted.meta?.changes ?? 0) === 1 ? 201 : 200);
+    return await persistPublicationIntent(env, access, data, stored, evidenceEvent.event_id, requestId);
   } catch (error) {
     if (error instanceof ApiError) return error.toResponse(requestId);
     return errorResponse(requestId, 503, "PUBLICATION_INTENT_UNAVAILABLE", "Soyuz could not verify or register this publication intent.");
   }
+}
+
+async function loadAuthorizedManifest(
+  env: Env,
+  access: WorkerAccess,
+  data: PublicationIntentInput,
+  requestId: string,
+): Promise<UploadedPublicationManifest | { response: Response }> {
+  const uploaded = await env.DB.prepare(`SELECT * FROM publication_manifest_artifacts WHERE artifact_id = ? AND run_id = ?`)
+    .bind(data.artifactId, access.run.id).first<{
+      artifact_id: string;
+      run_id: string;
+      object_key: string;
+      content_digest: string;
+      size_bytes: number;
+      state: string;
+      worker_id: string;
+      claim_callback_id: string;
+    }>();
+  if (!uploaded || uploaded.state !== "ready" || uploaded.worker_id !== access.workerId || uploaded.claim_callback_id !== access.claimCallbackId) {
+    return { response: errorResponse(requestId, 409, "MANIFEST_NOT_AUTHORIZED", "The matching uploaded manifest is unavailable for this worker claim.") };
+  }
+  const object = await env.ARTIFACTS!.get(uploaded.object_key);
+  if (!object || object.size !== uploaded.size_bytes) {
+    return { response: errorResponse(requestId, 409, "MANIFEST_NOT_FOUND", "Publication manifest content is unavailable.") };
+  }
+  const bytes = new Uint8Array(await object.arrayBuffer());
+  if (await digestHex(bytes) !== uploaded.content_digest) {
+    return { response: errorResponse(requestId, 409, "MANIFEST_INTEGRITY_FAILED", "Stored publication manifest failed integrity verification.") };
+  }
+  const manifestValue: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  try {
+    const validated = await validatePublicationArtifact(manifestValue, {
+      runId: access.run.id,
+      artifactId: data.artifactId,
+      repositoryUrl: access.run.repo_url,
+      baseRef: access.run.git_ref,
+    }, data.artifactDigest);
+    return { object_key: uploaded.object_key, size_bytes: uploaded.size_bytes, artifact: validated.artifact };
+  } catch {
+    return { response: errorResponse(requestId, 422, "ARTIFACT_DIGEST_OR_PROVENANCE_INVALID", "The stored manifest does not match its authorized digest or run destination.") };
+  }
+}
+
+async function persistPublicationIntent(
+  env: Env,
+  access: WorkerAccess,
+  data: PublicationIntentInput,
+  stored: UploadedPublicationManifest,
+  validationEventId: string,
+  requestId: string,
+): Promise<Response> {
+  const request = createPublicationRequest(access, data, stored.artifact);
+  const fingerprint = await digestHex(new TextEncoder().encode(canonicalJson(request)));
+  const now = new Date().toISOString();
+  const inserted = await insertPublicationIntent(env, access, data, stored, request, fingerprint, validationEventId, now);
+  const intent = await env.DB.prepare("SELECT * FROM publication_intents WHERE run_id = ?")
+    .bind(access.run.id).first<PublicationIntentRow>();
+  if (!intent) {
+    if (Number(inserted.meta?.changes ?? 0) === 0) {
+      return errorResponse(requestId, 409, "STALE_CLAIM", "Worker claim changed during publication authorization.");
+    }
+    return errorResponse(requestId, 503, "PUBLICATION_INTENT_UNAVAILABLE", "Soyuz could not persist publication authorization.");
+  }
+  if (!await matchesPublicationIntent(intent, data, stored.artifact)) {
+    return errorResponse(requestId, 409, "PUBLICATION_INTENT_CONFLICT", "A different publication intent already exists for this run.");
+  }
+  const created = Number(inserted.meta?.changes ?? 0) === 1;
+  if (created) await insertPublicationRequestedEvent(env, access, intent, now);
+  if (access.run.status === "completed") await reconcilePublicationEligibility(env, access.run.id);
+  return successResponse(requestId, {
+    publicationId: intent.publication_id,
+    runId: intent.run_id,
+    state: intent.state,
+    mode: intent.mode,
+    artifactDigest: intent.artifact_digest,
+  }, created ? 201 : 200);
+}
+
+function createPublicationRequest(
+  access: WorkerAccess,
+  data: PublicationIntentInput,
+  artifact: PublicationArtifact,
+): PublicationRequest {
+  const publicationId = createUuidV7();
+  return {
+    contractVersion: "1",
+    publicationId,
+    runId: access.run.id,
+    repository: artifact.repository,
+    mode: data.mode,
+    baseRef: artifact.baseRef,
+    baseSha: artifact.baseSha,
+    headRef: `kirisame/p/${publicationId}`,
+    ...(data.mode === "pr" ? { title: data.title!, body: data.body! } : {}),
+    artifact,
+    artifactDigest: data.artifactDigest,
+  };
+}
+
+async function insertPublicationIntent(
+  env: Env,
+  access: WorkerAccess,
+  data: PublicationIntentInput,
+  stored: UploadedPublicationManifest,
+  request: PublicationRequest,
+  fingerprint: string,
+  validationEventId: string,
+  now: string,
+) {
+  return env.DB.prepare(`
+    INSERT OR IGNORE INTO publication_intents (
+      publication_id, run_id, contract_version, request_fingerprint, artifact_id, artifact_digest, artifact_object_key,
+      repository_owner, repository_name, mode, base_ref, base_sha, head_ref, title, body, worker_id, claim_callback_id,
+      validation_event_id, state, created_at, updated_at
+    )
+    SELECT ?, ?, '1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'authorized', ?, ?
+    FROM runs WHERE id = ? AND status = 'running' AND worker_id = ?
+      AND (SELECT event_id FROM run_events WHERE run_id = runs.id AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1) = ?
+  `).bind(request.publicationId, access.run.id, fingerprint, data.artifactId, data.artifactDigest, stored.object_key,
+    request.repository.owner, request.repository.name, data.mode, request.baseRef,
+    request.baseSha, request.headRef, data.title ?? null, data.body ?? null, access.workerId,
+    access.claimCallbackId, validationEventId, now, now, access.run.id, access.workerId, access.claimCallbackId).run();
+}
+
+async function matchesPublicationIntent(
+  intent: PublicationIntentRow,
+  data: PublicationIntentInput,
+  artifact: PublicationArtifact,
+): Promise<boolean> {
+  const replayRequest = buildPublicationRequest(intent, artifact);
+  const replayFingerprint = await digestHex(new TextEncoder().encode(canonicalJson(replayRequest)));
+  return intent.request_fingerprint === replayFingerprint
+    && intent.artifact_digest === data.artifactDigest
+    && intent.artifact_id === data.artifactId
+    && intent.mode === data.mode
+    && intent.title === (data.title ?? null)
+    && intent.body === (data.body ?? null)
+    && intent.state !== "abandoned";
+}
+
+async function insertPublicationRequestedEvent(env: Env, access: WorkerAccess, intent: PublicationIntentRow, now: string): Promise<void> {
+  await env.DB.prepare(`
+    INSERT OR IGNORE INTO publication_events (publication_id, event_id, run_id, event_type, state, occurred_at, metadata_json)
+    VALUES (?, ?, ?, 'publication.requested', 'pending', ?, ?)
+  `).bind(intent.publication_id, createUuidV7(), access.run.id, now,
+    JSON.stringify({ mode: intent.mode, repository: `${intent.repository_owner}/${intent.repository_name}`, artifactDigest: intent.artifact_digest })).run();
 }
 
 async function findTrustedValidationEvidence(
@@ -309,20 +448,35 @@ async function findTrustedValidationEvidence(
     ORDER BY sequence DESC LIMIT ?
   `).bind(access.run.id, access.workerId, SENSITIVE_VALIDATION_EVIDENCE_LIMIT).all<{ event_id: string; payload_json: string }>();
   for (const event of events.results ?? []) {
-    try {
-      const payload = JSON.parse(event.payload_json) as Record<string, unknown>;
-      const evidence = payload.publicationEvidence as Record<string, unknown> | undefined;
-      const repository = evidence?.repository as Record<string, unknown> | undefined;
-      if (payload.claimCallbackId === access.claimCallbackId
-        && evidence?.evidenceVersion === "1" && evidence.outcome === "passed"
-        && evidence.artifactId === artifact.artifactId && evidence.artifactDigest === artifactDigest
-        && evidence.runId === artifact.runId && evidence.baseRef === artifact.baseRef && evidence.baseSha === artifact.baseSha
-        && repository?.owner === artifact.repository.owner && repository?.name === artifact.repository.name) return { event_id: event.event_id };
-    } catch {
-      // Malformed historical callback data is not evidence.
-    }
+    if (isTrustedValidationEvidence(event.payload_json, access, artifact, artifactDigest)) return { event_id: event.event_id };
   }
   return null;
+}
+
+function isTrustedValidationEvidence(
+  payloadJson: string,
+  access: WorkerAccess,
+  artifact: PublicationArtifact,
+  artifactDigest: string,
+): boolean {
+  try {
+    const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+    const evidence = payload.publicationEvidence as Record<string, unknown> | undefined;
+    const repository = evidence?.repository as Record<string, unknown> | undefined;
+    return payload.claimCallbackId === access.claimCallbackId
+      && evidence?.evidenceVersion === "1"
+      && evidence.outcome === "passed"
+      && evidence.artifactId === artifact.artifactId
+      && evidence.artifactDigest === artifactDigest
+      && evidence.runId === artifact.runId
+      && evidence.baseRef === artifact.baseRef
+      && evidence.baseSha === artifact.baseSha
+      && repository?.owner === artifact.repository.owner
+      && repository?.name === artifact.repository.name;
+  } catch {
+    // Malformed historical callback data is not evidence.
+    return false;
+  }
 }
 
 function parseContentLength(value: string | null): number | null {

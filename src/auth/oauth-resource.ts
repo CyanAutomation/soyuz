@@ -68,11 +68,26 @@ async function routeDashboardApiRequest(
   if (segments.length === 1 && segments[0] === "runs") {
     return listDashboardRuns(env, url, requestId);
   }
-  if (segments[0] !== "runs" || !isUuid(segments[1])) {
-    return errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
-  }
+  return routeRunResource(request, env, url, segments, runIdFrom(segments), requestId, executionContext);
+}
 
-  const runId = segments[1];
+function runIdFrom(segments: string[]): string | null {
+  if (segments[0] !== "runs" || !isUuid(segments[1])) {
+    return null;
+  }
+  return segments[1];
+}
+
+async function routeRunResource(
+  request: Request,
+  env: Env,
+  url: URL,
+  segments: string[],
+  runId: string | null,
+  requestId: string,
+  executionContext: ExecutionContext,
+): Promise<Response> {
+  if (!runId) return errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
   switch (segments.length) {
     case 2:
       return readDashboardRun(env, runId, requestId);
@@ -204,12 +219,22 @@ function authorizeOAuthUser(
 
 function hasOAuthContext(context: ExecutionContext): context is OAuthResourceContext<OAuthProps> {
   const candidate = context as ExecutionContext & { auth?: unknown; props?: unknown };
-  if (!candidate.props || typeof candidate.props !== "object" || !candidate.auth || typeof candidate.auth !== "object") return false;
-  const props = candidate.props as { githubUserId?: unknown; githubLogin?: unknown };
-  const auth = candidate.auth as Partial<OAuthResourceAuth>;
-  return typeof props.githubUserId === "string" && typeof props.githubLogin === "string"
-    && typeof auth.token === "string" && typeof auth.audience === "string"
-    && Array.isArray(auth.scope) && auth.scope.every((scope) => typeof scope === "string");
+  return hasOAuthProps(candidate.props) && hasOAuthAuth(candidate.auth);
+}
+
+function hasOAuthProps(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const props = value as { githubUserId?: unknown; githubLogin?: unknown };
+  return typeof props.githubUserId === "string" && typeof props.githubLogin === "string";
+}
+
+function hasOAuthAuth(value: unknown): value is OAuthResourceAuth {
+  if (!value || typeof value !== "object") return false;
+  const auth = value as Partial<OAuthResourceAuth>;
+  return typeof auth.token === "string"
+    && typeof auth.audience === "string"
+    && Array.isArray(auth.scope)
+    && auth.scope.every((scope) => typeof scope === "string");
 }
 
 function dashboardRunSummary(
