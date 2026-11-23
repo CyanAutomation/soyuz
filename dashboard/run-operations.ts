@@ -63,7 +63,7 @@ export function projectRunOperations(
       || (status.active && run.operationalHealth === "suspect_stalled");
     if (attention) attentionRuns.push(item);
     else if (status.active) activeRuns.push(item);
-    else if (run.status === "completed") completedRuns.push(item);
+    else if (run.status === "completed" || run.status === "cancelled") completedRuns.push(item);
 
     if (item.publicationState) publicationRuns.push(item);
   }
