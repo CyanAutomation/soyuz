@@ -1,4 +1,8 @@
+Warning: truncated output (original token count: 9558)
+Total output lines: 954
+
 import { fetchJson, HttpError } from "./api.js";
+import { jevAssessmentErrorMessage } from "./jev-errors.js";
 import { revokeAccessToken } from "./auth-api.js";
 import { renderAuthUi } from "./auth-ui.js";
 import { createSnackBarController } from "./snackbar.js";
@@ -462,71 +466,7 @@ async function runJevAssessment(runId: string, profileId: JEV_PROFILE_ID): Promi
   if (!token) return;
   jevStatesByRunId.set(runId, { profileId, status: "loading" });
   renderRuns();
-  try {
-    const result = await apiJson<JevDecisionResponse>("/dashboard/api/analysis/decisions", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ profileId, runId }),
-    });
-    if (token !== accessToken) return;
-    jevStatesByRunId.set(runId, {
-      status: "complete",
-      profileId,
-      result,
-      rating: null,
-      message: "Advisory result received. Review the run record before taking consequential action.",
-    });
-  } catch (error) {
-    if (token !== accessToken) return;
-    const message = error instanceof HttpError && error.status === 429
-      ? "The JEV request limit was reached. Wait a minute before trying again."
-      : "JEV could not validate a response for this run. No action was taken.";
-    jevStatesByRunId.set(runId, { profileId, status: "error", message });
-  }
-  renderRuns();
-}
-
-async function submitJevFeedback(runId: string, profileId: JEV_PROFILE_ID, rating: JevRating): Promise<void> {
-  const token = accessToken;
-  const current = jevStatesByRunId.get(runId);
-  if (!token || current?.status !== "complete" || !current.result || current.feedbackBusy) return;
-  jevStatesByRunId.set(runId, { ...current, feedbackBusy: true, feedbackMessage: "Saving rating…" });
-  renderRuns();
-  try {
-    await apiJson("/dashboard/api/analysis/feedback", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ profileId, runId, rating }),
-    });
-    if (token !== accessToken) return;
-    jevStatesByRunId.set(runId, {
-      ...current,
-      rating,
-      feedbackBusy: false,
-      feedbackMessage: "Rating recorded; JEV's answer was not saved.",
-    });
-  } catch (error) {
-    if (token !== accessToken) return;
-    jevStatesByRunId.set(runId, {
-      ...current,
-      feedbackBusy: false,
-      feedbackMessage: error instanceof HttpError && error.status === 429
-        ? "The feedback limit was reached. Wait a minute before trying again."
-        : "The rating could not be recorded. Please try again.",
-    });
-  }
-  renderRuns();
-}
-
-function renderRun(run: DashboardRunSummary): HTMLElement {
-  const card = createRunCard(run, {
-    ownerDocument: document,
-    now: Date.now(),
-    expanded: expandedRunIds.has(run.runId),
-    jevState: jevStatesByRunId.get(run.runId),
-    onJevAssess: runJevAssessment,
-    onJevFeedback: submitJevFeedback,
-    onCopyId: (runId) => {
+ …558 tokens truncated…nCopyId: (runId) => {
       const clipboard = navigator.clipboard;
       if (!clipboard) {
         snackbar.show("Clipboard access isn't available. You can select and copy the technical ID from run metadata.", "warning");
