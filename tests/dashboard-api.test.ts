@@ -222,7 +222,7 @@ describe("dashboard API responses", () => {
     expect(jevAssessmentErrorMessage(new HttpError("request failed", 504, "JEV_PROVIDER_TIMEOUT")))
       .toBe("JEV analysis timed out. Retry shortly. No action was taken.");
     expect(jevAssessmentErrorMessage(new HttpError("request failed", 502, "UNRECOGNIZED_CODE")))
-      .toBe("JEV could not validate a response for this run. No action was taken.");
+      .toBe("JEV assessment failed. No action was taken.");
     expect(jevAssessmentErrorMessage(new HttpError("request failed", 502, "JEV_PROVIDER_UNAVAILABLE", "<script>")))
       .toBe("JEV could not reach its decision service. Retry shortly. No action was taken.");
     expect(jevAssessmentErrorMessage(new HttpError("request failed", 429)))

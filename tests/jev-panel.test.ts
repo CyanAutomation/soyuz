@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { parseHTML } from "linkedom";
 import { createJevAssessmentPanel } from "../dashboard/jev-panel";
+import { defaultJevFailureMessage } from "../dashboard/jev-errors.js";
 
 function createDocument() {
   return parseHTML("<html><body></body></html>").document;
@@ -68,5 +69,19 @@ describe("reusable run-card JEV panel", () => {
     helpful?.click();
     expect(onFeedback).toHaveBeenCalledWith("helpful");
     expect(panel.querySelector("script")).toBeNull();
+  });
+
+  it("uses a generic no-action message for an unspecified assessment error", () => {
+    const panel = createJevAssessmentPanel({
+      runId: "00000000-0000-4000-8000-000000000203",
+      profileId: "run_operations_triage_v1",
+      state: { status: "error" },
+      onAssess: vi.fn(),
+      onFeedback: vi.fn(),
+      ownerDocument: createDocument(),
+    });
+
+    expect(panel.textContent).toContain(defaultJevFailureMessage);
+    expect(panel.textContent).not.toContain("validate a response");
   });
 });
