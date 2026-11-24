@@ -448,6 +448,7 @@ beforeEach(clearDatabase);
       const logRecord = JSON.parse(String(metricLog.mock.calls[0]?.[0])) as Record<string, unknown>;
       expect(logRecord).toMatchObject({
         event: "soyuz_jev_decision", backend: "senku", profileId: "run_operations_triage_v1",
+        requestId: response.body.requestId,
         model: "typesafe/jev-test", outcome: "success", providerAttemptCount: 1,
       });
       expect(logRecord).toHaveProperty("senkuRequestId", "dec-00000000-0000-4000-8000-000000000001");
