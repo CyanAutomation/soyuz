@@ -5,6 +5,7 @@ import type { Env } from "../env";
 import { SenkuDecisionError, requestSenkuDecision, type SenkuUsage } from "./senku-client";
 import { JevProfileIdSchema, type JevProfileId } from "./profiles";
 import { z } from "zod";
+import { createJevDecisionLogEvent } from "./observability";
 
 const DecisionRequestSchema = z.object({
   profileId: JevProfileIdSchema,
@@ -89,18 +90,17 @@ export async function handleJevAnalysisRequest(
     safeErrorCode = "JEV_CONTEXT_UNAVAILABLE";
     return errorResponse(requestId, 503, "JEV_CONTEXT_UNAVAILABLE", "Soyuz could not prepare run data for JEV analysis.");
   } finally {
-    console.info(JSON.stringify({
-      event: "soyuz_jev_decision",
-      backend: "senku",
+    console.info(JSON.stringify(createJevDecisionLogEvent({
+      requestId,
       profileId: parsed.data.profileId,
-      ...(model ? { model } : {}),
       durationMs: Math.max(0, Date.now() - startedAt),
       outcome,
+      ...(model ? { model } : {}),
       ...(safeErrorCode ? { errorCode: safeErrorCode } : {}),
       providerAttemptCount,
       ...(senkuRequestId ? { senkuRequestId } : {}),
       ...(usage ? { usage } : {}),
-    }));
+    })));
   }
 }
 
