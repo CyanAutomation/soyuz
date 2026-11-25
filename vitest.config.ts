@@ -12,14 +12,16 @@ export default defineConfig({
       wrangler: { configPath: "./wrangler.jsonc" },
       miniflare: {
         kvNamespaces: ["OAUTH_KV"],
-          serviceBindings: {
-            SENKU: async () => new Response(JSON.stringify({
-              error: { code: "PROVIDER_UNAVAILABLE", message: "Senku is not part of this test fixture." },
-            }), { status: 503, headers: { "content-type": "application/json" } }),
-          KIRISAME: async () => new Response(JSON.stringify({
-            error: { code: "PUBLISHING_UNAVAILABLE", message: "Kirisame is not part of this test fixture." },
+        serviceBindings: {
+          SENKU: async () => new Response(JSON.stringify({
+            error: { code: "PROVIDER_UNAVAILABLE", message: "Senku is not part of this test fixture." },
           }), { status: 503, headers: { "content-type": "application/json" } }),
-          },
+        },
+        workers: [{
+          name: "kirisame",
+          modules: true,
+          scriptPath: path.join(projectRoot, "tests/fixtures/kirisame-rpc-mock.mjs"),
+        }],
         bindings: {
           CLIENT_API_TOKEN: "client-test-token-value-long-enough",
           WORKER_API_TOKEN: "worker-test-token-value-long-enough",
