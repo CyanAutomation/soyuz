@@ -1,6 +1,6 @@
 # Kirisame publication lifecycle
 
-Soyuz owns the durable publication authorization, state, retry schedule, and status projection. Kirisame owns GitHub App authentication and GitHub writes. No production Service Binding or dispatch enablement is configured here; tests inject a local mock. Current Kaseki does not yet send this manifest contract, and Phase 2B does not change Kaseki-Agent.
+Soyuz owns the durable publication authorization, state, retry schedule, and status projection. Kirisame owns GitHub App authentication and GitHub writes. The source configuration declares the private `KIRISAME` binding to `kirisame.PublisherEntrypoint`, an exact Somatic PR-to-`main` allowlist, and `PUBLICATION_DISPATCH_ENABLED=false`; these settings have not yet been deployed. Production D1 migration `0009` is already applied. Kaseki source now implements the trusted host producer, but the execution host rollout and default-off feature flag remain pending. Dispatch stays gated until host preflight and per-run legacy-publisher checks pass.
 
 ## Lifecycle and state model
 
@@ -40,11 +40,11 @@ The first valid intent gets a Soyuz-generated UUIDv7 publication ID. Repeating a
 
 Current Kaseki runs may publish directly and report `publishedUrl`. A run with that field on completion is marked as an abandoned intent and never materializes a Kirisame publication. A failed or cancelled run also cannot be published. A run's `publishMode: "pr"` is not authorization. An explicit claim-fenced manifest, matching host validation evidence, and intent are required.
 
-For future new-style runs, Kaseki must stop the direct publisher for that run and keep GitHub App credentials out of its executor. That caller migration is not included. A successful completion callback is preserved even if publication later fails; Soyuz does not requeue coding execution.
+For a Kirisame-routed run, Kaseki persists the route before execution, disables its direct publisher, and keeps GitHub App credentials out of the executor. The source supports this path, but the trusted execution host has not adopted it yet. A successful completion callback is preserved even if publication later fails; Soyuz does not requeue coding execution.
 
 ## State model and attempt fencing
 
-The one-minute scheduled Worker reconciliation materializes completed intents and processes due attempts only when a publisher is explicitly injected or dispatch is separately enabled with a binding. `wrangler.jsonc` has neither a `KIRISAME` binding nor `PUBLICATION_DISPATCH_ENABLED=true`.
+The one-minute scheduled Worker reconciliation materializes completed intents and processes due attempts only when a publisher is explicitly injected or dispatch is separately enabled with a binding. Production dispatch remains disabled. Tests inject a local mock and do not contact GitHub.
 
 The reservation is a D1 compare-and-set on publication ID, immutable fingerprint, eligible state/time, and the attempt limit. It sets a random UUIDv7 `attempt_id`, increments `attempt_count`, and writes its event in the same D1 batch. The lease is two minutes. Only the matching current attempt ID may write an RPC result. An expired lease is recorded as reconciled and replaced with a newer fence. A delayed result from an older attempt cannot overwrite the newer result or terminal state.
 
@@ -84,8 +84,8 @@ Soyuz tests hold a deterministic v1 request fixture copied from the canonical Ki
 
 ## Migration and release ordering
 
-`0009_durable_publications.sql` is additive and numbered after `0008_jev_feedback.sql`. Do not edit earlier migration files. Apply it with `npm run db:migrate:local` for local tests. Production migration is not applied by this phase. Before promoting Worker code, separately authorize and apply `0009` using the deployment guide's manual procedure, verify history with the read-only migration check, then deploy. Health fails closed if the new schema is missing. Because main auto-deploys, do not merge/promote before the migration is complete.
+`0009_durable_publications.sql` is additive and numbered after `0008_jev_feedback.sql`. Do not edit earlier migration files. Apply it with `npm run db:migrate:local` for local tests. Production history already contains `0009` and `0010`; confirm this with the read-only migration check before deploying code that reads the ledger. Health fails closed if the new schema is missing. Because main auto-deploys, do not merge/promote while production migration history is uncertain.
 
 ## Phase 2C requirements
 
-Phase 2C must separately authorize the approved repository and base branch, confirm the Kirisame GitHub App installation/permissions and secret storage, apply production migration `0009`, configure only the named private `KIRISAME` Service Binding, review allowlists and dispatch flag, and test a disposable repository through one publication plus identical replay. It must verify no direct legacy publisher handles that run, confirm retry/reconciliation status, and keep merge/close/delete actions manual. No public HTTP fallback, GitHub token in Soyuz/Kaseki containers, automatic merge, or production dispatch is part of Phase 2B.
+Phase 2C must separately authorize the approved repository and base branch, confirm the Kirisame GitHub App installation/permissions and secret storage, verify production migration `0009`, deploy the `KIRISAME` binding and exact allowlist while dispatch stays false, and test a new canonical run through one publication plus identical replay after host preflight passes. It must verify no direct legacy publisher handles that run, confirm retries and retention, and keep merge/close/delete actions manual. No public HTTP fallback, GitHub or Worker API token in the coding container, automatic merge, or production dispatch is part of this source configuration.
