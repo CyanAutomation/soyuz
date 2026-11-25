@@ -23,6 +23,7 @@ export const CLIENT_KEY = "00000000-0000-4000-8000-000000000010";
 export const CALLBACK_ID = "00000000-0000-4000-8000-000000000011";
 export const EVENT_ID = "00000000-0000-4000-8000-000000000012";
 export const SENKU_TOKEN = "senku-soyuz-test-token-value-long-enough";
+export const KIRISAME_API_TEST_KEY = "A".repeat(43);
 
 type QueueMessage = { runId: string; contractVersion: string; [key: string]: unknown };
 
@@ -46,6 +47,8 @@ export function testEnv(options: {
     JEV_DECISION_LIMITER: jevDecisionLimiter as unknown as Env["JEV_DECISION_LIMITER"],
     SENKU: options.senku ?? (runtimeEnv as unknown as Env).SENKU,
     SENKU_SOYUZ_API_TOKEN: SENKU_TOKEN,
+    KIRISAME_CALLER_ID: "soyuz",
+    KIRISAME_API_KEY: KIRISAME_API_TEST_KEY,
     CLIENT_API_TOKEN: CLIENT_TOKEN,
     WORKER_API_TOKEN: WORKER_TOKEN,
     PUBLICATION_REPOSITORY_ALLOWLIST: JSON.stringify([{ owner: "example", name: "project", modes: ["branch", "pr"], baseRefs: ["main"] }]),

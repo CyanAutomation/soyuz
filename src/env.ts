@@ -32,8 +32,11 @@ export interface Env {
   SOYUZ_OAUTH_ALLOWED_GITHUB_IDS?: string;
   /** Machine identity for Soyuz-to-Senku decision requests. Store as a Worker secret. */
   SENKU_SOYUZ_API_TOKEN?: string;
-  /** Private RPC binding. Publication dispatch stays disabled until separately commissioned. */
-  KIRISAME?: { publish(requestJson: string): Promise<unknown> };
+  /** Private RPC binding. The API key is passed outside the immutable request JSON. */
+  KIRISAME?: { publish(requestJson: string, callerId: string, apiKey: string): Promise<unknown> };
+  KIRISAME_CALLER_ID?: string;
+  /** Kirisame caller credential; configure with the Cloudflare Worker secret command. */
+  KIRISAME_API_KEY?: string;
   /** Durable publication dispatch remains off unless explicitly enabled. */
   PUBLICATION_DISPATCH_ENABLED?: string;
   /** JSON exact destination rules; absent or malformed configuration denies new intents. */

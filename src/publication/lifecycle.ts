@@ -164,7 +164,7 @@ export async function dispatchPublication(
   const request = await verifiedPublicationRequest(env, current, attemptId, at);
   if (!request) return true;
 
-  const response = await callPublisher(publisher, request, timeoutMs);
+  const response = await callPublisher(env, publisher, request, timeoutMs);
   if (!response.ok) {
     await scheduleRetry(env, current, attemptId, response.errorCode, undefined, at);
     return true;
@@ -241,12 +241,26 @@ async function verifiedPublicationRequest(
 type PublisherCallResult = { ok: true; raw: unknown } | { ok: false; errorCode: "GITHUB_TIMEOUT" | "GITHUB_UNAVAILABLE" };
 
 async function callPublisher(
+  env: Env,
   publisher: PublisherEntrypoint,
   request: PublicationRequest,
   timeoutMs: number,
 ): Promise<PublisherCallResult> {
+  const callerId = env.KIRISAME_CALLER_ID;
+  const apiKey = env.KIRISAME_API_KEY;
+  if (!callerId || !apiKey) {
+    return { ok: false, errorCode: "GITHUB_UNAVAILABLE" };
+  }
+
   try {
-    return { ok: true, raw: await withTimeout(publisher.publish(JSON.stringify(request)), timeoutMs) };
+    return {
+      ok: true,
+      raw: await withTimeout(publisher.publish(
+        JSON.stringify(request),
+        callerId,
+        apiKey,
+      ), timeoutMs),
+    };
   } catch (error) {
     const timeout = error instanceof PublicationTimeoutError;
     return { ok: false, errorCode: timeout ? "GITHUB_TIMEOUT" : "GITHUB_UNAVAILABLE" };
@@ -380,7 +394,7 @@ function resultMatchesRequest(row: PublicationRow, result: PublicationResult): b
 function errorClassificationMatches(error: KirisameError): boolean {
   const expected: Record<string, KirisameError["classification"]> = {
     INVALID_REQUEST: "invalid", UNSUPPORTED_VERSION: "invalid", UNAUTHORIZED_CALLER: "policy",
-    REPOSITORY_NOT_ALLOWED: "policy", APP_NOT_INSTALLED: "policy", GITHUB_PERMISSION_DENIED: "policy",
+    APP_NOT_INSTALLED: "policy", GITHUB_PERMISSION_DENIED: "policy",
     ARTIFACT_INVALID: "invalid", ARTIFACT_DIGEST_MISMATCH: "invalid", ARTIFACT_PROVENANCE_MISMATCH: "policy",
     BASE_MOVED: "conflict", BASE_TREE_CONFLICT: "conflict", BRANCH_CONFLICT: "conflict",
     PULL_REQUEST_CONFLICT: "conflict", NO_CHANGES: "conflict", UNSUPPORTED_GIT_OBJECT: "invalid",

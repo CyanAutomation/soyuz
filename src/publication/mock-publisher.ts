@@ -4,6 +4,8 @@ export type MockPublisherScenario =
   | "success"
   | "retryable_error"
   | "permanent_conflict"
+  | "app_not_installed"
+  | "github_permission_denied"
   | "lost_response"
   | "timeout"
   | "delay"
@@ -12,9 +14,20 @@ export type MockPublisherScenario =
   | "wrong_branch"
   | "malformed_response";
 
+const errorScenarios: Partial<Record<MockPublisherScenario, {
+  code: "GITHUB_TIMEOUT" | "BASE_MOVED" | "APP_NOT_INSTALLED" | "GITHUB_PERMISSION_DENIED";
+  classification: "retryable" | "conflict" | "policy";
+}>> = {
+  retryable_error: { code: "GITHUB_TIMEOUT", classification: "retryable" },
+  permanent_conflict: { code: "BASE_MOVED", classification: "conflict" },
+  app_not_installed: { code: "APP_NOT_INSTALLED", classification: "policy" },
+  github_permission_denied: { code: "GITHUB_PERMISSION_DENIED", classification: "policy" },
+};
+
 /** Test-only idempotent RPC fake. It has no Worker binding or production configuration. */
 export class MockPublisherEntrypoint implements PublisherEntrypoint {
   readonly calls: string[] = [];
+  readonly rpcCredentials: Array<{ callerId: string; apiKey: string }> = [];
   readonly #script: Array<{ scenario: MockPublisherScenario; delayMs?: number }>;
   readonly #completed = new Map<string, { requestJson: string; result: unknown }>();
 
@@ -22,8 +35,9 @@ export class MockPublisherEntrypoint implements PublisherEntrypoint {
     this.#script = scenarios.map((scenario) => typeof scenario === "string" ? { scenario } : scenario);
   }
 
-  async publish(requestJson: string): Promise<unknown> {
+  async publish(requestJson: string, callerId: string, apiKey: string): Promise<unknown> {
     this.calls.push(requestJson);
+    this.rpcCredentials.push({ callerId, apiKey });
     const request = JSON.parse(requestJson) as {
       publicationId: string;
       runId: string;
@@ -64,8 +78,8 @@ export class MockPublisherEntrypoint implements PublisherEntrypoint {
     mode: "branch" | "pr";
     headRef: string;
   }, scenario: MockPublisherScenario): unknown {
-    if (scenario === "retryable_error") return structuredError(request, "GITHUB_TIMEOUT", "retryable");
-    if (scenario === "permanent_conflict") return structuredError(request, "BASE_MOVED", "conflict");
+    const errorScenario = errorScenarios[scenario];
+    if (errorScenario) return structuredError(request, errorScenario.code, errorScenario.classification);
     if (scenario === "malformed_response") return { contractVersion: "1", outcome: "success" };
 
     const repository = scenario === "wrong_repository"
@@ -101,8 +115,8 @@ export class MockPublisherEntrypoint implements PublisherEntrypoint {
 
 function structuredError(
   request: { publicationId: string; runId: string; repository: { owner: string; name: string }; mode: "branch" | "pr" },
-  code: "GITHUB_TIMEOUT" | "BASE_MOVED" | "BRANCH_CONFLICT",
-  classification: "retryable" | "conflict",
+  code: "GITHUB_TIMEOUT" | "BASE_MOVED" | "BRANCH_CONFLICT" | "APP_NOT_INSTALLED" | "GITHUB_PERMISSION_DENIED",
+  classification: "retryable" | "conflict" | "policy",
 ) {
   return {
     contractVersion: "1",
@@ -112,7 +126,7 @@ function structuredError(
     mode: request.mode,
     outcome: classification === "retryable" ? "retryable_failure" : "blocked",
     retryable: classification === "retryable",
-    reconciliation: classification === "retryable" ? "unknown" : "conflict",
+    reconciliation: classification === "retryable" ? "unknown" : classification === "conflict" ? "conflict" : "not_needed",
     error: { code, classification, message: "Mock publisher response." },
   };
 }
