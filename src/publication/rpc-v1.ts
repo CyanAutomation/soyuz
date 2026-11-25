@@ -3,7 +3,7 @@ import { UUID7 } from "./contract-v1";
 
 const Repository = z.object({ owner: z.string().min(1).max(39), name: z.string().min(1).max(100) }).strict();
 const ErrorCode = z.enum([
-  "INVALID_REQUEST", "UNSUPPORTED_VERSION", "UNAUTHORIZED_CALLER", "REPOSITORY_NOT_ALLOWED",
+  "INVALID_REQUEST", "UNSUPPORTED_VERSION", "UNAUTHORIZED_CALLER",
   "APP_NOT_INSTALLED", "GITHUB_PERMISSION_DENIED", "ARTIFACT_INVALID", "ARTIFACT_DIGEST_MISMATCH",
   "ARTIFACT_PROVENANCE_MISMATCH", "BASE_MOVED", "BASE_TREE_CONFLICT", "BRANCH_CONFLICT",
   "PULL_REQUEST_CONFLICT", "NO_CHANGES", "UNSUPPORTED_GIT_OBJECT", "GITHUB_AUTH_UNAVAILABLE",
@@ -81,4 +81,4 @@ export const PublicationResultSchema = z.object({
 
 export type PublicationResult = z.infer<typeof PublicationResultSchema>;
 export type KirisameError = z.infer<typeof KirisameErrorSchema>;
-export type PublisherEntrypoint = { publish(requestJson: string): Promise<unknown> };
+export type PublisherEntrypoint = { publish(requestJson: string, callerId: string, apiKey: string): Promise<unknown> };

@@ -26,6 +26,7 @@ const {
   handleDashboardApiRequest,
   CLIENT_TOKEN,
   KASEKI_TOKEN,
+  KIRISAME_API_TEST_KEY,
   WORKER_TOKEN,
   CLIENT_KEY,
   CALLBACK_ID,
@@ -354,6 +355,8 @@ beforeEach(clearDatabase);
     expect(published).toMatchObject({ state: "published", attempt_count: 1, pr_number: 17 });
     expect(published?.pr_url).toBe("https://github.com/example/project/pull/17");
     expect(JSON.parse(mock.calls[0]!).artifact).toMatchObject({ artifactId: "018f0000-0000-7000-8000-000000000062" });
+    expect(mock.rpcCredentials).toEqual([{ callerId: "soyuz", apiKey: KIRISAME_API_TEST_KEY }]);
+    expect(mock.calls[0]).not.toContain(KIRISAME_API_TEST_KEY);
     const run = await getRun(bindings.DB, data.runId);
     expect(run?.status).toBe("completed");
     const status = await call(bindings, `/v1/runs/${data.runId}/publication`, { token: CLIENT_TOKEN });
@@ -529,6 +532,33 @@ beforeEach(clearDatabase);
     expect(blocked?.state).toBe("blocked");
     expect(blocked?.last_error_code).toBe("BASE_MOVED");
     expect(permanentMock.calls).toHaveLength(1);
+  });
+
+  it.each([
+    { scenario: "app_not_installed" as const, code: "APP_NOT_INSTALLED" },
+    { scenario: "github_permission_denied" as const, code: "GITHUB_PERMISSION_DENIED" },
+  ])("records $code as blocked and does not retry without operator action", async ({ scenario, code }) => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const workerId = `publication-${scenario}`;
+    const claimCallbackId = crypto.randomUUID();
+    const data = await registerPublicationInputs(bindings, {
+      workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000106",
+    });
+    await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
+    const publisher = new MockPublisherEntrypoint([scenario, "success"]);
+
+    await reconcilePublications(bindings, new Date(), publisher);
+    const blocked = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+      .bind(data.runId).first<PublicationRow>();
+    const blockedEvent = await bindings.DB.prepare(
+      "SELECT event_type, state FROM publication_events WHERE publication_id = ? AND event_type = 'publication.blocked'",
+    ).bind(blocked!.publication_id).first<{ event_type: string; state: string }>();
+
+    expect(blocked).toMatchObject({ state: "blocked", last_error_code: code, attempt_count: 1 });
+    expect(blockedEvent).toEqual({ event_type: "publication.blocked", state: "blocked" });
+    await reconcilePublications(bindings, new Date(Date.now() + PUBLICATION_LEASE_MS * 2), publisher);
+    expect(publisher.calls).toHaveLength(1);
   });
 
   it("[PUBLICATION-RETENTION-01] retains pinned manifest and ledger beyond run culling, then expires terminal data", async () => {
