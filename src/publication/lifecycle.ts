@@ -246,13 +246,19 @@ async function callPublisher(
   request: PublicationRequest,
   timeoutMs: number,
 ): Promise<PublisherCallResult> {
+  const callerId = env.KIRISAME_CALLER_ID;
+  const apiKey = env.KIRISAME_API_KEY;
+  if (!callerId || !apiKey) {
+    return { ok: false, errorCode: "GITHUB_UNAVAILABLE" };
+  }
+
   try {
     return {
       ok: true,
       raw: await withTimeout(publisher.publish(
         JSON.stringify(request),
-        env.KIRISAME_CALLER_ID ?? "",
-        env.KIRISAME_API_KEY ?? "",
+        callerId,
+        apiKey,
       ), timeoutMs),
     };
   } catch (error) {
