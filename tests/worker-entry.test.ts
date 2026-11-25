@@ -9,8 +9,7 @@ function createJobs(provider: OAuthProvider | null = null): ScheduledJobs {
     reconcilePublications: vi.fn(async () => undefined),
     purgeOldRuns: vi.fn(async () => undefined),
     purgeExpiredArtifacts: vi.fn(async () => undefined),
-    purgeExpiredPublicationManifests: vi.fn(async () => undefined),
-    purgeExpiredRunRequests: vi.fn(async () => undefined),
+    reconcileArtifactStorage: vi.fn(async () => undefined),
     getOAuthProvider: vi.fn(() => provider),
     purgeOAuthData: vi.fn(async () => undefined),
   };
@@ -30,30 +29,28 @@ function runSchedule(cron: string, env: Env, jobs: ScheduledJobs): Promise<void>
 describe("Worker scheduled entry point", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("runs admission, liveness, and publication reconciliation on the regular schedule", async () => {
+  it("runs bounded retention, artifact expiry, admission, liveness, and publication reconciliation every minute", async () => {
     const env = {} as Env;
     const jobs = createJobs();
 
-    await runSchedule("*/5 * * * *", env, jobs);
+    await runSchedule("*/1 * * * *", env, jobs);
 
     expect(jobs.reconcileAdmissions).toHaveBeenCalledWith(env);
     expect(jobs.reconcileStalledRuns).toHaveBeenCalledWith(env);
     expect(jobs.reconcilePublications).toHaveBeenCalledWith(env);
     expect(jobs.purgeOldRuns).toHaveBeenCalledWith(env);
-    expect(jobs.purgeExpiredArtifacts).not.toHaveBeenCalled();
+    expect(jobs.purgeExpiredArtifacts).toHaveBeenCalledWith(env);
+    expect(jobs.reconcileArtifactStorage).toHaveBeenCalledWith(env);
     expect(jobs.getOAuthProvider).not.toHaveBeenCalled();
   });
 
-  it("runs daily retention and sends OAuth cleanup to the cursor-aware purger", async () => {
+  it("runs OAuth cleanup on its daily schedule", async () => {
     const provider = {} as OAuthProvider;
     const env = { OAUTH_KV: {} } as unknown as Env;
     const jobs = createJobs(provider);
 
     await runSchedule("0 3 * * *", env, jobs);
 
-    expect(jobs.purgeExpiredArtifacts).toHaveBeenCalledWith(env);
-    expect(jobs.purgeExpiredPublicationManifests).toHaveBeenCalledWith(env);
-    expect(jobs.purgeExpiredRunRequests).toHaveBeenCalledWith(env);
     expect(jobs.getOAuthProvider).toHaveBeenCalledWith(env);
     expect(jobs.purgeOAuthData).toHaveBeenCalledWith(provider, env);
   });

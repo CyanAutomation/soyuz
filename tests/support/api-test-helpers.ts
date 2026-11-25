@@ -5,6 +5,7 @@ import type { Env } from "../../src/env";
 import { insertRun, getRun, RunTransitionError, transitionRun } from "../../src/db/runs";
 import { reconcileAdmissions, reconcileStalledRuns } from "../../src/queue/reconcile";
 import { purgeExpiredArtifacts } from "../../src/api/artifacts";
+import { reconcileArtifactStorage } from "../../src/api/artifact-reconciliation";
 import { purgeExpiredPublicationManifests, purgeExpiredRunRequests, purgeOldRuns } from "../../src/api/retention";
 import { canonicalJson, digestHex } from "../../src/publication/contract-v1";
 import { dispatchPublication, PUBLICATION_DISPATCH_BATCH_SIZE, PUBLICATION_LEASE_MS, reconcilePublications, type PublicationRow } from "../../src/publication/lifecycle";
@@ -12,7 +13,7 @@ import { MockPublisherEntrypoint } from "../../src/publication/mock-publisher";
 import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
 import { oauthProviderOptions } from "../../src/auth/oauth";
 import { handleDashboardApiRequest } from "../../src/auth/oauth-resource";
-export { runtimeEnv, handleRequest, insertRun, getRun, RunTransitionError, transitionRun, reconcileAdmissions, reconcileStalledRuns, purgeExpiredArtifacts, purgeExpiredPublicationManifests, purgeExpiredRunRequests, purgeOldRuns, canonicalJson, digestHex, dispatchPublication, PUBLICATION_DISPATCH_BATCH_SIZE, PUBLICATION_LEASE_MS, reconcilePublications, MockPublisherEntrypoint, getOAuthApi, oauthProviderOptions, handleDashboardApiRequest };
+export { runtimeEnv, handleRequest, insertRun, getRun, RunTransitionError, transitionRun, reconcileAdmissions, reconcileStalledRuns, purgeExpiredArtifacts, reconcileArtifactStorage, purgeExpiredPublicationManifests, purgeExpiredRunRequests, purgeOldRuns, canonicalJson, digestHex, dispatchPublication, PUBLICATION_DISPATCH_BATCH_SIZE, PUBLICATION_LEASE_MS, reconcilePublications, MockPublisherEntrypoint, getOAuthApi, oauthProviderOptions, handleDashboardApiRequest };
 export type { Env, PublicationRow };
 
 
@@ -282,6 +283,9 @@ export async function clearDatabase(): Promise<void> {
     runtimeEnv.DB.prepare("DELETE FROM publication_manifest_artifacts"),
     runtimeEnv.DB.prepare("DELETE FROM run_events"),
     runtimeEnv.DB.prepare("DELETE FROM artifact_deletion_queue"),
+    runtimeEnv.DB.prepare("DELETE FROM artifact_upload_metrics"),
+    runtimeEnv.DB.prepare("DELETE FROM artifact_reconciliation_metrics"),
+    runtimeEnv.DB.prepare("DELETE FROM artifact_reconciliation_state"),
     runtimeEnv.DB.prepare("DELETE FROM run_idempotency_keys"),
     runtimeEnv.DB.prepare("DELETE FROM jev_feedback"),
     runtimeEnv.DB.prepare("DELETE FROM runs"),
@@ -309,6 +313,7 @@ export function memoryArtifactBucket() {
     return {
       key,
       size: stored.body.byteLength,
+      checksums: stored.options.sha256 ? { sha256: stored.options.sha256 } : undefined,
       customMetadata: stored.options.customMetadata,
       httpMetadata: stored.options.httpMetadata,
       body: new Response(stored.body.buffer as ArrayBuffer).body,
@@ -321,9 +326,15 @@ export function memoryArtifactBucket() {
       },
     };
   });
-  const list = vi.fn(async ({ prefix, limit }: { prefix?: string; limit?: number }) => ({
+  const head = vi.fn(async (key: string) => {
+    const stored = objects.get(key);
+    return stored ? { key, size: stored.body.byteLength, customMetadata: stored.options.customMetadata } : null;
+  });
+  const list = vi.fn(async ({ prefix, limit, cursor }: { prefix?: string; limit?: number; cursor?: string }) => ({
     objects: [...objects.entries()]
       .filter(([key]) => key.startsWith(prefix ?? ""))
+      .sort(([left], [right]) => left.localeCompare(right))
+      .filter(([key]) => !cursor || key > cursor)
       .slice(0, limit ?? 1_000)
       .map(([key, item]) => ({ key, size: item.body.byteLength, uploaded: new Date(item.options.customMetadata.createdAt), customMetadata: item.options.customMetadata })),
     truncated: false,
@@ -332,7 +343,7 @@ export function memoryArtifactBucket() {
   const deleteObjects = vi.fn(async (keys: string | string[]) => {
     for (const key of Array.isArray(keys) ? keys : [keys]) objects.delete(key);
   });
-  return { bucket: { put, get, list, delete: deleteObjects } as unknown as Env["ARTIFACTS"], objects, put, get, list, delete: deleteObjects };
+  return { bucket: { put, get, head, list, delete: deleteObjects } as unknown as Env["ARTIFACTS"], objects, put, get, head, list, delete: deleteObjects };
 }
 
 export async function submit(env: Env, overrides: Record<string, unknown> = {}, key = CLIENT_KEY) {

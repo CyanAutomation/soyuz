@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.cyanautomation.dev/soyuz/persistence/v1/run-event.schema.json",
+  "title": "Soyuz run event persistence record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["eventId", "runId", "eventType", "eventSchemaVersion", "retentionPolicyVersion", "occurredAt", "recordedAt", "producerId", "payload", "expiresAt"],
+  "properties": {
+    "eventId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "runId": { "type": "string", "format": "uuid" },
+    "eventType": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{1,79}$" },
+    "eventSchemaVersion": { "const": 1 },
+    "retentionPolicyVersion": { "const": 1 },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "recordedAt": { "type": "string", "format": "date-time" },
+    "producerId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "payload": { "type": "object", "maxProperties": 100 },
+    "expiresAt": { "type": "string", "format": "date-time" }
+  }
+}

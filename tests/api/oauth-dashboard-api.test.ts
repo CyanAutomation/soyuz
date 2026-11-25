@@ -233,7 +233,7 @@ beforeEach(clearDatabase);
     const outcomes = await call(bindings, "/dashboard/api/outcomes", { token: accessToken });
     expect(outcomes.response.status).toBe(200);
     expect(outcomes.body.data).toMatchObject({
-      scope: { retainedRuns: 30, includedRuns: 1, runsWithOutcomeSummary: 1 },
+      scope: { retainedRuns: 1, includedRuns: 1, runsWithOutcomeSummary: 1 },
       byAssessment: { good: 1 }, byGrade: { B: 1 }, averageScore: 87,
       improvementCategories: [{ category: "validation", priority: "medium", count: 2 }],
     });

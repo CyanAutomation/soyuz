@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.cyanautomation.dev/soyuz/persistence/v1/execution-outcome.schema.json",
+  "title": "Soyuz execution outcome persistence record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "status", "completedAt"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "status": { "enum": ["completed", "failed", "cancelled", "admission_failed"] },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "exitCode": { "type": ["integer", "null"] },
+    "failureClass": { "type": ["string", "null"], "maxLength": 120 },
+    "summary": { "type": ["string", "null"], "maxLength": 4000 },
+    "artifactDeliveryStatus": { "enum": ["not_reported", "complete", "partial", "failed"] },
+    "phaseDurationMs": { "type": "object", "maxProperties": 32, "additionalProperties": { "type": "integer", "minimum": 0 } }
+  }
+}

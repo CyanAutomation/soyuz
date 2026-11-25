@@ -2,8 +2,9 @@ import type { RunRequest } from "../contracts/run-request";
 import { CONTRACT_VERSION } from "../contracts/queue-message";
 import { canTransition, type RunStatus } from "../domain/run-state-machine";
 import { stableStringify } from "../lib/canonical-json";
+import { DEFAULT_RUN_PAGE_SIZE, RETENTION_POLICY_VERSION, retentionExpiry } from "../persistence/retention-policy";
 
-export const MAX_RETAINED_RUNS = 30;
+/** Default page size; display pagination is independent from storage retention. */
 
 export interface RunRow {
   id: string;
@@ -18,6 +19,10 @@ export interface RunRow {
   publish_mode: "auto" | "none" | "branch" | "pr";
   request_json: string;
   request_redacted_at?: string | null;
+  persistence_schema_version: number;
+  retention_policy_version: number;
+  expires_at: string;
+  artifact_delivery_status: "not_reported" | "complete" | "partial" | "failed";
   request_hash: string;
   result_json: string | null;
   created_at: string;
@@ -116,7 +121,7 @@ export class RunTransitionError extends Error {
 }
 
 export class RunEventError extends Error {
-  constructor(readonly code: "WORKER_MISMATCH" | "RUN_NOT_ACTIVE" | "EVENT_ID_REUSED" | "CLAIM_EXPIRED" | "STALE_CLAIM", message: string) {
+  constructor(readonly code: "WORKER_MISMATCH" | "RUN_NOT_ACTIVE" | "RUN_RETENTION_EXPIRED" | "EVENT_ID_REUSED" | "CLAIM_EXPIRED" | "STALE_CLAIM", message: string) {
     super(message);
   }
 }
@@ -127,31 +132,37 @@ export async function getRun(db: D1Database, id: string): Promise<RunRow | null>
       (SELECT event_id FROM run_events
        WHERE run_id = runs.id AND type = 'run.claimed'
        ORDER BY sequence DESC LIMIT 1) AS claim_callback_id
+    FROM runs WHERE id = ? AND expires_at > ?
+  `).bind(id, new Date().toISOString()).first<RunRow>();
+}
+
+/** Read a canonical run for mutation guards, including records past their retention deadline. */
+export async function getRunIncludingExpired(db: D1Database, id: string): Promise<RunRow | null> {
+  return db.prepare(`
+    SELECT runs.*,
+      (SELECT event_id FROM run_events
+       WHERE run_id = runs.id AND type = 'run.claimed'
+       ORDER BY sequence DESC LIMIT 1) AS claim_callback_id
     FROM runs WHERE id = ?
   `).bind(id).first<RunRow>();
 }
 
-/** Read a run only while it is among the newest retained history entries. */
+/** Read a run only while its canonical creation-anchored retention window is open. */
 export async function getRetainedRun(db: D1Database, id: string): Promise<RunRow | null> {
   return db.prepare(`
     SELECT runs.*,
       (SELECT event_id FROM run_events
        WHERE run_id = runs.id AND type = 'run.claimed'
        ORDER BY sequence DESC LIMIT 1) AS claim_callback_id
-    FROM runs
-    WHERE id = ? AND id IN (
-      SELECT id FROM runs ORDER BY created_at DESC, id DESC LIMIT ?
-    )
-  `).bind(id, MAX_RETAINED_RUNS).first<RunRow>();
+    FROM runs WHERE id = ? AND expires_at > ?
+  `).bind(id, new Date().toISOString()).first<RunRow>();
 }
 
 export async function isRunRetained(db: D1Database, id: string): Promise<boolean> {
   const row = await db.prepare(`
     SELECT 1 AS retained FROM runs
-    WHERE id = ? AND id IN (
-      SELECT id FROM runs ORDER BY created_at DESC, id DESC LIMIT ?
-    )
-  `).bind(id, MAX_RETAINED_RUNS).first<{ retained: number }>();
+    WHERE id = ? AND expires_at > ?
+  `).bind(id, new Date().toISOString()).first<{ retained: number }>();
   return row !== null;
 }
 
@@ -168,8 +179,8 @@ export async function getRunIdempotencyRecord(
 ): Promise<RunIdempotencyRecord | null> {
   return db.prepare(`
     SELECT run_id, request_hash FROM run_idempotency_keys
-    WHERE origin_type = ? AND origin_id = ? AND idempotency_key = ?
-  `).bind(originType, originId, key).first<RunIdempotencyRecord>();
+    WHERE origin_type = ? AND origin_id = ? AND idempotency_key = ? AND expires_at > ?
+  `).bind(originType, originId, key, new Date().toISOString()).first<RunIdempotencyRecord>();
 }
 
 export async function insertRun(
@@ -204,10 +215,11 @@ export async function insertRun(
     db.prepare(`
       INSERT INTO runs (
         id, contract_version, repo_url, git_ref, project_name, status, task_mode,
-        publish_mode, request_json, request_hash, created_at, updated_at,
+        publish_mode, request_json, request_hash, created_at, updated_at, expires_at,
+        persistence_schema_version, retention_policy_version,
         idempotency_key, origin_type, origin_id, retry_of, correlation_id, request_id, admission_attempts,
         admission_last_attempt_at
-      ) VALUES (?, ?, ?, ?, ?, 'admitting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+      ) VALUES (?, ?, ?, ?, ?, 'admitting', ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, 1, ?)
     `).bind(
       id,
       CONTRACT_VERSION,
@@ -220,6 +232,7 @@ export async function insertRun(
       requestHash,
       createdAt,
       createdAt,
+      retentionExpiry(createdAt),
       idempotencyKey,
       originType,
       originId,
@@ -248,8 +261,9 @@ export async function transitionRun(
   event: RunEventInput,
   guard?: { claimOwner?: string; claimNotExpiredAt?: string; claimCallbackId?: string; expectedStatus?: RunStatus },
 ): Promise<RunRow> {
-  const current = await getRun(db, id);
+  const current = await getRunIncludingExpired(db, id);
   if (!current) throw new RunNotFoundError(`Run ${id} was not found`);
+  assertRunWithinRetention(current);
   assertTransitionGuards(current, to, guard);
   if (current.status === to) return current;
   if (!canTransition(current.status, to)) throw new RunTransitionError(current.status, to);
@@ -305,7 +319,7 @@ function transitionWhereClause(
   currentStatus: RunStatus,
   guard?: { claimOwner?: string; claimNotExpiredAt?: string; claimCallbackId?: string },
 ): { sql: string; values: string[] } {
-  let sql = "id = ? AND status = ?";
+  let sql = "id = ? AND status = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
   const values = [id, currentStatus];
   if (guard?.claimOwner) {
     sql += " AND worker_id = ?";
@@ -329,13 +343,20 @@ async function readTransitionResult(
   guard: { claimCallbackId?: string } | undefined,
   changed: number,
 ): Promise<RunRow> {
-  const latest = await getRun(db, id);
+  const latest = await getRunIncludingExpired(db, id);
   if (!latest) throw new RunNotFoundError(`Run ${id} was not found`);
+  assertRunWithinRetention(latest);
   if (guard?.claimCallbackId && latest.claim_callback_id !== guard.claimCallbackId) {
     throw new RunEventError("STALE_CLAIM", "Worker claim was superseded by a newer execution attempt");
   }
   if (changed === 0 && latest.status !== to) throw new RunTransitionError(latest.status, to);
   return latest;
+}
+
+function assertRunWithinRetention(run: Pick<RunRow, "expires_at">): void {
+  if (Date.parse(run.expires_at) <= Date.now()) {
+    throw new RunEventError("RUN_RETENTION_EXPIRED", "Run retention deadline has passed");
+  }
 }
 
 export async function updateStartedRun(
@@ -347,7 +368,7 @@ export async function updateStartedRun(
   event: RunEventInput,
   claimCallbackId?: string,
 ): Promise<RunRow> {
-  const current = await getRun(db, id);
+  const current = await getRunIncludingExpired(db, id);
   if (!current) throw new RunNotFoundError(`Run ${id} was not found`);
   assertStartOwnership(current, workerId, claimCallbackId);
   if (current.status !== "claimed") throw new RunEventError("RUN_NOT_ACTIVE", "Run is not in a state that accepts a started callback");
@@ -398,7 +419,7 @@ async function verifyClaimedStartFailure(
   error: unknown,
 ): Promise<void> {
   if (!isClaimTransitionFailure(error)) return;
-  const latest = await getRun(db, id);
+  const latest = await getRunIncludingExpired(db, id);
   if (hasClaimCallbackChanged(latest, claimCallbackId)) {
     throw new RunEventError("STALE_CLAIM", "Worker claim was superseded by a newer execution attempt");
   }
@@ -477,8 +498,9 @@ export async function recordWorkerEvent(db: D1Database, runId: string, input: Ru
 }
 
 async function requireWorkerEventRun(db: D1Database, runId: string, input: RunEventInput): Promise<RunRow> {
-  const current = await getRun(db, runId);
+  const current = await getRunIncludingExpired(db, runId);
   if (!current) throw new RunNotFoundError(`Run ${runId} was not found`);
+  assertRunWithinRetention(current);
   if (current.worker_id !== input.workerId) throw new RunEventError("WORKER_MISMATCH", "Worker does not own this run");
   if (input.claimCallbackId && current.claim_callback_id !== input.claimCallbackId) {
     throw new RunEventError("STALE_CLAIM", "Worker claim was superseded by a newer execution attempt");
@@ -527,7 +549,7 @@ async function insertWorkerEvent(db: D1Database, runId: string, input: RunEventI
 async function findSavedWorkerEvent(db: D1Database, runId: string, input: RunEventInput): Promise<RunEventRow> {
   const saved = await findRunEvent(db, runId, input.eventId);
   if (!saved) {
-    const latest = await getRun(db, runId);
+    const latest = await getRunIncludingExpired(db, runId);
     if (input.claimCallbackId && latest?.claim_callback_id !== input.claimCallbackId) {
       throw new RunEventError("STALE_CLAIM", "Worker claim was superseded by a newer execution attempt");
     }
@@ -553,11 +575,14 @@ async function recordWorkerHeartbeat(db: D1Database, runId: string, input: RunEv
     runId,
     input.workerId ?? "",
     input.recordedAt,
+    input.recordedAt,
   ];
   if (input.claimCallbackId) parameters.push(input.claimCallbackId, runId);
   await db.prepare(`
     UPDATE runs SET last_heartbeat_at = ?, operational_health = ?, updated_at = ?
     WHERE id = ? AND worker_id = ? AND status IN ('running', 'cancel_requested')
+      AND expires_at > ?
+      AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
       AND (last_heartbeat_at IS NULL OR julianday(last_heartbeat_at) <= julianday(?))
     ${claimGuard}
   `).bind(...parameters).run();
@@ -570,12 +595,12 @@ export async function listStaleRunningRuns(
 ): Promise<RunRow[]> {
   const rows = await db.prepare(`
     SELECT * FROM runs
-    WHERE status IN ('running', 'cancel_requested')
+    WHERE expires_at > ? AND status IN ('running', 'cancel_requested')
       AND operational_health != 'suspect_stalled'
       AND COALESCE(last_heartbeat_at, started_at) <= ?
     ORDER BY COALESCE(last_heartbeat_at, started_at) ASC
     LIMIT ?
-  `).bind(olderThan, limit).all<RunRow>();
+  `).bind(new Date().toISOString(), olderThan, limit).all<RunRow>();
   return rows.results;
 }
 
@@ -603,18 +628,21 @@ export async function markRunSuspectedStalled(
     db.prepare(`
       UPDATE runs SET operational_health = 'suspect_stalled', updated_at = ?
       WHERE id = ? AND status IN ('running', 'cancel_requested')
+        AND expires_at > ?
+        AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
         AND operational_health != 'suspect_stalled'
         AND COALESCE(last_heartbeat_at, started_at) = ?
-    `).bind(observedAt, row.id, heartbeatAt),
+    `).bind(observedAt, row.id, observedAt, heartbeatAt),
     db.prepare(`
       INSERT INTO run_events (
         run_id, contract_version, event_id, type, worker_id, stage, step,
         occurred_at, recorded_at, payload_json
       )
       SELECT id, ?, ?, 'run.suspected_stalled', worker_id, stage, NULL, ?, ?, ?
-      FROM runs WHERE id = ? AND operational_health = 'suspect_stalled'
+      FROM runs WHERE id = ? AND expires_at > ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        AND operational_health = 'suspect_stalled'
       ON CONFLICT(run_id, event_id) DO NOTHING
-    `).bind(CONTRACT_VERSION, eventId, heartbeatAt, observedAt, payload, row.id),
+    `).bind(CONTRACT_VERSION, eventId, heartbeatAt, observedAt, payload, row.id, observedAt),
   ]);
   return Number(results[0]?.meta?.changes ?? 0) === 1;
 }
@@ -633,13 +661,15 @@ async function updateLatestStage(db: D1Database, runId: string, input: RunEventI
   await db.prepare(`
     UPDATE runs SET stage = ?, updated_at = ?
     WHERE id = ? AND status IN ('running', 'cancel_requested')
+      AND expires_at > ?
+      AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
       AND worker_id = ?
       AND ? = (
         SELECT event_id FROM run_events
         WHERE run_id = ? AND type = 'stage.changed'
         ORDER BY sequence DESC LIMIT 1
       )
-  `).bind(input.stage, input.recordedAt, runId, input.workerId ?? "", input.eventId, runId).run();
+  `).bind(input.stage, input.recordedAt, runId, input.recordedAt, input.workerId ?? "", input.eventId, runId).run();
 }
 
 export interface RunCursor {
@@ -663,14 +693,14 @@ export async function listRuns(
     filters.push("(created_at, id) < (?, ?)");
     values.push(cursor.createdAt, cursor.id);
   }
+  filters.unshift("expires_at > ?");
+  values.unshift(new Date().toISOString());
   const rows = await db.prepare(`
     SELECT * FROM runs
-    WHERE id IN (
-      SELECT id FROM runs ORDER BY created_at DESC, id DESC LIMIT ?
-    )${filters.length ? ` AND ${filters.join(" AND ")}` : ""}
+    WHERE ${filters.join(" AND ")}
     ORDER BY created_at DESC, id DESC
     LIMIT ?
-  `).bind(MAX_RETAINED_RUNS, ...values, limit).all<RunRow>();
+  `).bind(...values, limit).all<RunRow>();
   return rows.results;
 }
 
@@ -685,26 +715,26 @@ export async function listRunEvents(db: D1Database, runId: string, after: number
 export async function listStaleAdmissions(db: D1Database, olderThan: string, limit: number): Promise<RunRow[]> {
   const rows = await db.prepare(`
     SELECT * FROM runs
-    WHERE status = 'admitting' AND admission_last_attempt_at <= ?
+    WHERE expires_at > ? AND status = 'admitting' AND admission_last_attempt_at <= ?
     ORDER BY admission_last_attempt_at ASC LIMIT ?
-  `).bind(olderThan, limit).all<RunRow>();
+  `).bind(new Date().toISOString(), olderThan, limit).all<RunRow>();
   return rows.results;
 }
 
 export async function listStaleQueuedRuns(db: D1Database, olderThan: string, limit: number): Promise<RunRow[]> {
   const rows = await db.prepare(`
     SELECT * FROM runs
-    WHERE status = 'queued' AND updated_at <= ?
+    WHERE expires_at > ? AND status = 'queued' AND updated_at <= ?
     ORDER BY updated_at ASC LIMIT ?
-  `).bind(olderThan, limit).all<RunRow>();
+  `).bind(new Date().toISOString(), olderThan, limit).all<RunRow>();
   return rows.results;
 }
 
 export async function listExpiredClaims(db: D1Database, at: string, limit: number): Promise<RunRow[]> {
   const rows = await db.prepare(`
-    SELECT * FROM runs WHERE status = 'claimed' AND claim_expires_at <= ?
+    SELECT * FROM runs WHERE expires_at > ? AND status = 'claimed' AND claim_expires_at <= ?
     ORDER BY claim_expires_at ASC LIMIT ?
-  `).bind(at, limit).all<RunRow>();
+  `).bind(at, at, limit).all<RunRow>();
   return rows.results;
 }
 
@@ -712,8 +742,9 @@ export async function reserveAdmissionRetry(db: D1Database, run: RunRow, attempt
   const result = await db.prepare(`
     UPDATE runs SET admission_attempts = admission_attempts + 1,
       admission_last_attempt_at = ?, updated_at = ?
-    WHERE id = ? AND status = 'admitting' AND admission_last_attempt_at = ?
-  `).bind(attemptedAt, attemptedAt, run.id, run.admission_last_attempt_at).run();
+    WHERE id = ? AND expires_at > ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      AND status = 'admitting' AND admission_last_attempt_at = ?
+  `).bind(attemptedAt, attemptedAt, run.id, attemptedAt, run.admission_last_attempt_at).run();
   return Number(result.meta.changes ?? 0) === 1;
 }
 
@@ -722,8 +753,9 @@ export async function reserveQueuedRunRecovery(db: D1Database, run: RunRow, atte
   const results = await db.batch([
     db.prepare(`
       UPDATE runs SET updated_at = ?
-      WHERE id = ? AND status = 'queued' AND updated_at = ?
-    `).bind(attemptedAt, run.id, run.updated_at),
+      WHERE id = ? AND expires_at > ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        AND status = 'queued' AND updated_at = ?
+    `).bind(attemptedAt, run.id, attemptedAt, run.updated_at),
     db.prepare(`
       INSERT INTO run_events (
         run_id, contract_version, event_id, type, worker_id, stage, step,
@@ -731,7 +763,8 @@ export async function reserveQueuedRunRecovery(db: D1Database, run: RunRow, atte
       )
       SELECT ?, ?, ?, 'run.queue_recovery_attempted', NULL, NULL, NULL, ?, ?, ?
       WHERE changes() = 1
-        AND EXISTS (SELECT 1 FROM runs WHERE id = ? AND status = 'queued' AND updated_at = ?)
+        AND EXISTS (SELECT 1 FROM runs WHERE id = ? AND expires_at > ?
+          AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now') AND status = 'queued' AND updated_at = ?)
       ON CONFLICT(run_id, event_id) DO NOTHING
     `).bind(
       run.id,
@@ -741,6 +774,7 @@ export async function reserveQueuedRunRecovery(db: D1Database, run: RunRow, atte
       attemptedAt,
       stableStringify({ queue: "soyuz-runs", reason: "queue_retention" }),
       run.id,
+      attemptedAt,
       attemptedAt,
     ),
   ]);

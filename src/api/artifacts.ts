@@ -1,8 +1,10 @@
 import type { Env } from "../env";
+import { isWithinRetention } from "../persistence/retention-policy";
 import { isRunRetained } from "../db/runs";
 import { isUuid } from "../lib/uuid";
 import { errorResponse, successResponse } from "./http";
 import { MAX_ARTIFACTS_PER_RUN, publicArtifact, type ArtifactRow } from "./artifact-model";
+import { purgeQueuedArtifactObjects } from "./retention";
 
 const MAX_CACHED_ARTIFACT_BYTES = 1_000_000;
 const MAX_ARTIFACT_CACHE_TTL_SECONDS = 60 * 60;
@@ -73,7 +75,7 @@ async function listClientArtifacts(env: Env, runId: string, requestId: string): 
       return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
     }
     const rows = await env.DB.prepare(`
-      SELECT id, run_id, kind, name, content_type, size_bytes, object_key, created_at, expires_at, state
+      SELECT *
       FROM run_artifacts WHERE run_id = ? AND state = 'ready' AND expires_at > ?
       ORDER BY created_at DESC, id LIMIT ?
     `).bind(runId, new Date().toISOString(), MAX_ARTIFACTS_PER_RUN).all<ArtifactRow>();
@@ -100,7 +102,7 @@ async function readClientArtifact(
     return errorResponse(requestId, 503, "ARTIFACT_READ_UNAVAILABLE", "Soyuz could not read artifact metadata. Retry shortly.");
   }
   if (!row) return errorResponse(requestId, 404, "ARTIFACT_NOT_FOUND", "Artifact was not found");
-  if (Date.parse(row.expires_at) <= Date.now()) {
+  if (!isWithinRetention(row.expires_at)) {
     await expireArtifact(env, row);
     return errorResponse(requestId, 410, "ARTIFACT_EXPIRED", "Artifact has expired.");
   }
@@ -120,9 +122,11 @@ async function readClientArtifact(
   } catch {
     return errorResponse(requestId, 503, "ARTIFACT_READ_UNAVAILABLE", "Soyuz could not read artifact content. Retry shortly.");
   }
-  if (!object) return errorResponse(requestId, 404, "ARTIFACT_CONTENT_NOT_FOUND", "Artifact content was not found");
+  const objectResult = validateArtifactObject(row, object, requestId);
+  if ("response" in objectResult) return objectResult.response;
+  const verifiedObject = objectResult.object;
 
-  const response = new Response(object.body, { status: 200, headers });
+  const response = new Response(verifiedObject.body, { status: 200, headers });
   const ttl = Math.min(
     MAX_ARTIFACT_CACHE_TTL_SECONDS,
     Math.floor((Date.parse(row.expires_at) - Date.now()) / 1_000),
@@ -141,13 +145,36 @@ function artifactCacheKey(objectKey: string): Request {
 
 async function findReadyArtifact(env: Env, runId: string, artifactId: string): Promise<ArtifactRow | null> {
   return env.DB.prepare(`
-    SELECT id, run_id, kind, name, content_type, size_bytes, object_key, created_at, expires_at, state
-    FROM run_artifacts WHERE run_id = ? AND id = ? AND state = 'ready'
+    SELECT *
+    FROM run_artifacts WHERE run_id = ? AND id = ? AND state = 'ready' AND object_status = 'present'
   `).bind(runId, artifactId).first<ArtifactRow>();
 }
 
 async function readArtifactObject(env: Env, row: ArtifactRow): Promise<R2ObjectBody | null> {
   return env.ARTIFACTS!.get(row.object_key);
+}
+
+function matchesSha256(checksum: ArrayBuffer, expectedHex: string): boolean {
+  const bytes = new Uint8Array(checksum);
+  const actual = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return actual === expectedHex;
+}
+
+function artifactChecksumMatches(row: ArtifactRow, object: R2ObjectBody): boolean {
+  if (!row.sha256) return true;
+  return Boolean(object.checksums?.sha256 && matchesSha256(object.checksums.sha256, row.sha256));
+}
+
+function validateArtifactObject(
+  row: ArtifactRow,
+  object: R2ObjectBody | null,
+  requestId: string,
+): { object: R2ObjectBody } | { response: Response } {
+  if (!object) return { response: errorResponse(requestId, 404, "ARTIFACT_CONTENT_NOT_FOUND", "Artifact content was not found") };
+  if (!artifactChecksumMatches(row, object)) {
+    return { response: errorResponse(requestId, 502, "ARTIFACT_INTEGRITY_MISMATCH", "Stored artifact content did not match its recorded checksum.") };
+  }
+  return { object };
 }
 
 function artifactDownloadHeaders(row: ArtifactRow): Headers {
@@ -165,59 +192,33 @@ function artifactDownloadHeaders(row: ArtifactRow): Headers {
 }
 
 export async function purgeExpiredArtifacts(env: Env, at = new Date()): Promise<void> {
-  if (!env.ARTIFACTS) return;
   const cutoff = at.toISOString();
-  let afterId = "";
+  let removed = 0;
   for (let batch = 0; batch < 10; batch += 1) {
     const rows = await env.DB.prepare(`
-      SELECT id, run_id, kind, name, content_type, size_bytes, object_key, created_at, expires_at, state
-      FROM run_artifacts a WHERE expires_at <= ? AND id > ?
-        AND NOT EXISTS (
-          SELECT 1 FROM publication_intents i LEFT JOIN publications p ON p.publication_id = i.publication_id
-          WHERE i.artifact_object_key = a.object_key AND (
-            i.state = 'authorized'
-            OR (i.state = 'abandoned' AND (i.retained_until IS NULL OR i.retained_until > ?))
-            OR p.state IN ('pending', 'publishing', 'retryable_failure')
-            OR (p.state = 'published' AND (p.retained_until IS NULL OR p.retained_until > ?))
-            OR (p.state = 'blocked' AND (p.retained_until IS NULL OR p.retained_until > ?))
-          )
-        ) ORDER BY id LIMIT 500
-    `).bind(cutoff, afterId, cutoff, cutoff, cutoff).all<ArtifactRow>();
-    if (rows.results.length === 0) return;
-    for (const row of rows.results) {
-      afterId = row.id;
-      try {
-        if (await isPublicationArtifactPinned(env, row.object_key, cutoff)) continue;
-        await env.ARTIFACTS.delete(row.object_key);
-        await env.DB.prepare("DELETE FROM run_artifacts WHERE id = ? AND expires_at <= ?").bind(row.id, cutoff).run();
-      } catch {
-        // Retain metadata for the next daily sweep; advancing the cursor lets this sweep reach other rows.
-      }
-    }
+      SELECT id, object_key FROM run_artifacts WHERE expires_at <= ? ORDER BY expires_at, id LIMIT 100
+    `).bind(cutoff).all<{ id: string; object_key: string }>();
+    if (!rows.results.length) break;
+    const statements = rows.results.flatMap((row) => [
+      env.DB.prepare("INSERT OR IGNORE INTO artifact_deletion_queue (object_key, queued_at) VALUES (?, ?)").bind(row.object_key, cutoff),
+      env.DB.prepare("DELETE FROM run_artifacts WHERE id = ? AND expires_at <= ?").bind(row.id, cutoff),
+    ]);
+    const results = await env.DB.batch(statements);
+    removed += results.reduce((count, result, index) => count + (index % 2 === 1 ? Number(result.meta?.changes ?? 0) : 0), 0);
   }
+  const deletion = await purgeQueuedArtifactObjects(env, cutoff);
+  console.info({ event: "soyuz.artifact.expiry", removedMetadata: removed, deletedObjects: deletion.deleted, failedBatches: deletion.failedBatches, at: cutoff });
 }
 
 async function expireArtifact(env: Env, row: ArtifactRow): Promise<void> {
-  if (!env.ARTIFACTS) return;
   try {
-    if (await isPublicationArtifactPinned(env, row.object_key, new Date().toISOString())) return;
-    await env.ARTIFACTS.delete(row.object_key);
-    await env.DB.prepare("DELETE FROM run_artifacts WHERE id = ?").bind(row.id).run();
+    const now = new Date().toISOString();
+    await env.DB.batch([
+      env.DB.prepare("INSERT OR IGNORE INTO artifact_deletion_queue (object_key, queued_at) SELECT ?, ? FROM run_artifacts WHERE expires_at <= ? AND id = ?")
+        .bind(row.object_key, now, now, row.id),
+      env.DB.prepare("DELETE FROM run_artifacts WHERE id = ? AND expires_at <= ?").bind(row.id, now),
+    ]);
   } catch {
-    // The scheduled retention sweep retries if either store is temporarily unavailable.
+    // The scheduled expiry sweep retries if D1 is temporarily unavailable.
   }
-}
-
-async function isPublicationArtifactPinned(env: Env, objectKey: string, at: string): Promise<boolean> {
-  const row = await env.DB.prepare(`
-    SELECT 1 AS pinned FROM publication_intents i LEFT JOIN publications p ON p.publication_id = i.publication_id
-    WHERE i.artifact_object_key = ? AND (
-      i.state = 'authorized'
-      OR (i.state = 'abandoned' AND (i.retained_until IS NULL OR i.retained_until > ?))
-      OR p.state IN ('pending', 'publishing', 'retryable_failure')
-      OR (p.state = 'published' AND (p.retained_until IS NULL OR p.retained_until > ?))
-      OR (p.state = 'blocked' AND (p.retained_until IS NULL OR p.retained_until > ?))
-    ) LIMIT 1
-  `).bind(objectKey, at, at, at).first();
-  return Boolean(row);
 }

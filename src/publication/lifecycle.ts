@@ -8,7 +8,6 @@ import { createUuidV7 } from "./uuid-v7";
 const PUBLICATION_MAX_ATTEMPTS = 8;
 export const PUBLICATION_DISPATCH_BATCH_SIZE = 10;
 export const PUBLICATION_LEASE_MS = 2 * 60_000;
-const RETENTION_MS = 30 * 24 * 60 * 60_000;
 
 export interface PublicationRow {
   publication_id: string;
@@ -39,6 +38,9 @@ export interface PublicationRow {
   updated_at: string;
   completed_at: string | null;
   retained_until: string | null;
+  expires_at: string;
+  persistence_schema_version: number;
+  retention_policy_version: number;
 }
 
 export interface PublicationIntentRow extends Omit<PublicationRow,
@@ -76,13 +78,13 @@ export async function reconcilePublicationEligibility(env: Env, runId?: string, 
     ? await env.DB.prepare(`
         SELECT i.*, r.status AS run_status, r.result_json
         FROM publication_intents i LEFT JOIN runs r ON r.id = i.run_id
-        WHERE i.state = 'authorized' AND i.run_id = ?
-      `).bind(runId).all<PublicationIntentRow & { run_status: RunRow["status"] | null; result_json: string | null }>()
+        WHERE i.state = 'authorized' AND i.run_id = ? AND i.expires_at > ?
+      `).bind(runId, now).all<PublicationIntentRow & { run_status: RunRow["status"] | null; result_json: string | null }>()
     : await env.DB.prepare(`
         SELECT i.*, r.status AS run_status, r.result_json
         FROM publication_intents i LEFT JOIN runs r ON r.id = i.run_id
-        WHERE i.state = 'authorized' ORDER BY i.created_at LIMIT 100
-      `).all<PublicationIntentRow & { run_status: RunRow["status"] | null; result_json: string | null }>();
+        WHERE i.state = 'authorized' AND i.expires_at > ? ORDER BY i.created_at LIMIT 100
+      `).bind(now).all<PublicationIntentRow & { run_status: RunRow["status"] | null; result_json: string | null }>();
 
   for (const row of rows.results ?? []) {
     const result = safeJsonRecord(row.result_json);
@@ -105,9 +107,10 @@ export async function reconcilePublicationEligibility(env: Env, runId?: string, 
           i.artifact_object_key, i.repository_owner, i.repository_name, i.mode, i.base_ref, i.base_sha, i.head_ref,
           i.title, i.body, 'pending', 0, ?, ?
         FROM publication_intents i JOIN runs r ON r.id = i.run_id
-        WHERE i.publication_id = ? AND i.state = 'authorized' AND r.status = 'completed'
+        WHERE i.publication_id = ? AND i.state = 'authorized' AND i.expires_at > ?
+          AND r.expires_at > ? AND r.status = 'completed'
           AND (r.result_json IS NULL OR json_extract(r.result_json, '$.publishedUrl') IS NULL)
-      `).bind(now, now, row.publication_id),
+      `).bind(now, now, row.publication_id, now, now),
       env.DB.prepare(`
         UPDATE publication_intents SET state = 'consumed', updated_at = ?
         WHERE publication_id = ? AND state = 'authorized'
@@ -128,7 +131,7 @@ async function abandonIntent(env: Env, row: PublicationIntentRow, at: string): P
     UPDATE publication_intents SET state = 'abandoned', updated_at = ?, retained_until = ?
     WHERE publication_id = ? AND state = 'authorized'
       AND NOT EXISTS (SELECT 1 FROM publications WHERE publications.publication_id = publication_intents.publication_id)
-  `).bind(at, new Date(Date.parse(at) + RETENTION_MS).toISOString(), row.publication_id).run();
+  `).bind(at, row.expires_at, row.publication_id).run();
 }
 
 /** The cron calls this with no publisher in production until Phase 2C is enabled. */
@@ -140,11 +143,11 @@ export async function reconcilePublications(env: Env, at = new Date(), injectedP
   const now = at.toISOString();
   const due = await env.DB.prepare(`
     SELECT * FROM publications
-    WHERE (state = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= ?))
+    WHERE expires_at > ? AND ((state = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= ?))
       OR (state = 'retryable_failure' AND next_attempt_at <= ?)
-      OR (state = 'publishing' AND lease_expires_at <= ?)
+      OR (state = 'publishing' AND lease_expires_at <= ?))
     ORDER BY COALESCE(next_attempt_at, created_at), publication_id LIMIT ?
-  `).bind(now, now, now, PUBLICATION_DISPATCH_BATCH_SIZE).all<PublicationRow>();
+  `).bind(now, now, now, now, PUBLICATION_DISPATCH_BATCH_SIZE).all<PublicationRow>();
   for (const row of due.results ?? []) {
     await dispatchPublication(env, row, publisher, at);
   }
@@ -157,6 +160,7 @@ export async function dispatchPublication(
   at = new Date(),
   timeoutMs = 30_000,
 ): Promise<boolean> {
+  if (Date.parse(current.expires_at) <= at.getTime() + timeoutMs) return false;
   const attemptId = await reservePublicationAttempt(env, current, at);
   if (!attemptId) return false;
   await appendPublicationStartedEvent(env, current, attemptId, at);
@@ -183,12 +187,12 @@ async function reservePublicationAttempt(env: Env, current: PublicationRow, at: 
     env.DB.prepare(`
       UPDATE publications SET state = 'publishing', attempt_count = attempt_count + 1, attempt_id = ?, lease_expires_at = ?,
         next_attempt_at = NULL, updated_at = ?
-      WHERE publication_id = ? AND request_fingerprint = ? AND attempt_count < ? AND (
+      WHERE publication_id = ? AND request_fingerprint = ? AND expires_at > ? AND attempt_count < ? AND (
         state = 'pending'
         OR (state = 'retryable_failure' AND (next_attempt_at IS NULL OR next_attempt_at <= ?))
         OR (state = 'publishing' AND lease_expires_at <= ?)
       )
-    `).bind(attemptId, leaseUntil, now, current.publication_id, current.request_fingerprint, PUBLICATION_MAX_ATTEMPTS, now, now),
+    `).bind(attemptId, leaseUntil, now, current.publication_id, current.request_fingerprint, now, PUBLICATION_MAX_ATTEMPTS, now, now),
     env.DB.prepare(`
       INSERT INTO publication_events (publication_id, event_id, run_id, event_type, state, attempt_id, occurred_at, metadata_json)
       SELECT publication_id, ?, run_id, 'publication.attempt_reserved', 'publishing', ?, ?, ?
@@ -355,7 +359,7 @@ async function handleStandalonePublisherError(
 }
 
 async function loadAndVerifyManifest(env: Env, row: PublicationRow): Promise<PublicationArtifact | null> {
-  if (!env.ARTIFACTS) return null;
+  if (!env.ARTIFACTS || Date.parse(row.expires_at) <= Date.now()) return null;
   try {
     const object = await env.ARTIFACTS.get(row.artifact_object_key);
     if (!object || object.size > 9 * 1024 * 1024) return null;
@@ -449,7 +453,7 @@ async function finishAttempt(env: Env, row: PublicationRow, attemptId: string, o
   at: Date;
 }): Promise<void> {
   const now = outcome.at.toISOString();
-  const retainedUntil = outcome.state === "published" ? new Date(outcome.at.getTime() + RETENTION_MS).toISOString() : null;
+  const retainedUntil = outcome.state === "published" ? row.expires_at : null;
   const finalEventId = createUuidV7(outcome.at.getTime());
   const statements: D1PreparedStatement[] = [
     env.DB.prepare(`

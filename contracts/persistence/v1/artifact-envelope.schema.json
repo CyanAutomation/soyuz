@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.cyanautomation.dev/soyuz/persistence/v1/artifact-envelope.schema.json",
+  "title": "Soyuz stored artifact envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["envelopeVersion", "record", "contentSchemaVersion"],
+  "properties": {
+    "envelopeVersion": { "const": 1 },
+    "record": { "$ref": "artifact-record.schema.json" },
+    "contentSchemaVersion": { "type": "integer", "minimum": 1 },
+    "content": { "type": "string", "contentEncoding": "base64", "maxLength": 33333336 },
+    "contentReference": { "type": "string", "description": "Opaque authenticated Soyuz reference; never a public R2 URL." }
+  },
+  "oneOf": [{ "required": ["content"] }, { "required": ["contentReference"] }]
+}

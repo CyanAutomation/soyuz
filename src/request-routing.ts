@@ -82,8 +82,13 @@ async function handleHealth(requestId: string, env: Env): Promise<Response> {
   }
   try {
     await env.DB.prepare(`
-      SELECT id, origin_type, origin_id, retry_of, last_heartbeat_at, operational_health, request_redacted_at
+      SELECT id, origin_type, origin_id, retry_of, last_heartbeat_at, operational_health, request_redacted_at,
+        persistence_schema_version, retention_policy_version, expires_at, artifact_delivery_status
       FROM runs LIMIT 0
+    `).first();
+    await env.DB.prepare(`
+      SELECT artifact_type, artifact_schema_version, sha256, engine_id, producer_id, retention_policy_version
+      FROM run_artifacts LIMIT 0
     `).first();
     await env.DB.prepare(`
       SELECT origin_type, origin_id, idempotency_key, request_hash, run_id
@@ -96,6 +101,7 @@ async function handleHealth(requestId: string, env: Env): Promise<Response> {
     await env.DB.prepare("SELECT publication_id, state FROM publications LIMIT 0").first();
     await env.DB.prepare("SELECT artifact_id, object_key FROM publication_manifest_artifacts LIMIT 0").first();
     await env.DB.prepare("SELECT publication_id, event_id FROM publication_events LIMIT 0").first();
+    await env.DB.prepare("SELECT metric_day, outcome, expires_at FROM artifact_upload_metrics LIMIT 0").first();
     return jsonResponse(200, { status: "ok", contractVersion: "1", requestId });
   } catch {
     return jsonResponse(503, {

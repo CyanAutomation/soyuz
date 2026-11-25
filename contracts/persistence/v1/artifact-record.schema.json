@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.cyanautomation.dev/soyuz/persistence/v1/artifact-record.schema.json",
+  "title": "Soyuz artifact metadata persistence record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifactId", "runId", "artifactType", "artifactSchemaVersion", "producerId", "contentType", "contentEncoding", "sizeBytes", "sha256", "objectKey", "state", "objectStatus", "createdAt", "expiresAt", "retentionPolicyVersion"],
+  "properties": {
+    "artifactId": { "type": "string", "format": "uuid" },
+    "runId": { "type": "string", "format": "uuid" },
+    "artifactType": { "enum": ["execution.summary", "execution.failure", "execution.log", "execution.report", "execution.other", "code.diff", "code.changed-files", "code.patch", "validation.result", "evaluation.scorecard", "evaluation.result", "decision.evidence", "telemetry.metrics", "publication.manifest"] },
+    "artifactSchemaVersion": { "const": 1 },
+    "producerId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "producerVersion": { "type": ["string", "null"], "maxLength": 120 },
+    "contentType": { "type": "string", "maxLength": 255 },
+    "contentEncoding": { "enum": ["identity", "gzip"] },
+    "sizeBytes": { "type": "integer", "minimum": 1, "maximum": 25000000 },
+    "sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+    "objectKey": { "type": "string", "pattern": "^runs/[0-9a-f-]{36}/[0-9a-f-]{36}$" },
+    "state": { "enum": ["pending", "ready"] },
+    "objectStatus": { "enum": ["present", "missing"] },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "retentionPolicyVersion": { "const": 1 }
+  }
+}

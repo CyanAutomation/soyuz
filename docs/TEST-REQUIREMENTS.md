@@ -25,6 +25,10 @@ Tests carry the IDs below in their `it()` names; one test may cover more than on
 | `ARTIFACTS-08` | An R2 cleanup failure remains indexed for the retention sweep. | [Deployment: worker configuration](DEPLOYMENT.md#worker-configuration) |
 | `ARTIFACTS-09` | Unsupported artifact kinds are rejected before run state is read. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
 | `ARTIFACTS-10` | Artifact ownership is rechecked if a run completes during upload reservation. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
+| `PERSISTENCE-90D-01` | Runs and run-associated records expire at canonical creation plus 90 days, and retention pins cannot extend the deadline. | [Persistence and retention](PHASE-ABC-PERSISTENCE-RETENTION.md#retention-policy) |
+| `PERSISTENCE-RECON-01` | Bounded D1/R2 reconciliation queues old orphan objects and marks indexed artifacts whose R2 object is missing. | [Persistence and retention](PHASE-ABC-PERSISTENCE-RETENTION.md#retention-policy) |
+| `PERSISTENCE-RECON-01` | Cleanup is bounded, retries queued R2 deletes, and reports cleanup failures. | [Persistence and retention](PHASE-ABC-PERSISTENCE-RETENTION.md#cleanup-and-reconciliation) |
+| `PERSISTENCE-CONTRACT-01` | Persistence record schemas and examples are versioned and separate from API, migration, and engine versions. | [Persistence contracts](PHASE-ABC-PERSISTENCE-RETENTION.md#versioning) |
 | `ARTIFACTS-IDEMPOTENCY-01` | Replaying an artifact ID with identical bytes is safe; different bytes conflict. | [Transport contract: worker reads and callbacks](CONTRACT.md#worker-reads-and-callbacks) |
 | `DEPLOY-MIGRATION-HISTORY-01` | Deployment is blocked when migrations are missing, unexpected, or out of order. | [Deployment: GitHub Actions deployment](DEPLOYMENT.md#github-actions-deployment) |
 | `OAUTH-05` | The protected dashboard identity endpoint returns the allowlisted user's GitHub login and enforces the existing OAuth access policy. | [Transport contract: public endpoints](CONTRACT.md#public-endpoints) |

@@ -594,7 +594,7 @@ beforeEach(clearDatabase);
     },
   );
 
-  it("[PUBLICATION-RETENTION-01] retains pinned manifest and ledger beyond run culling, then expires terminal data", async () => {
+  it("[PUBLICATION-RETENTION-01] keeps publication data within the run deadline and refuses pins beyond it", async () => {
     const r2 = memoryArtifactBucket();
     const { bindings } = testEnv({ artifacts: r2.bucket });
     const workerId = "publication-retention-host";
@@ -604,31 +604,18 @@ beforeEach(clearDatabase);
     });
     await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
     const objectKey = `publication-manifests/${data.runId}/018f0000-0000-7000-8000-000000000082`;
-    await bindings.DB.prepare("UPDATE runs SET created_at = '2000-01-01T00:00:00.000Z' WHERE id = ?").bind(data.runId).run();
-    await bindings.DB.prepare("UPDATE publication_manifest_artifacts SET expires_at = '2000-01-01T00:00:00.000Z' WHERE artifact_id = ?")
-      .bind("018f0000-0000-7000-8000-000000000082").run();
-    for (let index = 0; index < 30; index += 1) await submit(bindings, {}, crypto.randomUUID());
-    await purgeOldRuns(bindings);
-    const retainedCount = await bindings.DB.prepare("SELECT COUNT(*) AS count FROM runs").first<{ count: number }>();
-    expect(retainedCount?.count).toBe(30);
-    expect(await getRun(bindings.DB, data.runId)).toBeNull();
+    const run = await bindings.DB.prepare("SELECT expires_at FROM runs WHERE id = ?").bind(data.runId).first<{ expires_at: string }>();
+    const publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+      .bind(data.runId).first<PublicationRow>();
+    expect(publication!.expires_at).toBe(run!.expires_at);
+    await expect(bindings.DB.prepare("UPDATE publications SET retained_until = '2099-01-01T00:00:00.000Z' WHERE run_id = ?")
+      .bind(data.runId).run()).rejects.toThrow("PUBLICATION_EXPIRY_CANNOT_BE_EXTENDED");
+
+    await purgeOldRuns(bindings, new Date());
+    expect(await getRun(bindings.DB, data.runId)).not.toBeNull();
     expect(r2.objects.has(objectKey)).toBe(true);
     expect(await bindings.DB.prepare("SELECT publication_id FROM publications WHERE run_id = ?").bind(data.runId).first()).not.toBeNull();
-    expect(await purgeExpiredPublicationManifests(bindings, new Date("2030-01-01T00:00:00.000Z"))).toBe(0);
-    expect(r2.objects.has(objectKey)).toBe(true);
-
-    const pub = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?").bind(data.runId).first<PublicationRow>();
-    const mock = new MockPublisherEntrypoint(["success"]);
-    await dispatchPublication(bindings, pub!, mock);
-    await bindings.DB.batch([
-      bindings.DB.prepare("UPDATE publication_manifest_artifacts SET expires_at = '2000-01-01T00:00:00.000Z' WHERE artifact_id = ?")
-        .bind("018f0000-0000-7000-8000-000000000082"),
-      bindings.DB.prepare("UPDATE publications SET retained_until = '2000-01-01T00:00:00.000Z' WHERE run_id = ?").bind(data.runId),
-      bindings.DB.prepare("UPDATE publication_intents SET retained_until = '2000-01-01T00:00:00.000Z' WHERE run_id = ?").bind(data.runId),
-      bindings.DB.prepare("INSERT OR IGNORE INTO artifact_deletion_queue (object_key, queued_at) VALUES (?, ?)").bind(objectKey, "2000-01-01T00:00:00.000Z"),
-    ]);
-    await purgeExpiredPublicationManifests(bindings, new Date("2030-01-01T00:00:00.000Z"));
-    await purgeOldRuns(bindings);
+    await purgeOldRuns(bindings, new Date(Date.parse(run!.expires_at) + 1));
     expect(r2.objects.has(objectKey)).toBe(false);
     expect(await bindings.DB.prepare("SELECT publication_id FROM publications WHERE run_id = ?").bind(data.runId).first()).toBeNull();
     expect(await bindings.DB.prepare("SELECT artifact_id FROM publication_manifest_artifacts WHERE artifact_id = ?")

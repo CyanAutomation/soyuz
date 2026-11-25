@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_EVENT_PAYLOAD_BYTES } from "../persistence/retention-policy";
 import { CONTRACT_VERSION } from "./queue-message";
 import { isHttpUrl } from "../lib/safe-url";
 import { RunOutcomeSummarySchema } from "./run-outcome";
@@ -84,7 +85,7 @@ export const WorkerEventSchema = z.object({
       });
     }
   }
-  if (new TextEncoder().encode(JSON.stringify(event.payload)).byteLength > 12_000) {
+  if (new TextEncoder().encode(JSON.stringify(event.payload)).byteLength > MAX_EVENT_PAYLOAD_BYTES) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["payload"],

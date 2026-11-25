@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.cyanautomation.dev/soyuz/persistence/v1/publication-record.schema.json",
+  "title": "Soyuz publication lifecycle persistence mapping v1",
+  "description": "Maps Soyuz's publication ledger and references Kirisame publication protocol v1. The Kirisame immutable artifact manifest remains governed by Kirisame's schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["publicationId", "runId", "persistenceSchemaVersion", "publicationProtocolVersion", "artifactId", "artifactDigest", "state", "createdAt", "expiresAt", "retentionPolicyVersion"],
+  "properties": {
+    "publicationId": { "type": "string", "format": "uuid" },
+    "runId": { "type": "string", "format": "uuid" },
+    "persistenceSchemaVersion": { "const": 1 },
+    "publicationProtocolVersion": { "const": "1" },
+    "artifactId": { "type": "string", "format": "uuid" },
+    "artifactDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "state": { "enum": ["authorized", "pending", "publishing", "published", "retryable_failure", "blocked", "abandoned", "expired"] },
+    "attemptCount": { "type": "integer", "minimum": 0, "maximum": 8 },
+    "lastErrorCode": { "type": ["string", "null"], "maxLength": 100 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "retentionPolicyVersion": { "const": 1 }
+  }
+}

@@ -9,8 +9,7 @@ export interface ScheduledJobs {
   reconcilePublications(env: Env): Promise<unknown>;
   purgeOldRuns(env: Env): Promise<unknown>;
   purgeExpiredArtifacts(env: Env): Promise<unknown>;
-  purgeExpiredPublicationManifests(env: Env): Promise<unknown>;
-  purgeExpiredRunRequests(env: Env): Promise<unknown>;
+  reconcileArtifactStorage(env: Env): Promise<unknown>;
   getOAuthProvider(env: Env): OAuthProvider | null;
   purgeOAuthData(provider: OAuthProvider, env: Env): Promise<unknown>;
 }
@@ -26,13 +25,10 @@ export function scheduleWorkerMaintenance(
     jobs.reconcileStalledRuns(env),
     jobs.reconcilePublications(env),
     jobs.purgeOldRuns(env),
+    jobs.purgeExpiredArtifacts(env),
+    jobs.reconcileArtifactStorage(env),
   ];
   if (controller.cron === "0 3 * * *") {
-    work.push(
-      jobs.purgeExpiredArtifacts(env),
-      jobs.purgeExpiredPublicationManifests(env),
-      jobs.purgeExpiredRunRequests(env),
-    );
     const provider = jobs.getOAuthProvider(env);
     if (provider && env.OAUTH_KV) work.push(jobs.purgeOAuthData(provider, env));
   }

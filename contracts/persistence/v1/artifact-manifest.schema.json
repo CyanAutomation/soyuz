@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.cyanautomation.dev/soyuz/persistence/v1/artifact-manifest.schema.json",
+  "title": "Soyuz run artifact manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "runId", "engine", "createdAt", "expiresAt", "retentionPolicyVersion", "requiredArtifacts", "persistedArtifacts", "missingArtifacts", "deliveryStatus"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "runId": { "type": "string", "format": "uuid" },
+    "engine": { "type": "object", "additionalProperties": false, "required": ["id", "version"], "properties": { "id": { "type": "string" }, "version": { "type": "string" } } },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "retentionPolicyVersion": { "const": 1 },
+    "requiredArtifacts": { "type": "array", "items": { "type": "string" }, "uniqueItems": true, "maxItems": 100 },
+    "persistedArtifacts": { "type": "array", "items": { "$ref": "artifact-record.schema.json" }, "maxItems": 100 },
+    "missingArtifacts": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["artifactType", "reason"], "properties": { "artifactType": { "type": "string" }, "reason": { "type": "string", "maxLength": 200 } } }, "maxItems": 100 },
+    "deliveryStatus": { "enum": ["complete", "partial", "failed"] }
+  }
+}

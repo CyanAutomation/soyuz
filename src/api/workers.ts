@@ -9,6 +9,7 @@ import {
 import {
   findRunEvent,
   getRun,
+  getRunIncludingExpired,
   parseResult,
   recordWorkerEvent,
   RunEventError,
@@ -316,8 +317,11 @@ async function cancelled(request: Request, env: Env, runId: string, requestId: s
 }
 
 async function requireRun(env: Env, runId: string): Promise<RunRow> {
-  const row = await getRun(env.DB, runId);
+  const row = await getRunIncludingExpired(env.DB, runId);
   if (!row) throw new ApiError(404, "RUN_NOT_FOUND", "Run was not found");
+  if (Date.parse(row.expires_at) <= Date.now()) {
+    throw new ApiError(410, "RUN_RETENTION_EXPIRED", "Run retention deadline has passed.");
+  }
   return row;
 }
 
@@ -488,6 +492,7 @@ function callbackError(error: unknown, requestId: string): Response {
   if (error instanceof RunNotFoundError) return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
   if (error instanceof RunTransitionError) return errorResponse(requestId, 409, "INVALID_STATE_TRANSITION", `Run changed to ${error.current} before the callback was committed`);
   if (error instanceof RunEventError) {
+    if (error.code === "RUN_RETENTION_EXPIRED") return errorResponse(requestId, 410, error.code, error.message);
     const code = error.code === "EVENT_ID_REUSED" ? "CALLBACK_ID_REUSED" : error.code;
     return errorResponse(requestId, 409, code, error.message);
   }

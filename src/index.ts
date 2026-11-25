@@ -1,6 +1,7 @@
 import { getSoyuzOAuthProvider } from "./auth/oauth";
 import { purgeExpiredArtifacts } from "./api/artifacts";
-import { purgeExpiredPublicationManifests, purgeExpiredRunRequests, purgeOldRuns } from "./api/retention";
+import { reconcileArtifactStorage } from "./api/artifact-reconciliation";
+import { purgeOldRuns } from "./api/retention";
 import type { Env } from "./env";
 import { reconcileAdmissions, reconcileStalledRuns } from "./queue/reconcile";
 import { reconcilePublications } from "./publication/lifecycle";
@@ -20,8 +21,7 @@ export default {
       reconcilePublications,
       purgeOldRuns,
       purgeExpiredArtifacts,
-      purgeExpiredPublicationManifests,
-      purgeExpiredRunRequests,
+      reconcileArtifactStorage,
       getOAuthProvider: getSoyuzOAuthProvider,
       purgeOAuthData,
     });

@@ -1,10 +1,13 @@
 import { listRunsPage } from "../application/runs";
 import type { Env } from "../env";
-import { MAX_RETAINED_RUNS, parseResult } from "../db/runs";
+import { parseResult } from "../db/runs";
 import type { RunRow } from "../db/runs";
 import { RunOutcomeSummarySchema, type RunOutcomeSummary } from "../contracts/run-outcome";
 import { safeUrlForDisplay } from "../lib/safe-url";
+import { MAX_RUN_PAGE_SIZE } from "../persistence/retention-policy";
 import { errorResponse, successResponse } from "./http";
+
+type RunOutcomeRecord = { row: RunRow; outcome: RunOutcomeSummary | undefined };
 
 export async function handleRunOutcomes(
   request: Request,
@@ -16,8 +19,7 @@ export async function handleRunOutcomes(
   if (request.method !== "GET") return errorResponse(requestId, 405, "METHOD_NOT_ALLOWED", "Run outcome history accepts GET requests.");
 
   try {
-    const page = await listRunsPage(env, { limit: MAX_RETAINED_RUNS });
-    const runs = page.rows.map((row) => ({ row, outcome: outcomeFromRow(row) }));
+    const { runs, retainedRuns } = await readAllRetainedOutcomes(env);
     const withOutcomes = runs.filter(({ outcome }) => outcome !== undefined);
     const assessments: Record<string, number> = {};
     const confidences: Record<string, number> = {};
@@ -54,11 +56,14 @@ export async function handleRunOutcomes(
       }
     }
 
+    const returnedRuns = runs.slice(0, MAX_RUN_PAGE_SIZE);
     return successResponse(requestId, {
       scope: {
-        retainedRuns: MAX_RETAINED_RUNS,
+        retainedRuns,
         includedRuns: runs.length,
         runsWithOutcomeSummary: withOutcomes.length,
+        returnedRuns: returnedRuns.length,
+        runsTruncated: runs.length > returnedRuns.length,
       },
       byAssessment: assessments,
       byReviewerConfidence: confidences,
@@ -70,11 +75,25 @@ export async function handleRunOutcomes(
       phaseDurations: [...phaseTotals.entries()]
         .map(([phase, total]) => ({ phase, count: total.count, averageMs: Math.round(total.totalMs / total.count) }))
         .sort((left, right) => right.averageMs - left.averageMs || left.phase.localeCompare(right.phase)),
-      runs: runs.map(({ row, outcome }) => publicOutcomeRun(row, outcome)),
+      runs: returnedRuns.map(({ row, outcome }) => publicOutcomeRun(row, outcome)),
     });
   } catch {
     return errorResponse(requestId, 503, "RUN_OUTCOMES_UNAVAILABLE", "Soyuz could not read retained run outcome summaries. Retry shortly.");
   }
+}
+
+async function readAllRetainedOutcomes(env: Env): Promise<{ runs: RunOutcomeRecord[]; retainedRuns: number }> {
+  const runs: RunOutcomeRecord[] = [];
+  let cursor: string | null = null;
+  let retainedRuns = 0;
+  while (true) {
+    const page = await listRunsPage(env, { limit: MAX_RUN_PAGE_SIZE, cursor });
+    retainedRuns += page.rows.length;
+    runs.push(...page.rows.map((row) => ({ row, outcome: outcomeFromRow(row) })));
+    if (!page.nextCursor) break;
+    cursor = page.nextCursor;
+  }
+  return { runs, retainedRuns };
 }
 
 function outcomeFromRow(row: RunRow): RunOutcomeSummary | undefined {
@@ -95,6 +114,8 @@ function publicOutcomeRun(row: RunRow, outcome: RunOutcomeSummary | undefined) {
     status: row.status,
     createdAt: row.created_at,
     completedAt: row.completed_at,
+    expiresAt: row.expires_at,
+    artifactDeliveryStatus: row.artifact_delivery_status,
     outcomeSummary: outcome ?? null,
   };
 }

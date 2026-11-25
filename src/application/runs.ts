@@ -17,13 +17,13 @@ import {
   type RunEventRow,
   type RunRow,
   parseRequest,
-  MAX_RETAINED_RUNS,
 } from "../db/runs";
 import type { Env } from "../env";
 import { stableStringify } from "../lib/canonical-json";
 import { sha256Hex } from "../lib/sha256";
 import { isUuid } from "../lib/uuid";
 import { createRunId } from "../lib/uuidv7";
+import { DEFAULT_RUN_PAGE_SIZE, MAX_RUN_PAGE_SIZE } from "../persistence/retention-policy";
 
 const MAX_QUEUE_MESSAGE_BYTES = 96 * 1024;
 
@@ -287,10 +287,10 @@ export async function listRunsPage(
   env: Env,
   query: { limit?: string | number | null; status?: string | null; cursor?: string | null },
 ): Promise<RunListPage> {
-  const limitValue = query.limit ?? String(MAX_RETAINED_RUNS);
+  const limitValue = query.limit ?? String(DEFAULT_RUN_PAGE_SIZE);
   const limit = Number(limitValue);
-  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RETAINED_RUNS) {
-    throw new RunApplicationError(400, "INVALID_LIMIT", `limit must be an integer from 1 to ${MAX_RETAINED_RUNS}`);
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RUN_PAGE_SIZE) {
+    throw new RunApplicationError(400, "INVALID_LIMIT", `limit must be an integer from 1 to ${MAX_RUN_PAGE_SIZE}`);
   }
 
   let status: RunStatus | undefined;
