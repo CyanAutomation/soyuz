@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
@@ -11,16 +12,22 @@ export default defineConfig({
       wrangler: { configPath: "./wrangler.jsonc" },
       miniflare: {
         kvNamespaces: ["OAUTH_KV"],
-          serviceBindings: {
-            SENKU: async () => new Response(JSON.stringify({
-              error: { code: "PROVIDER_UNAVAILABLE", message: "Senku is not part of this test fixture." },
-            }), { status: 503, headers: { "content-type": "application/json" } }),
-          },
+        serviceBindings: {
+          SENKU: async () => new Response(JSON.stringify({
+            error: { code: "PROVIDER_UNAVAILABLE", message: "Senku is not part of this test fixture." },
+          }), { status: 503, headers: { "content-type": "application/json" } }),
+        },
+        workers: [{
+          name: "kirisame",
+          modules: true,
+          scriptPath: path.join(projectRoot, "tests/fixtures/kirisame-rpc-mock.mjs"),
+        }],
         bindings: {
           CLIENT_API_TOKEN: "client-test-token-value-long-enough",
           WORKER_API_TOKEN: "worker-test-token-value-long-enough",
             SENKU_SOYUZ_API_TOKEN: "senku-soyuz-test-token-value-long-enough",
           TEST_MIGRATIONS: await readD1Migrations(path.join(projectRoot, "migrations")),
+          TEST_WRANGLER_CONFIG: readFileSync(path.join(projectRoot, "wrangler.jsonc"), "utf8"),
         },
       },
     })),

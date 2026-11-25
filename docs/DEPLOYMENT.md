@@ -172,7 +172,7 @@ Migration `0002_run_liveness.sql` adds heartbeat and operational-health columns;
 
 The Worker build that reads `0009` fails health checks if those tables are missing. The required order is: review migration impact, apply `0009` to local D1 and pass the migration tests, separately authorize and apply it to production D1, verify production migration history read-only, then promote Worker code. The main-branch workflow can deploy after merge, so do not merge or otherwise trigger that deployment until the production migration is complete. This implementation does not apply the remote migration.
 
-`wrangler.jsonc` intentionally has no `KIRISAME` Service Binding, publication allowlist, or dispatch enablement. The scheduler materializes completed intents but does not dispatch while those bindings/configuration are absent. Production integration is a separate Phase 2C release and must not be enabled by merely applying `0009`.
+`wrangler.jsonc` declares the private `KIRISAME` Service Binding only in Soyuz, an exact allowlist for `CyanAutomation/somatic` PRs to `main`, and `PUBLICATION_DISPATCH_ENABLED=false`. This source configuration is not yet deployed. Production dispatch remains off until the trusted Kaseki producer and host preflight are ready; a broadening of the allowlist or enabling dispatch requires a separate reviewed rollout. Applying `0009` alone does not enable publishing.
 
 Generate runtime and binding types after changing Wrangler bindings:
 

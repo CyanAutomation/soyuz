@@ -32,7 +32,7 @@ export interface Env {
   SOYUZ_OAUTH_ALLOWED_GITHUB_IDS?: string;
   /** Machine identity for Soyuz-to-Senku decision requests. Store as a Worker secret. */
   SENKU_SOYUZ_API_TOKEN?: string;
-  /** Optional private RPC binding. Keep absent until Phase 2C is separately commissioned. */
+  /** Private RPC binding. Publication dispatch stays disabled until separately commissioned. */
   KIRISAME?: { publish(requestJson: string): Promise<unknown> };
   /** Durable publication dispatch remains off unless explicitly enabled. */
   PUBLICATION_DISPATCH_ENABLED?: string;

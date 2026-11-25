@@ -91,7 +91,7 @@ Every worker request uses `Authorization: Bearer <WORKER_API_TOKEN>`, distinct f
 
 ### Publication manifest and intent (additive worker contract)
 
-The new-style publication path is separate from generic artifacts and is not produced by current Kaseki versions. Its routes still use the Worker bearer token and the active claim fence:
+The new-style publication path is separate from generic artifacts and is not produced by the currently deployed Kaseki host. Kaseki source now implements the producer, with its feature disabled by default. These routes use the Worker bearer token and the active claim fence:
 
 - `PUT /v1/worker/runs/:id/publication-manifests/:artifactId` accepts a UTF-8 JSON Kirisame publication artifact v1. Headers: `Content-Length`, `X-Soyuz-Worker-Id`, and `X-Soyuz-Claim-Callback-Id`. The body is capped at 9 MiB; the canonical artifact is capped at 8 MiB and file data at the Kirisame v1 limits. Soyuz derives `publication-manifests/{runId}/{artifactId}` as the private R2 key.
 - A claim-fenced `validation.completed` event may include `payload.publicationEvidence` with `evidenceVersion: "1"`, `outcome: "passed"`, `runId`, `artifactId`, `artifactDigest`, repository, `baseRef`, and `baseSha`. The event itself must be sent to the authenticated Worker callback with the current `claimCallbackId`. Soyuz accepts it as trusted host evidence only because the Worker credential is held by the execution host and withheld from the coding container; a free-form event, an uploaded file alone, or `validationPassed: true` does not authorize publication.
