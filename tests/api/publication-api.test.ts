@@ -561,6 +561,39 @@ beforeEach(clearDatabase);
     expect(publisher.calls).toHaveLength(1);
   });
 
+  it.each(["KIRISAME_CALLER_ID", "KIRISAME_API_KEY"] as const)(
+    "does not send RPC calls when %s is missing and retries after it is configured",
+    async (credential) => {
+      const r2 = memoryArtifactBucket();
+      const { bindings } = testEnv({ artifacts: r2.bucket });
+      const workerId = `missing-${credential.toLowerCase()}-host`;
+      const claimCallbackId = crypto.randomUUID();
+      const data = await registerPublicationInputs(bindings, {
+        workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000107",
+      });
+      await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
+      bindings[credential] = undefined;
+      const publisher = new MockPublisherEntrypoint(["success"]);
+
+      await reconcilePublications(bindings, new Date(), publisher);
+      let publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+        .bind(data.runId).first<PublicationRow>();
+      expect(publication).toMatchObject({
+        state: "retryable_failure", last_error_code: "GITHUB_UNAVAILABLE", attempt_count: 1,
+      });
+      expect(publisher.calls).toHaveLength(0);
+
+      if (credential === "KIRISAME_CALLER_ID") bindings.KIRISAME_CALLER_ID = "soyuz";
+      else bindings.KIRISAME_API_KEY = KIRISAME_API_TEST_KEY;
+      await reconcilePublications(bindings, new Date(Date.parse(publication!.next_attempt_at!) + 1), publisher);
+
+      publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+        .bind(data.runId).first<PublicationRow>();
+      expect(publication).toMatchObject({ state: "published", attempt_count: 2 });
+      expect(publisher.rpcCredentials).toEqual([{ callerId: "soyuz", apiKey: KIRISAME_API_TEST_KEY }]);
+    },
+  );
+
   it("[PUBLICATION-RETENTION-01] retains pinned manifest and ledger beyond run culling, then expires terminal data", async () => {
     const r2 = memoryArtifactBucket();
     const { bindings } = testEnv({ artifacts: r2.bucket });
