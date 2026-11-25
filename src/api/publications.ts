@@ -10,7 +10,6 @@ import { createUuidV7 } from "../publication/uuid-v7";
 import { isPublicationAllowed } from "../publication/policy";
 
 const MAX_MANIFEST_UPLOAD_BYTES = 9 * 1024 * 1024;
-const MANIFEST_RETENTION_DAYS = 30;
 const SENSITIVE_VALIDATION_EVIDENCE_LIMIT = 100;
 
 type WorkerAccess = { workerId: string; claimCallbackId: string; run: NonNullable<Awaited<ReturnType<typeof getRun>>> };
@@ -70,7 +69,8 @@ export async function handleClientPublicationStatus(
   const runId = segments[2]!;
   if (!isUuid(runId)) return errorResponse(requestId, 404, "RUN_NOT_FOUND", "Run was not found");
   try {
-    const publication = await env.DB.prepare("SELECT * FROM publications WHERE run_id = ?").bind(runId).first<PublicationRow>();
+    const publication = await env.DB.prepare("SELECT * FROM publications WHERE run_id = ? AND expires_at > ?")
+      .bind(runId, new Date().toISOString()).first<PublicationRow>();
     const run = await getRun(env.DB, runId);
     return successResponse(requestId, {
       publication: publication ? safePublicationProjection(publication) : null,
@@ -122,7 +122,7 @@ async function uploadManifest(
   const rawDigest = await digestHex(bytes);
   const objectKey = `publication-manifests/${access.run.id}/${artifactId}`;
   const now = new Date().toISOString();
-  const expiry = new Date(Date.now() + MANIFEST_RETENTION_DAYS * 24 * 60 * 60_000).toISOString();
+  const expiry = access.run.expires_at;
 
   try {
     const reservation = await reserveManifestUpload(env, access, artifactId, rawDigest, bytes.byteLength, objectKey, now, expiry, requestId);
@@ -203,10 +203,10 @@ async function reserveManifestUpload(
       artifact_id, run_id, content_digest, size_bytes, object_key, worker_id, claim_callback_id, state, created_at, expires_at
     )
     SELECT ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ? FROM runs
-    WHERE id = ? AND status = 'running' AND worker_id = ?
+      WHERE id = ? AND status = 'running' AND worker_id = ? AND expires_at > ?
       AND (SELECT event_id FROM run_events WHERE run_id = runs.id AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1) = ?
   `).bind(artifactId, access.run.id, rawDigest, size, objectKey, access.workerId, access.claimCallbackId, now, expiry,
-    access.run.id, access.workerId, access.claimCallbackId).run();
+    access.run.id, access.workerId, now, access.claimCallbackId).run();
   let existing = await readManifestArtifact(env, artifactId);
   if (existing && (existing.run_id !== access.run.id || existing.content_digest !== rawDigest)) {
     return { response: errorResponse(requestId, 409, "ARTIFACT_ID_CONFLICT", "A different publication manifest already uses this artifact ID.") };
@@ -354,7 +354,7 @@ async function persistPublicationIntent(
   if (!await matchesPublicationIntent(intent, data, stored.artifact)) {
     return errorResponse(requestId, 409, "PUBLICATION_INTENT_CONFLICT", "A different publication intent already exists for this run.");
   }
-  const created = Number(inserted.meta?.changes ?? 0) === 1;
+  const created = isNewPublicationIntent(inserted, intent, now);
   if (created) await insertPublicationRequestedEvent(env, access, intent, now);
   if (access.run.status === "completed") await reconcilePublicationEligibility(env, access.run.id);
   return successResponse(requestId, {
@@ -364,6 +364,14 @@ async function persistPublicationIntent(
     mode: intent.mode,
     artifactDigest: intent.artifact_digest,
   }, created ? 201 : 200);
+}
+
+function isNewPublicationIntent(
+  inserted: D1Result,
+  intent: PublicationIntentRow,
+  now: string,
+): boolean {
+  return Number(inserted.meta?.changes ?? 0) === 1 || intent.created_at === now;
 }
 
 function createPublicationRequest(
@@ -404,12 +412,12 @@ async function insertPublicationIntent(
       validation_event_id, state, created_at, updated_at
     )
     SELECT ?, ?, '1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'authorized', ?, ?
-    FROM runs WHERE id = ? AND status = 'running' AND worker_id = ?
+    FROM runs WHERE id = ? AND status = 'running' AND worker_id = ? AND expires_at > ?
       AND (SELECT event_id FROM run_events WHERE run_id = runs.id AND type = 'run.claimed' ORDER BY sequence DESC LIMIT 1) = ?
   `).bind(request.publicationId, access.run.id, fingerprint, data.artifactId, data.artifactDigest, stored.object_key,
     request.repository.owner, request.repository.name, data.mode, request.baseRef,
     request.baseSha, request.headRef, data.title ?? null, data.body ?? null, access.workerId,
-    access.claimCallbackId, validationEventId, now, now, access.run.id, access.workerId, access.claimCallbackId).run();
+    access.claimCallbackId, validationEventId, now, now, access.run.id, access.workerId, now, access.claimCallbackId).run();
 }
 
 async function matchesPublicationIntent(

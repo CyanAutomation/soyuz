@@ -4,15 +4,11 @@ import type { Env, PublicationRow } from "../support/api-test-helpers";
 const {
   runtimeEnv,
   handleRequest,
-  insertRun,
   getRun,
   RunTransitionError,
   transitionRun,
   reconcileAdmissions,
   reconcileStalledRuns,
-  purgeExpiredArtifacts,
-  purgeExpiredPublicationManifests,
-  purgeExpiredRunRequests,
   purgeOldRuns,
   canonicalJson,
   digestHex,
@@ -251,43 +247,77 @@ beforeEach(clearDatabase);
     expect(body.message).toContain("verify its required schema");
   });
 
-  it("[RETENTION-REQUEST-01] redacts old terminal request payloads while keeping run and idempotency history", async () => {
+  it("[RETENTION-REQUEST-01] does not redact a live request before its run retention deadline", async () => {
     const { bindings } = testEnv();
-    const old = await submit(bindings, { taskPrompt: "Private prompt older than the retention window" }, "00000000-0000-4000-8000-000000000091");
-    const recent = await submit(bindings, { taskPrompt: "Recent prompt remains available" }, "00000000-0000-4000-8000-000000000092");
-    const active = await submit(bindings, { taskPrompt: "Active prompt remains available" }, "00000000-0000-4000-8000-000000000093");
-    const oldRunId = old.body.data.id as string;
-    const recentRunId = recent.body.data.id as string;
-    const activeRunId = active.body.data.id as string;
-    await bindings.DB.batch([
-      bindings.DB.prepare("UPDATE runs SET status = 'completed', completed_at = '2025-10-17T00:00:00.000Z' WHERE id = ?").bind(oldRunId),
-      bindings.DB.prepare("UPDATE runs SET status = 'completed', completed_at = '2025-10-19T00:00:00.000Z' WHERE id = ?").bind(recentRunId),
-    ]);
+    const recent = await submit(bindings, { taskPrompt: "Prompt remains available through the bounded run lifetime" });
+    const runId = recent.body.data.id as string;
+    await purgeOldRuns(bindings, new Date(Date.now() + 89 * 24 * 60 * 60 * 1_000));
 
-    await purgeExpiredRunRequests(bindings, new Date("2026-10-18T00:00:00.000Z"));
+    const row = await bindings.DB.prepare("SELECT request_json, request_redacted_at FROM runs WHERE id = ?")
+      .bind(runId).first<{ request_json: string; request_redacted_at: string | null }>();
+    expect(JSON.parse(row!.request_json).taskPrompt).toBe("Prompt remains available through the bounded run lifetime");
+    expect(row!.request_redacted_at).toBeNull();
+  });
 
-    const oldRow = await bindings.DB.prepare("SELECT request_json, request_redacted_at, idempotency_key FROM runs WHERE id = ?")
-      .bind(oldRunId).first<{ request_json: string; request_redacted_at: string | null; idempotency_key: string | null }>();
-    const recentRow = await bindings.DB.prepare("SELECT request_json, request_redacted_at FROM runs WHERE id = ?")
-      .bind(recentRunId).first<{ request_json: string; request_redacted_at: string | null }>();
-    const activeRow = await bindings.DB.prepare("SELECT request_json, request_redacted_at FROM runs WHERE id = ?")
-      .bind(activeRunId).first<{ request_json: string; request_redacted_at: string | null }>();
+  it("[RETENTION-90D-01] deletes expired run history by its canonical creation deadline", async () => {
+    const { bindings } = testEnv();
+    const oldestId = "019b3000-0000-7000-8000-000000000001";
+    const createdAt = new Date(Date.now() - 89 * 24 * 60 * 60 * 1_000).toISOString();
+    const expiredRequest = { ...validRequest(), ref: "main", taskMode: "patch", publishMode: "none" };
+    await bindings.DB.prepare(`INSERT INTO runs (
+      id, contract_version, repo_url, git_ref, status, task_mode, publish_mode, request_json, request_hash,
+      created_at, updated_at, expires_at, correlation_id, request_id
+    ) VALUES (?, '1', ?, 'main', 'completed', 'patch', 'none', ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(oldestId, expiredRequest.repoUrl, JSON.stringify(expiredRequest), "a".repeat(64), createdAt, createdAt,
+        new Date(Date.parse(createdAt) + 90 * 24 * 60 * 60 * 1_000).toISOString(),
+        "019b3000-0000-7000-8000-000000000002", "019b3000-0000-7000-8000-000000000003").run();
+    const deadline = new Date(Date.parse(createdAt) + 90 * 24 * 60 * 60 * 1_000);
 
-    expect(JSON.parse(oldRow!.request_json)).toMatchObject({ repoUrl: "https://github.com/example/project", taskPrompt: "[redacted after 365 days]" });
-    expect(oldRow!.request_redacted_at).toBe("2026-10-18T00:00:00.000Z");
-    expect(oldRow!.idempotency_key).toBe("00000000-0000-4000-8000-000000000091");
-    expect(JSON.parse(recentRow!.request_json).taskPrompt).toBe("Recent prompt remains available");
-    expect(recentRow!.request_redacted_at).toBeNull();
-    expect(JSON.parse(activeRow!.request_json).taskPrompt).toBe("Active prompt remains available");
-    expect(activeRow!.request_redacted_at).toBeNull();
+    await purgeOldRuns(bindings, deadline);
 
-    const retry = await call(bindings, `/v1/runs/${oldRunId}/retry`, {
-      method: "POST",
-      token: CLIENT_TOKEN,
-      body: { idempotencyKey: "00000000-0000-4000-8000-000000000094" },
+    const expired = await bindings.DB.prepare("SELECT id FROM runs WHERE id = ?").bind(oldestId).first();
+    expect(expired).toBeNull();
+  });
+
+  it("[RETENTION-90D-02] permits bounded pagination beyond the default 30-run page", async () => {
+    const { bindings } = testEnv();
+    for (let index = 0; index < 31; index += 1) {
+      const key = `00000000-0000-4000-8000-${String(index + 2000).padStart(12, "0")}`;
+      await submit(bindings, {}, key);
+    }
+
+    const page = await call(bindings, "/v1/runs?limit=100", { token: CLIENT_TOKEN });
+    expect(page.response.status).toBe(200);
+    expect(page.body.data.runs).toHaveLength(31);
+    expect(page.body.data.nextCursor).toBeNull();
+  });
+
+  it("[RUN-OUTCOMES-ALL-RETAINED-01] aggregates outcomes across every unexpired run beyond the newest 30", async () => {
+    const { bindings } = testEnv();
+    const runIds: string[] = [];
+    for (let index = 0; index < 31; index += 1) {
+      const key = `00000000-0000-4000-8000-${String(index + 3000).padStart(12, "0")}`;
+      const created = await submit(bindings, {}, key);
+      runIds.push(created.body.data.id as string);
+    }
+    await bindings.DB.prepare("UPDATE runs SET result_json = ? WHERE id = ?").bind(JSON.stringify({
+      outcomeSummary: {
+        schemaVersion: 1,
+        evaluation: { assessment: "good", reviewerConfidence: "high", improvementCategories: [] },
+      },
+    }), runIds[30]).run();
+
+    const outcomes = await call(bindings, "/v1/run-outcomes", { token: CLIENT_TOKEN });
+
+    expect(outcomes.response.status).toBe(200);
+    expect(outcomes.body.data.scope).toMatchObject({
+      retainedRuns: 31,
+      includedRuns: 31,
+      runsWithOutcomeSummary: 1,
+      returnedRuns: 31,
+      runsTruncated: false,
     });
-    expect(retry.response.status).toBe(409);
-    expect(retry.body.error.code).toBe("RUN_REQUEST_REDACTED");
+    expect(outcomes.body.data.byAssessment).toEqual({ good: 1 });
   });
 
   it("[RUN-ADMISSION-01/QUEUE-MESSAGE-01/CONTRACT-VERSION-01/WORKER-READ-01] persists accepted runs and publishes a versioned Queue message", async () => {

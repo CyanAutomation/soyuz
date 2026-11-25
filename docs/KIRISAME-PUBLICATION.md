@@ -66,11 +66,11 @@ The RPC may time out after GitHub accepted a branch or PR write. Soyuz records t
 
 ## Artifact retention and run culling
 
-Publication manifests use `publication-manifests/{runId}/{artifactId}`, separate from generic `runs/{runId}/{artifactId}` artifacts. The registry, intent, publication row, and event history have no foreign key to `runs`; the normal newest-30 culler continues deleting old run rows and their generic event/artifact indexes.
+Publication manifests use `publication-manifests/{runId}/{artifactId}`, separate from generic `runs/{runId}/{artifactId}` artifacts. The registry, intent, publication row, and event history carry an explicit expiry equal to the owning run's canonical creation time plus 90 days. They do not depend on run-table cascading for expiry.
 
-An authorized intent, pending publication, active attempt, retryable failure, or blocked record pins the manifest. The regular 30-day generic expiry job and the existing deletion outbox both recheck publication pins. Missing/inaccessible R2 bytes never count as success. Manifest bytes are not listed or downloaded from the public run artifact API; only the internal dispatcher reads them.
+An intent or publication state can never extend the absolute run deadline. Pending, retryable, blocked, and uncertain operations may retry only before expiry; after expiry dispatch and status access stop. Missing/inaccessible R2 bytes never count as success. Manifest bytes are not listed or downloaded from the public run artifact API; only the internal dispatcher reads them.
 
-After `published`, the publication and manifest remain pinned for at least 30 days from confirmation. Blocked publications remain pinned for operator review. To explicitly abandon a blocked publication for retention, an operator must set `retained_until` on both its `publications` and `publication_intents` rows to at least 30 days in the future, through the approved D1 operations procedure. At expiry, cleanup queues the R2 key, removes expired publication/event/intent metadata, and retries a failed object deletion through the durable outbox. It does not disable run culling or retain every run.
+Published, blocked, and unknown-outcome records remain available only until the run's expiry. `retained_until` is clamped to that deadline and cannot create a retention exception. At expiry, the minutely cleanup queues the R2 key, removes expired publication/event/intent metadata, and retries failed object deletion through the durable outbox. A publication with an unresolved GitHub result is not retried or republished after the deadline; any external reconciliation must not recreate expired Soyuz records or resend the manifest.
 
 ## Status projection
 

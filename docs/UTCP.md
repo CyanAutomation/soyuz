@@ -57,7 +57,7 @@ Supply a UUID `idempotencyKey` for each intended create and reuse it with an equ
 
 Agent reads reuse the shared application functions but use narrow projections instead of the broader REST responses. Repository URLs have credentials, query strings, and fragments removed. Run responses omit raw request data, worker IDs, claim/lease fields, internal database fields, and arbitrary error objects. Event responses contain only bounded operational metadata and allowlisted scalar payload keys; worker identity and unrestricted event payloads are removed.
 
-Soyuz retains only the newest 30 runs across statuses. Once a run is culled, its details, events, and artifacts are unavailable. Event pages are bounded and sequence-paginated. UTCP does not provide tools for stdout, stderr, Pi transcripts, repository contents, or artifacts. Existing authenticated REST and dashboard artifact routes are unchanged.
+Run listing defaults to the newest 30 rows, with bounded cursor pagination across the unexpired history. Display limits are independent from retention: run-associated records expire 90 days after canonical run creation. Expired runs, events, and artifacts are unavailable. Event pages are bounded and sequence-paginated. UTCP does not provide tools for stdout, stderr, Pi transcripts, repository contents, or artifacts. Existing authenticated REST and dashboard artifact routes are unchanged.
 
 ## Tested TypeScript client example
 

@@ -16,7 +16,7 @@ Requirement IDs: `RUN-VALIDATE-01`, `RUN-IDEMPOTENCY-01`, `RUN-ADMISSION-01`, `Q
 
 V1 rejects `webhookConfig`. Kaseki's current webhook option can carry a signing secret. Passing it through both the D1 request record and Queue needs a defined secret-storage and webhook-delivery owner first. Direct Kaseki API callers can continue using that option until a separately versioned migration is designed.
 
-Clients may send an RFC UUID in the request's `idempotencyKey`, the `Idempotency-Key` header, or both (if both are sent they must match). For the same key and equivalent normalized execution request, Soyuz returns the existing run with HTTP 200 while that run remains in the newest-30 history window. Reusing a key for different execution input returns 409 `IDEMPOTENCY_KEY_REUSED`. After a run leaves that window, Soyuz keeps only its origin-scoped key, request fingerprint, and run ID in a deduplication ledger; matching reuse returns 410 `IDEMPOTENCY_KEY_EXPIRED` and does not create duplicate work. After migration `0004_run_origin_retry.sql`, keys are scoped by the authenticated origin. The Kaseki host must persist and reuse its key after an uncertain response.
+Clients may send an RFC UUID in the request's `idempotencyKey`, the `Idempotency-Key` header, or both (if both are sent they must match). For the same key and equivalent normalized execution request, Soyuz returns the existing run with HTTP 200 while that run is within its 90-day retention window. Reusing a key for different execution input returns 409 `IDEMPOTENCY_KEY_REUSED`. The idempotency ledger expires with the run at its canonical creation deadline; a matching key after that deadline is no longer a duplicate-work guarantee. After migration `0004_run_origin_retry.sql`, keys are scoped by the authenticated origin. The Kaseki host must persist and reuse its key after an uncertain response.
 
 `POST /v1/runs/:id/retry` accepts `{ "idempotencyKey": "<UUID>" }`. It creates one new run only when the source is terminal (`completed`, `failed`, `cancelled`, or `admission_failed`); the new run includes `retryOf` with the source UUID. Reusing that retry key replays the same new run. Retry and cancellation require the caller's origin to match the source run's origin. The scoped Kaseki credential is restricted to create/retry/cancel and must be distinct from `CLIENT_API_TOKEN`.
 
@@ -115,8 +115,8 @@ Requirement IDs: `HEALTH-DB-01`, `RUN-READ-REST-01`, `CANCEL-QUEUED-01`, `CANCEL
 | `GET /health` | None | Minimal Worker/D1 health |
 | `POST /v1/runs` | Client | Validate, persist, and enqueue |
 | `POST /v1/runs/:id/retry` | Client or scoped Kaseki | Retry a terminal run from the same origin with a new idempotency key |
-| `GET /v1/runs` | Client | Filtered, cursor-paginated history across the newest 30 runs; `limit` is 1–30 |
-| `GET /v1/run-outcomes` | Client | Sanitized aggregate outcomes and per-run projections for the newest 30 retained runs |
+| `GET /v1/runs` | Client | Filtered, cursor-paginated history; default limit 30, maximum limit 100 |
+| `GET /v1/run-outcomes` | Client | Sanitized outcomes across unexpired runs; returned per-run projections are capped at 100 |
 | `GET /v1/runs/:id` | Client | Canonical run and normalized request |
 | `GET /v1/runs/:id/events` | Client | Append-only event history |
 | `GET /v1/runs/:id/publication` | Client | Safe publication ledger projection, separate from execution state |
@@ -133,10 +133,10 @@ Requirement IDs: `HEALTH-DB-01`, `RUN-READ-REST-01`, `CANCEL-QUEUED-01`, `CANCEL
 | `POST /dashboard/api/analysis/decisions` | OAuth `soyuz:read` | Get validated JEV answers for a server-owned profile and retained run UUID |
 | `POST /dashboard/api/analysis/feedback` | OAuth `soyuz:read` | Record or update a user's helpful/not-helpful rating for a retained run assessment |
 | `GET /dashboard/api/me` | OAuth `soyuz:read` | Current allowlisted GitHub account login |
-| `GET /dashboard/api/outcomes` | OAuth `soyuz:read` | Sanitized aggregate outcome overview for the newest 30 retained runs |
+| `GET /dashboard/api/outcomes` | OAuth `soyuz:read` | Sanitized aggregate outcome overview across unexpired runs |
 | `GET /dashboard/api/**` | OAuth `soyuz:read` | Dashboard run/event/artifact reads |
 
-Run history is limited to the newest 30 runs across all statuses. Status filters and cursors apply within that window, and details, events, artifacts, and outcome projections for older runs are unavailable. Soyuz culls older run rows and their associated data during its minutely retention sweep. `GET /v1/run-outcomes` makes no claim about older Kaseki-local history.
+Run list display pagination defaults to 30 and can be raised to 100; it is independent of retention. Run-associated requests, events, artifacts, outcomes, idempotency keys, and publication records expire at the canonical run creation time plus 90 days. APIs stop serving records at that exact boundary; the scheduled cleanup runs every minute and retries R2 object deletion through the durable outbox. Idempotency protection lasts for the same 90-day window and is not indefinite. `GET /v1/run-outcomes` aggregates all unexpired run summaries while limiting returned per-run projections to 100 and identifying truncation in its scope metadata.
 
 `GET /v1/runs` summaries and the OAuth dashboard's run summaries include the stored `failureClass` and `failureMessage` when a run failed, so operators can triage from run history. Dashboard cards show at most 500 characters and the detail view shows at most 1,000; both render the message as text. The sanitized UTCP agent projections continue to omit `failureMessage`.
 

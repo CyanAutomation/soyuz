@@ -1,5 +1,7 @@
 # Unified Soyuz run control plan
 
+> Historical planning document. Its count-based and long-lived Kaseki-history assumptions are superseded by [Phase ABC persistence and retention](PHASE-ABC-PERSISTENCE-RETENTION.md), which sets the canonical 90-day maximum across factory-owned operational history.
+
 ## Outcome
 
 Soyuz is the canonical control plane and history for every accepted Kaseki execution, regardless of where the request originates. Kaseki remains the execution host: it owns readiness checks that require the host, Docker, repository access, agent execution, validation, and publication. Soyuz owns canonical run identity, admission, queueing, lifecycle state, cancellation intent, and the dashboard history.

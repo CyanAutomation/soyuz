@@ -14,6 +14,7 @@ const {
   purgeExpiredPublicationManifests,
   purgeExpiredRunRequests,
   purgeOldRuns,
+  reconcileArtifactStorage,
   canonicalJson,
   digestHex,
   dispatchPublication,
@@ -80,10 +81,16 @@ beforeEach(clearDatabase);
 
     expect(upload.response.status).toBe(201);
     expect((upload.body as any).data).toMatchObject({ id: artifactId, name: artifactName, kind: "report", size: 12 });
+    const persisted = await bindings.DB.prepare("SELECT artifact_type, artifact_schema_version, sha256, expires_at, producer_id FROM run_artifacts WHERE id = ?")
+      .bind(artifactId).first<{ artifact_type: string; artifact_schema_version: number; sha256: string; expires_at: string; producer_id: string }>();
+    const expectedDigest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("run summary\n"))),
+      (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const runExpiry = await bindings.DB.prepare("SELECT expires_at FROM runs WHERE id = ?").bind(runId).first<{ expires_at: string }>();
+    expect(persisted).toMatchObject({ artifact_type: "execution.report", artifact_schema_version: 1, sha256: expectedDigest, expires_at: runExpiry!.expires_at, producer_id: workerId });
     expect(r2.put).toHaveBeenCalledWith(
       `runs/${runId}/${artifactId}`,
-      expect.any(ReadableStream),
-      expect.objectContaining({ customMetadata: expect.objectContaining({ runId, artifactId }) }),
+      expect.any(Uint8Array),
+      expect.objectContaining({ sha256: expect.any(Uint8Array), customMetadata: expect.objectContaining({ runId, artifactId, sha256: expectedDigest }) }),
     );
 
     const unauthorized = await callBinary(bindings, `/v1/runs/${runId}/artifacts/${artifactId}`);
@@ -273,6 +280,7 @@ beforeEach(clearDatabase);
   it("[ARTIFACTS-07] rejects artifacts from another worker or stale claim", async () => {
     const r2 = memoryArtifactBucket();
     const { bindings } = testEnv({ artifacts: r2.bucket });
+    const diagnostic = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const created = await submit(bindings);
     const runId = created.body.data.id as string;
     const workerId = "docker-host-owned-artifacts";
@@ -307,6 +315,10 @@ beforeEach(clearDatabase);
     expect(staleClaim.response.status).toBe(409);
     expect((staleClaim.body as any).error.code).toBe("STALE_CLAIM");
     expect(r2.objects.size).toBe(0);
+    expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({
+      event: "soyuz.artifact.upload", outcome: "rejected", status: 409, code: "WORKER_MISMATCH",
+    }));
+    diagnostic.mockRestore();
   });
 
   it("[ARTIFACTS-08] keeps failed R2 cleanup indexed for the retention sweep", async () => {
@@ -345,7 +357,8 @@ beforeEach(clearDatabase);
     expect(pending?.state).toBe("pending");
     expect(r2.objects.has(objectKey)).toBe(true);
 
-    await purgeExpiredArtifacts(bindings, new Date(Date.now() + 31 * 24 * 60 * 60 * 1_000));
+    await purgeExpiredArtifacts(bindings, new Date(Date.now() + 91 * 24 * 60 * 60 * 1_000));
+    await purgeOldRuns(bindings, new Date(Date.now() + 91 * 24 * 60 * 60 * 1_000));
 
     expect(r2.objects.has(objectKey)).toBe(false);
     const removed = await bindings.DB.prepare("SELECT id FROM run_artifacts WHERE id = ?").bind(artifactId).first();
@@ -364,12 +377,13 @@ beforeEach(clearDatabase);
       body: { contractVersion: "1", callbackId: "00000000-0000-4000-8000-000000000054", workerId },
     });
     const now = new Date().toISOString();
+    const run = await bindings.DB.prepare("SELECT expires_at FROM runs WHERE id = ?").bind(runId).first<{ expires_at: string }>();
     const pendingRows = Array.from({ length: 100 }, (_, index) => {
       const artifactId = `00000000-0000-4000-8000-${String(index + 100).padStart(12, "0")}`;
       return bindings.DB.prepare(`
         INSERT INTO run_artifacts (id, run_id, kind, name, content_type, size_bytes, object_key, created_at, expires_at, state)
-        VALUES (?, ?, 'other', 'pending.txt', 'text/plain', 1, ?, ?, '2099-01-01T00:00:00.000Z', 'pending')
-      `).bind(artifactId, runId, `runs/${runId}/${artifactId}`, now);
+        VALUES (?, ?, 'other', 'pending.txt', 'text/plain', 1, ?, ?, ?, 'pending')
+      `).bind(artifactId, runId, `runs/${runId}/${artifactId}`, now, run!.expires_at);
     });
     await bindings.DB.batch(pendingRows);
 
@@ -403,6 +417,7 @@ beforeEach(clearDatabase);
     `).bind(artifactId, runId, objectKey).run();
 
     await purgeExpiredArtifacts(bindings, new Date("2026-01-03T00:00:00.000Z"));
+    await purgeOldRuns(bindings, new Date("2026-01-03T00:00:00.000Z"));
 
     expect(r2.objects.has(objectKey)).toBe(false);
     const row = await bindings.DB.prepare("SELECT id FROM run_artifacts WHERE id = ?").bind(artifactId).first();
@@ -423,7 +438,124 @@ beforeEach(clearDatabase);
     `).bind(artifactId, runId, objectKey).run();
 
     await expect(purgeExpiredArtifacts(bindings, new Date("2026-01-03T00:00:00.000Z"))).resolves.toBeUndefined();
+    await expect(purgeOldRuns(bindings, new Date("2026-01-03T00:00:00.000Z"))).resolves.toBe(0);
+    const pending = await bindings.DB.prepare("SELECT object_key FROM artifact_deletion_queue WHERE object_key = ?").bind(objectKey).first();
+    expect(pending).not.toBeNull();
+    await purgeOldRuns(bindings, new Date("2026-01-04T00:00:00.000Z"));
+    const row = await bindings.DB.prepare("SELECT object_key FROM artifact_deletion_queue WHERE object_key = ?").bind(objectKey).first();
+    expect(row).toBeNull();
+  });
 
-    const row = await bindings.DB.prepare("SELECT id FROM run_artifacts WHERE id = ?").bind(artifactId).first();
-    expect(row).not.toBeNull();
+  it("[ARTIFACTS-AGGREGATE-01] atomically rejects aggregate run storage above 100 MB", async () => {
+    const { bindings } = testEnv();
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const run = await bindings.DB.prepare("SELECT expires_at FROM runs WHERE id = ?").bind(runId).first<{ expires_at: string }>();
+    const now = new Date().toISOString();
+    const rows = Array.from({ length: 4 }, (_, index) => {
+      const artifactId = `00000000-0000-4000-8000-${String(index + 600).padStart(12, "0")}`;
+      return bindings.DB.prepare(`
+        INSERT INTO run_artifacts (id, run_id, kind, name, content_type, size_bytes, object_key, created_at, expires_at, state)
+        VALUES (?, ?, 'other', 'capacity.bin', 'application/octet-stream', 25000000, ?, ?, ?, 'pending')
+      `).bind(artifactId, runId, `runs/${runId}/${artifactId}`, now, run!.expires_at);
+    });
+    await bindings.DB.batch(rows);
+    const fifth = "00000000-0000-4000-8000-000000000699";
+    await expect(bindings.DB.prepare(`
+      INSERT INTO run_artifacts (id, run_id, kind, name, content_type, size_bytes, object_key, created_at, expires_at, state)
+      VALUES (?, ?, 'other', 'capacity.bin', 'application/octet-stream', 1, ?, ?, ?, 'pending')
+    `).bind(fifth, runId, `runs/${runId}/${fifth}`, now, run!.expires_at).run()).rejects.toThrow("ARTIFACT_AGGREGATE_LIMIT_REACHED");
+  });
+
+  it("[ARTIFACT-STORAGE-OBSERVABILITY-01] reports current usage and bounded upload rejections", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const run = await bindings.DB.prepare("SELECT expires_at FROM runs WHERE id = ?").bind(runId).first<{ expires_at: string }>();
+    const artifactId = "00000000-0000-4000-8000-000000000710";
+    await bindings.DB.prepare(`
+      INSERT INTO run_artifacts (id, run_id, kind, name, content_type, size_bytes, object_key, created_at, expires_at, state, artifact_type, engine_id)
+      VALUES (?, ?, 'report', 'summary.md', 'text/markdown', 7, ?, ?, ?, 'ready', 'execution.summary', 'kaseki-agent')
+    `).bind(artifactId, runId, `runs/${runId}/${artifactId}`, new Date().toISOString(), run!.expires_at).run();
+
+    const rejection = await callBinary(bindings, `/v1/worker/runs/${runId}/artifacts/00000000-0000-4000-8000-000000000711`, {
+      method: "PUT", token: WORKER_TOKEN,
+      headers: { "content-type": "text/plain", "content-length": "0" },
+      body: "",
+    });
+    expect(rejection.response.status).toBe(413);
+
+    const usage = await call(bindings, "/v1/storage-usage", { token: CLIENT_TOKEN });
+    expect(usage.response.status).toBe(200);
+    expect(usage.body.data).toMatchObject({
+      retentionPolicyVersion: 1,
+      maximumRetentionDays: 90,
+      usage: {
+        artifactCount: 1,
+        totalBytes: 7,
+        runCount: 1,
+        byCategory: [{ category: "execution.summary", artifactCount: 1, totalBytes: 7 }],
+        byExecutionEngine: [{ engineId: "kaseki-agent", artifactCount: 1, totalBytes: 7 }],
+        growth: { successfulUploadsLast7Days: 0, bytesUploadedLast7Days: 0 },
+        reconciliation: {},
+        uploadRejections: [expect.objectContaining({ code: "413:ARTIFACT_TOO_LARGE", count: 1 })],
+      },
+      dryRunRetentionImpact: {
+        expiredRuns: 0,
+        expiredEvents: 0,
+        expiredArtifacts: 0,
+        expiredPublicationManifests: 0,
+        expiredPublicationRecords: 0,
+        expiredObjectReferences: 0,
+        estimatedObjectBytes: 0,
+        queuedObjectDeletions: 0,
+        recordsWithInvalidExpiry: 0,
+        recordsRequiringManualReconciliation: 0,
+        recordsRequiringChecksumReconciliation: 1,
+      },
+    });
+  });
+
+  it("[ARTIFACT-RECON-01] queues old orphan R2 objects for the durable deletion worker", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const uploadedAt = new Date(Date.now() - 11 * 60 * 1_000).toISOString();
+    const objectKey = "runs/00000000-0000-4000-8000-000000000710/00000000-0000-4000-8000-000000000711";
+    await r2.put(objectKey, await new Blob(["orphan"]).arrayBuffer(), { customMetadata: { createdAt: uploadedAt } });
+
+    const result = await reconcileArtifactStorage(bindings);
+    expect(result.orphanObjectsQueued).toBe(1);
+    const queued = await bindings.DB.prepare("SELECT object_key FROM artifact_deletion_queue WHERE object_key = ?")
+      .bind(objectKey).first();
+    expect(queued).not.toBeNull();
+
+    await purgeOldRuns(bindings);
+    expect(r2.objects.has(objectKey)).toBe(false);
+  });
+
+  it("[ARTIFACT-RECON-02] marks missing R2 content and downgrades complete delivery", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const artifactId = "00000000-0000-4000-8000-000000000712";
+    const run = await bindings.DB.prepare("SELECT expires_at FROM runs WHERE id = ?").bind(runId).first<{ expires_at: string }>();
+    await bindings.DB.prepare("UPDATE runs SET artifact_delivery_status = 'complete' WHERE id = ?").bind(runId).run();
+    await bindings.DB.prepare(`INSERT INTO run_artifacts (
+      id, run_id, kind, name, content_type, size_bytes, object_key, created_at, expires_at, state,
+      artifact_type, sha256, engine_id
+    ) VALUES (?, ?, 'report', 'summary.md', 'text/markdown', 7, ?, ?, ?, 'ready', 'execution.summary', ?, 'kaseki-agent')`)
+      .bind(artifactId, runId, `runs/${runId}/${artifactId}`, new Date().toISOString(), run!.expires_at, "a".repeat(64)).run();
+
+    const result = await reconcileArtifactStorage(bindings);
+    expect(result.missingObjects).toBe(1);
+    const row = await bindings.DB.prepare("SELECT object_status FROM run_artifacts WHERE id = ?")
+      .bind(artifactId).first<{ object_status: string }>();
+    const persistedRun = await bindings.DB.prepare("SELECT artifact_delivery_status FROM runs WHERE id = ?")
+      .bind(runId).first<{ artifact_delivery_status: string }>();
+    expect(row?.object_status).toBe("missing");
+    expect(persistedRun?.artifact_delivery_status).toBe("partial");
+    const listed = await call(bindings, `/v1/runs/${runId}/artifacts`, { token: CLIENT_TOKEN });
+    expect(listed.body.data.artifacts[0]).toMatchObject({ id: artifactId, available: false });
   });

@@ -29,7 +29,7 @@ export function projectOutcomeOverview(overview: RunOutcomesOverview): OutcomeOv
   return {
     outcomes: {
       scopeSummary: `${count(overview.scope.runsWithOutcomeSummary)} of ${count(overview.scope.includedRuns)} runs with outcome data`,
-      retainedSummary: `Based on the newest ${count(overview.scope.retainedRuns)} retained runs; currently includes ${count(overview.scope.includedRuns)}.`,
+      retainedSummary: retainedRunSummary(count(overview.scope.includedRuns)),
       averageScore: overview.averageScore === null || !Number.isFinite(overview.averageScore)
         ? "Not reported"
         : `${overview.averageScore.toFixed(1)} / 100`,
@@ -98,7 +98,7 @@ export function createOutcomeOverviewCard(
 
   const windowNote = ownerDocument.createElement("p");
   windowNote.className = "meta outcome-overview__scope";
-  windowNote.textContent = `Based on the newest ${overview.scope.retainedRuns} retained runs; currently includes ${overview.scope.includedRuns}.`;
+  windowNote.textContent = retainedRunSummary(overview.scope.includedRuns);
   body.append(windowNote);
 
   const facts = createDefinitionList([
@@ -136,6 +136,11 @@ export function createOutcomeOverviewCard(
     ));
   }
   return element;
+}
+
+function retainedRunSummary(retainedRuns: number): string {
+  const noun = retainedRuns === 1 ? "run" : "runs";
+  return `Aggregates cover all ${retainedRuns} retained ${noun}.`;
 }
 
 function formatCounts(counts: Record<string, number>): string {

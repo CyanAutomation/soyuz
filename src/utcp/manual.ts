@@ -116,7 +116,7 @@ export function createUtcpManual(env: Pick<Env, "SOYUZ_PUBLIC_URL" | "SOYUZ_ENVI
       ),
       tool(
         "list_runs",
-        "List bounded, cursor-paginated summaries from Soyuz's newest 30 retained runs across all statuses. Older runs, their events, and artifacts are not available after retention culls them. Results include only control-plane summaries; they do not include worker lease data, requests, error objects, logs, repository contents, or artifacts. Requires the client bearer credential configured by the UTCP client as CLIENT_API_TOKEN.",
+        "List bounded, cursor-paginated summaries from the newest 30 runs by default. Display pagination is independent of the creation-anchored 90-day retention window. Results include only control-plane summaries; they do not include worker lease data, requests, error objects, logs, repository contents, or artifacts. Requires the client bearer credential configured by the UTCP client as CLIENT_API_TOKEN.",
         AgentListRunsInputSchema,
         AgentListRunsOutputSchema,
         "GET",
@@ -124,7 +124,7 @@ export function createUtcpManual(env: Pick<Env, "SOYUZ_PUBLIC_URL" | "SOYUZ_ENVI
       ),
       tool(
         "get_run",
-        "Read the sanitized control-plane status for one retained run. Use canonical UUID runId, not the human-facing displayId. Soyuz retains only the newest 30 runs; details for culled runs are unavailable. Repository URLs have credentials, query strings, and fragments removed. Internal worker and claim data, raw requests, error objects, logs, repository contents, and artifacts are not returned. Requires the client bearer credential configured by the UTCP client as CLIENT_API_TOKEN.",
+        "Read the sanitized control-plane status for one unexpired run. Use canonical UUID runId, not the human-facing displayId. Run history expires 90 days after canonical creation. Repository URLs have credentials, query strings, and fragments removed. Internal worker and claim data, raw requests, error objects, logs, repository contents, and artifacts are not returned. Requires the client bearer credential configured by the UTCP client as CLIENT_API_TOKEN.",
         AgentRunIdInputSchema,
         AgentGetRunOutputSchema,
         "GET",
@@ -132,7 +132,7 @@ export function createUtcpManual(env: Pick<Env, "SOYUZ_PUBLIC_URL" | "SOYUZ_ENVI
       ),
       tool(
         "get_run_events",
-        "Read a bounded, sequence-paginated page of allowlisted operational event metadata for one retained run. Soyuz retains events only while the run remains in its newest 30-run window. Event payloads are allowlisted and bounded; worker identity, unrestricted payloads, stdout, stderr, Pi transcripts, repository contents, and artifacts are intentionally unavailable. Requires the client bearer credential configured by the UTCP client as CLIENT_API_TOKEN.",
+        "Read a bounded, sequence-paginated page of allowlisted operational event metadata for one unexpired run. Soyuz retains events through the run's creation-anchored 90-day deadline. Event payloads are allowlisted and bounded; worker identity, unrestricted payloads, stdout, stderr, Pi transcripts, repository contents, and artifacts are intentionally unavailable. Requires the client bearer credential configured by the UTCP client as CLIENT_API_TOKEN.",
         AgentRunEventsInputSchema,
         AgentGetRunEventsOutputSchema,
         "GET",

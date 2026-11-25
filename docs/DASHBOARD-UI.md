@@ -66,10 +66,10 @@ it explains when no outcome summaries exist. A run card keeps its creation time
 visible while its technical identifiers and detailed timestamps remain inside
 a disclosure that starts collapsed.
 
-Soyuz retains at most 30 runs and the dashboard requests that full page on its
-initial load. Search therefore covers the retained history in normal use; the
-visible help text states this scope. Keep pagination support for smaller page
-sizes and future retention changes.
+The dashboard requests a 30-run page on initial load and can page through the
+unexpired history. This display limit is independent of the 90-day retention
+deadline. Search covers the rows currently loaded; the visible help text states
+the paging scope.
 
 These patterns establish consistency, but they do not certify accessibility.
 Review keyboard use, zoom and reflow, forced colours, reduced motion, and

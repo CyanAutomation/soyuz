@@ -2,8 +2,9 @@ import type { RunRequest } from "../contracts/run-request";
 import { CONTRACT_VERSION } from "../contracts/queue-message";
 import { canTransition, type RunStatus } from "../domain/run-state-machine";
 import { stableStringify } from "../lib/canonical-json";
+import { DEFAULT_RUN_PAGE_SIZE, RETENTION_POLICY_VERSION, retentionExpiry } from "../persistence/retention-policy";
 
-export const MAX_RETAINED_RUNS = 30;
+/** Default page size; display pagination is independent from storage retention. */
 
 export interface RunRow {
   id: string;
@@ -18,6 +19,10 @@ export interface RunRow {
   publish_mode: "auto" | "none" | "branch" | "pr";
   request_json: string;
   request_redacted_at?: string | null;
+  persistence_schema_version: number;
+  retention_policy_version: number;
+  expires_at: string;
+  artifact_delivery_status: "not_reported" | "complete" | "partial" | "failed";
   request_hash: string;
   result_json: string | null;
   created_at: string;
@@ -127,31 +132,26 @@ export async function getRun(db: D1Database, id: string): Promise<RunRow | null>
       (SELECT event_id FROM run_events
        WHERE run_id = runs.id AND type = 'run.claimed'
        ORDER BY sequence DESC LIMIT 1) AS claim_callback_id
-    FROM runs WHERE id = ?
-  `).bind(id).first<RunRow>();
+    FROM runs WHERE id = ? AND expires_at > ?
+  `).bind(id, new Date().toISOString()).first<RunRow>();
 }
 
-/** Read a run only while it is among the newest retained history entries. */
+/** Read a run only while its canonical creation-anchored retention window is open. */
 export async function getRetainedRun(db: D1Database, id: string): Promise<RunRow | null> {
   return db.prepare(`
     SELECT runs.*,
       (SELECT event_id FROM run_events
        WHERE run_id = runs.id AND type = 'run.claimed'
        ORDER BY sequence DESC LIMIT 1) AS claim_callback_id
-    FROM runs
-    WHERE id = ? AND id IN (
-      SELECT id FROM runs ORDER BY created_at DESC, id DESC LIMIT ?
-    )
-  `).bind(id, MAX_RETAINED_RUNS).first<RunRow>();
+    FROM runs WHERE id = ? AND expires_at > ?
+  `).bind(id, new Date().toISOString()).first<RunRow>();
 }
 
 export async function isRunRetained(db: D1Database, id: string): Promise<boolean> {
   const row = await db.prepare(`
     SELECT 1 AS retained FROM runs
-    WHERE id = ? AND id IN (
-      SELECT id FROM runs ORDER BY created_at DESC, id DESC LIMIT ?
-    )
-  `).bind(id, MAX_RETAINED_RUNS).first<{ retained: number }>();
+    WHERE id = ? AND expires_at > ?
+  `).bind(id, new Date().toISOString()).first<{ retained: number }>();
   return row !== null;
 }
 
@@ -168,8 +168,8 @@ export async function getRunIdempotencyRecord(
 ): Promise<RunIdempotencyRecord | null> {
   return db.prepare(`
     SELECT run_id, request_hash FROM run_idempotency_keys
-    WHERE origin_type = ? AND origin_id = ? AND idempotency_key = ?
-  `).bind(originType, originId, key).first<RunIdempotencyRecord>();
+    WHERE origin_type = ? AND origin_id = ? AND idempotency_key = ? AND expires_at > ?
+  `).bind(originType, originId, key, new Date().toISOString()).first<RunIdempotencyRecord>();
 }
 
 export async function insertRun(
@@ -204,10 +204,11 @@ export async function insertRun(
     db.prepare(`
       INSERT INTO runs (
         id, contract_version, repo_url, git_ref, project_name, status, task_mode,
-        publish_mode, request_json, request_hash, created_at, updated_at,
+        publish_mode, request_json, request_hash, created_at, updated_at, expires_at,
+        persistence_schema_version, retention_policy_version,
         idempotency_key, origin_type, origin_id, retry_of, correlation_id, request_id, admission_attempts,
         admission_last_attempt_at
-      ) VALUES (?, ?, ?, ?, ?, 'admitting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+      ) VALUES (?, ?, ?, ?, ?, 'admitting', ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, 1, ?)
     `).bind(
       id,
       CONTRACT_VERSION,
@@ -220,6 +221,7 @@ export async function insertRun(
       requestHash,
       createdAt,
       createdAt,
+      retentionExpiry(createdAt),
       idempotencyKey,
       originType,
       originId,
@@ -663,14 +665,14 @@ export async function listRuns(
     filters.push("(created_at, id) < (?, ?)");
     values.push(cursor.createdAt, cursor.id);
   }
+  filters.unshift("expires_at > ?");
+  values.unshift(new Date().toISOString());
   const rows = await db.prepare(`
     SELECT * FROM runs
-    WHERE id IN (
-      SELECT id FROM runs ORDER BY created_at DESC, id DESC LIMIT ?
-    )${filters.length ? ` AND ${filters.join(" AND ")}` : ""}
+    WHERE ${filters.join(" AND ")}
     ORDER BY created_at DESC, id DESC
     LIMIT ?
-  `).bind(MAX_RETAINED_RUNS, ...values, limit).all<RunRow>();
+  `).bind(...values, limit).all<RunRow>();
   return rows.results;
 }
 

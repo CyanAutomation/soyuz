@@ -1,0 +1,1 @@
+{"schemaVersion":1,"runId":"019b3000-0000-7000-8000-000000000001","engine":{"id":"kaseki-agent","version":"1.0"},"createdAt":"2026-11-25T10:10:00.000Z","expiresAt":"2027-05-25T10:00:00.000Z","retentionPolicyVersion":1,"requiredArtifacts":["execution.summary"],"persistedArtifacts":[],"missingArtifacts":[],"deliveryStatus":"complete"}

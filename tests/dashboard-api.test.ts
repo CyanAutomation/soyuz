@@ -326,7 +326,7 @@ describe("dashboard application flows", () => {
 
     expect(overview.hidden).toBe(false);
     expect(flattenText(overview)).toContain("1 of 1 runs with outcome data");
-    expect(flattenText(overview)).toContain("Based on the newest 30 retained runs");
+    expect(flattenText(overview)).toContain("Aggregates cover all 1 retained run.");
     expect(flattenText(overview)).toContain("Good · 1");
     expect(flattenText(nodeAt(nodes, "#jev-feedback-overview"))).toContain("No JEV ratings have been recorded");
   });
@@ -529,7 +529,7 @@ async function mountDashboard(
     }
     if (path === "/dashboard/api/me") return jsonResponse({ githubLogin: "current-user" });
     if (path === "/dashboard/api/outcomes") return jsonResponse({
-      scope: { retainedRuns: 30, includedRuns: 1, runsWithOutcomeSummary: 1 },
+      scope: { retainedRuns: 1, includedRuns: 1, runsWithOutcomeSummary: 1 },
       byAssessment: { good: 1 }, byReviewerConfidence: { high: 1 }, byGrade: { B: 1 }, averageScore: 87,
       improvementCategories: [], phaseDurations: [],
     });

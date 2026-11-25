@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.cyanautomation.dev/soyuz/persistence/v1/run-record.schema.json",
+  "title": "Soyuz run persistence record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "displayId", "apiContractVersion", "persistenceSchemaVersion", "retentionPolicyVersion", "repository", "engine", "status", "artifactDeliveryStatus", "createdAt", "expiresAt", "correlationId"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "displayId": { "type": "string", "pattern": "^soyuz-[0-9]+$" },
+    "apiContractVersion": { "const": "1" },
+    "persistenceSchemaVersion": { "const": 1 },
+    "retentionPolicyVersion": { "const": 1 },
+    "repository": {
+      "type": "object", "additionalProperties": false, "required": ["url", "requestedRef"],
+      "properties": { "url": { "type": "string", "format": "uri" }, "requestedRef": { "type": "string", "maxLength": 255 }, "resolvedBaseCommit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" } }
+    },
+    "engine": { "type": "object", "additionalProperties": false, "required": ["id", "version"], "properties": { "id": { "type": "string", "minLength": 1, "maxLength": 80 }, "version": { "type": "string", "maxLength": 120 } } },
+    "workerId": { "type": ["string", "null"], "maxLength": 200 },
+    "status": { "enum": ["admitting", "queued", "claimed", "running", "cancel_requested", "completed", "failed", "cancelled", "admission_failed"] },
+    "artifactDeliveryStatus": { "enum": ["not_reported", "complete", "partial", "failed"] },
+    "publicationStatus": { "enum": ["not_requested", "authorized", "pending", "publishing", "retryable_failure", "published", "blocked", "expired"] },
+    "publicationId": { "type": ["string", "null"], "format": "uuid" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "startedAt": { "type": ["string", "null"], "format": "date-time" },
+    "completedAt": { "type": ["string", "null"], "format": "date-time" },
+    "outcome": { "type": ["object", "null"] },
+    "correlationId": { "type": "string", "maxLength": 200 }
+  }
+}

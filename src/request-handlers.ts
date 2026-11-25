@@ -3,6 +3,7 @@ import { getSoyuzOAuthProvider } from "./auth/oauth";
 import { handleAgentRuns } from "./api/agent-runs";
 import { handleClientRuns } from "./api/runs";
 import { handleRunOutcomes } from "./api/run-outcomes";
+import { handleStorageUsage } from "./api/storage-usage";
 import { handleClientArtifacts } from "./api/artifacts";
 import { handleWorkerArtifacts } from "./api/worker-artifacts";
 import { handleWorkerPublication, handleClientPublicationStatus } from "./api/publications";
@@ -170,6 +171,8 @@ async function dispatchClientRequest(
   if (publicationResponse) return publicationResponse;
   const outcomeResponse = await handleRunOutcomes(request, env, requestId);
   if (outcomeResponse) return outcomeResponse;
+  const storageResponse = await handleStorageUsage(request, env, requestId);
+  if (storageResponse) return storageResponse;
   return await handleClientRuns(request, env, url, requestId, origin)
     ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
 }

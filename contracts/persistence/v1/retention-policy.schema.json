@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.cyanautomation.dev/soyuz/persistence/v1/retention-policy.schema.json",
+  "title": "Software factory retention policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["policyVersion", "maximumRetentionDays", "retentionAnchor", "allowIndefiniteRetention", "allowRetentionExtension"],
+  "properties": {
+    "policyVersion": { "const": 1 },
+    "maximumRetentionDays": { "const": 90 },
+    "retentionAnchor": { "const": "canonicalRunCreatedAt" },
+    "allowIndefiniteRetention": { "const": false },
+    "allowRetentionExtension": { "const": false }
+  }
+}
