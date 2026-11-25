@@ -362,5 +362,5 @@ BEGIN
     WHEN 'partial' THEN 'partial'
     WHEN 'failed' THEN 'failed'
     ELSE artifact_delivery_status END
-  WHERE id = NEW.run_id;
+  WHERE id = NEW.run_id AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now');
 END;

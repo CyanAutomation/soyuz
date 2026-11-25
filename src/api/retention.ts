@@ -58,7 +58,7 @@ export async function purgeExpiredRunRequests(_env: Env, _at = new Date()): Prom
   return 0;
 }
 
-async function purgeQueuedArtifactObjects(env: Env, sweepAt: string): Promise<{ deleted: number; failedBatches: number }> {
+export async function purgeQueuedArtifactObjects(env: Env, sweepAt: string): Promise<{ deleted: number; failedBatches: number }> {
   if (!env.ARTIFACTS) return { deleted: 0, failedBatches: 0 };
   let deleted = 0;
   let failedBatches = 0;

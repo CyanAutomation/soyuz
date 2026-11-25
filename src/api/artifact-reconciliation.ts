@@ -80,7 +80,8 @@ async function checkReferenceObject(
       WHERE id = ? AND object_key = ? AND state = 'ready' AND object_status = 'present' AND expires_at > ?`)
       .bind(row.id, row.object_key, cutoff),
     env.DB.prepare(`UPDATE runs SET artifact_delivery_status = 'partial'
-      WHERE id = ? AND expires_at > ? AND artifact_delivery_status IN ('not_reported', 'complete')`)
+      WHERE id = ? AND expires_at > ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        AND artifact_delivery_status IN ('not_reported', 'complete')`)
       .bind(row.run_id, cutoff),
   ]);
   return Number(updates[0]?.meta?.changes ?? 0) > 0;

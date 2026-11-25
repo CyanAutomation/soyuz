@@ -437,6 +437,23 @@ beforeEach(clearDatabase);
     expect(recovered?.last_heartbeat_at).toBeTruthy();
   });
 
+  it("skips housekeeping updates for runs whose retention deadline has passed", async () => {
+    const { bindings } = testEnv();
+    const runId = await startRunningRun(
+      bindings,
+      "docker-host-retention-boundary",
+      "00000000-0000-4000-8000-000000000071",
+      "00000000-0000-4000-8000-000000000072",
+    );
+    const run = await bindings.DB.prepare("SELECT expires_at FROM runs WHERE id = ?")
+      .bind(runId).first<{ expires_at: string }>();
+
+    await reconcileStalledRuns(bindings, new Date(Date.parse(run!.expires_at) + 1));
+
+    expect((await getRun(bindings.DB, runId))?.operational_health).toBe("healthy");
+    expect(await countRunEvents(bindings, runId, "run.suspected_stalled")).toBe(0);
+  });
+
   it("[RUN-LIVENESS-02] keeps a run suspect when its worker reports no active execution", async () => {
     const { bindings } = testEnv();
     const submitted = await submit(bindings, {}, "00000000-0000-4000-8000-000000000065");

@@ -126,6 +126,26 @@ beforeEach(clearDatabase);
     expect(expired.response.status).toBe(410);
   });
 
+  it("rejects a checksummed artifact when R2 does not return its checksum", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const workerId = "docker-host-missing-r2-checksum";
+    const claimCallbackId = "00000000-0000-4000-8000-000000000041";
+    const runId = await startRunningRun(bindings, workerId, claimCallbackId, "00000000-0000-4000-8000-000000000042");
+    const artifactId = "00000000-0000-4000-8000-000000000043";
+    const objectKey = `runs/${runId}/${artifactId}`;
+    expect((await uploadArtifact(bindings, runId, {
+      artifactId, artifactName: "summary.txt", body: "run summary\n", workerId, claimCallbackId,
+    })).response.status).toBe(201);
+    const storedObject = await r2.get(objectKey);
+    r2.get.mockResolvedValueOnce({ ...storedObject!, checksums: undefined } as never);
+
+    const download = await callBinary(bindings, `/v1/runs/${runId}/artifacts/${artifactId}`, { token: CLIENT_TOKEN });
+
+    expect(download.response.status).toBe(502);
+    expect((download.body as any).error.code).toBe("ARTIFACT_INTEGRITY_MISMATCH");
+  });
+
   it("[ARTIFACTS-IDEMPOTENCY-01] accepts an exact artifact retry and rejects different bytes under the same ID", async () => {
     const r2 = memoryArtifactBucket();
     const { bindings } = testEnv({ artifacts: r2.bucket });
@@ -417,7 +437,6 @@ beforeEach(clearDatabase);
     `).bind(artifactId, runId, objectKey).run();
 
     await purgeExpiredArtifacts(bindings, new Date("2026-01-03T00:00:00.000Z"));
-    await purgeOldRuns(bindings, new Date("2026-01-03T00:00:00.000Z"));
 
     expect(r2.objects.has(objectKey)).toBe(false);
     const row = await bindings.DB.prepare("SELECT id FROM run_artifacts WHERE id = ?").bind(artifactId).first();

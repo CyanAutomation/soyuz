@@ -57,6 +57,44 @@ const {
 } = support;
 
 beforeEach(clearDatabase);
+it("returns a retention response instead of a database error for a late worker callback", async () => {
+  const { bindings } = testEnv();
+  const id = "019b3000-0000-7000-8000-000000000091";
+  const createdAt = new Date().toISOString();
+  const expiresAt = new Date(Date.parse(createdAt) + 90 * 24 * 60 * 60 * 1_000).toISOString();
+  const request = validRequest();
+  await bindings.DB.prepare(`INSERT INTO runs (
+    id, contract_version, repo_url, git_ref, status, task_mode, publish_mode,
+    request_json, request_hash, created_at, updated_at, expires_at,
+    correlation_id, request_id, worker_id, started_at
+  ) VALUES (?, '1', ?, 'main', 'running', 'patch', 'none', ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(id, request.repoUrl, JSON.stringify(request), "a".repeat(64), createdAt, createdAt, expiresAt,
+      "019b3000-0000-7000-8000-000000000092", "019b3000-0000-7000-8000-000000000093", "docker-host-expired", createdAt).run();
+
+  vi.useFakeTimers();
+  vi.setSystemTime(Date.parse(expiresAt) + 1);
+  let response;
+  try {
+    response = await call(bindings, `/v1/worker/runs/${id}/failed`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: {
+        contractVersion: "1",
+        callbackId: "019b3000-0000-7000-8000-000000000094",
+        workerId: "docker-host-expired",
+        failureClass: "validation_failed",
+        failureMessage: "A late callback must be rejected cleanly.",
+      },
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+
+  expect(response.response.status).toBe(410);
+  expect(response.body.error.code).toBe("RUN_RETENTION_EXPIRED");
+  expect((await getRun(bindings.DB, id))?.status).toBe("running");
+});
+
   it("[WORKER-CLAIM-01] grants an idempotent claim to one worker", async () => {
     const { bindings } = testEnv();
     const created = await submit(bindings);

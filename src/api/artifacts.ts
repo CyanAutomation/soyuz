@@ -4,6 +4,7 @@ import { isRunRetained } from "../db/runs";
 import { isUuid } from "../lib/uuid";
 import { errorResponse, successResponse } from "./http";
 import { MAX_ARTIFACTS_PER_RUN, publicArtifact, type ArtifactRow } from "./artifact-model";
+import { purgeQueuedArtifactObjects } from "./retention";
 
 const MAX_CACHED_ARTIFACT_BYTES = 1_000_000;
 const MAX_ARTIFACT_CACHE_TTL_SECONDS = 60 * 60;
@@ -160,7 +161,8 @@ function matchesSha256(checksum: ArrayBuffer, expectedHex: string): boolean {
 }
 
 function artifactChecksumMatches(row: ArtifactRow, object: R2ObjectBody): boolean {
-  return !row.sha256 || !object.checksums?.sha256 || matchesSha256(object.checksums.sha256, row.sha256);
+  if (!row.sha256) return true;
+  return Boolean(object.checksums?.sha256 && matchesSha256(object.checksums.sha256, row.sha256));
 }
 
 function validateArtifactObject(
@@ -204,7 +206,8 @@ export async function purgeExpiredArtifacts(env: Env, at = new Date()): Promise<
     const results = await env.DB.batch(statements);
     removed += results.reduce((count, result, index) => count + (index % 2 === 1 ? Number(result.meta?.changes ?? 0) : 0), 0);
   }
-  console.info({ event: "soyuz.artifact.expiry", removedMetadata: removed, at: cutoff });
+  const deletion = await purgeQueuedArtifactObjects(env, cutoff);
+  console.info({ event: "soyuz.artifact.expiry", removedMetadata: removed, deletedObjects: deletion.deleted, failedBatches: deletion.failedBatches, at: cutoff });
 }
 
 async function expireArtifact(env: Env, row: ArtifactRow): Promise<void> {

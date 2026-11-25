@@ -313,6 +313,7 @@ export function memoryArtifactBucket() {
     return {
       key,
       size: stored.body.byteLength,
+      checksums: stored.options.sha256 ? { sha256: stored.options.sha256 } : undefined,
       customMetadata: stored.options.customMetadata,
       httpMetadata: stored.options.httpMetadata,
       body: new Response(stored.body.buffer as ArrayBuffer).body,
