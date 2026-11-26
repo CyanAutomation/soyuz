@@ -5,7 +5,7 @@ export const OPENROUTER_TEST_FAILURE_MARKER = "OPENROUTER_FAILURE_BODY_MUST_NOT_
 export function createOpenRouterFaultResponse(
   request: Request,
   scenario: OpenRouterFaultScenario,
-  successResponse: () => Response,
+  // This guard runs after the provider deadline and rejects if the abort was not forwarded.
   timeoutFallbackMs = 2_000,
 ): Response | Promise<Response> {
   if (scenario === "http_503") return new Response(OPENROUTER_TEST_FAILURE_MARKER, { status: 503 });
@@ -14,11 +14,11 @@ export function createOpenRouterFaultResponse(
       headers: { "content-type": "application/json" },
     });
   }
-  return waitForAbort(request, successResponse, timeoutFallbackMs);
+  return waitForAbort(request, timeoutFallbackMs);
 }
 
-function waitForAbort(request: Request, fallback: () => Response, fallbackMs: number): Promise<Response> {
-  return new Promise((resolve, reject) => {
+function waitForAbort(request: Request, fallbackMs: number): Promise<Response> {
+  return new Promise((_resolve, reject) => {
     const onAbort = () => {
       clearTimeout(timer);
       request.signal.removeEventListener("abort", onAbort);
@@ -26,7 +26,7 @@ function waitForAbort(request: Request, fallback: () => Response, fallbackMs: nu
     };
     const timer = setTimeout(() => {
       request.signal.removeEventListener("abort", onAbort);
-      resolve(fallback());
+      reject(new Error("Synthetic provider timeout guard expired without an abort."));
     }, fallbackMs);
 
     if (request.signal.aborted) onAbort();

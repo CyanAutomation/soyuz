@@ -20,37 +20,14 @@ let providerRequest: Record<string, unknown> | undefined;
 let providerScenario: ProviderScenario = "success";
 
 after(async () => {
-  if (server) await server.close();
   if (originalFetch) globalThis.fetch = originalFetch;
+  if (server) await server.close();
 });
 
 test("Soyuz maps OpenRouter faults across the authenticated Senku Service Binding", {
   skip: senkuConfig ? false : "Set SENKU_WRANGLER_CONFIG to the Senku worktree wrangler.jsonc path.",
 }, async (t) => {
   if (!senkuConfig) return;
-
-  originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input, init) => {
-    const request = input instanceof Request ? input : new Request(input, init);
-    if (request.url !== OPENROUTER_URL) {
-      throw new Error("The cross-worker test blocks all external requests except its OpenRouter mock.");
-    }
-
-    providerCalls += 1;
-    providerRequest = await request.clone().json() as Record<string, unknown>;
-    switch (providerScenario) {
-      case "http_503":
-      case "malformed_json":
-      case "timeout":
-        return createOpenRouterFaultResponse(
-          request,
-          providerScenario as OpenRouterFaultScenario,
-          () => createProviderSuccessResponse(providerRequest),
-        );
-      case "success":
-        return createProviderSuccessResponse(providerRequest);
-    }
-  };
 
   server = createTestHarness({
     root: process.cwd(),
@@ -140,6 +117,28 @@ test("Soyuz maps OpenRouter faults across the authenticated Senku Service Bindin
   assert.ok(runId, "Soyuz should retain the synthetic run before analysis");
   const before = await env.DB.prepare("SELECT status, stage FROM runs WHERE id = ?").bind(runId).first();
 
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (request.url !== OPENROUTER_URL) {
+      throw new Error("The cross-worker test blocks all external requests except its OpenRouter mock.");
+    }
+
+    providerCalls += 1;
+    providerRequest = await request.clone().json() as Record<string, unknown>;
+    switch (providerScenario) {
+      case "http_503":
+      case "malformed_json":
+      case "timeout":
+        return createOpenRouterFaultResponse(
+          request,
+          providerScenario as OpenRouterFaultScenario,
+        );
+      case "success":
+        return createProviderSuccessResponse(providerRequest);
+    }
+  };
+
   const scenarios: Array<{
     name: string;
     providerScenario: ProviderScenario;
@@ -199,7 +198,7 @@ test("Soyuz maps OpenRouter faults across the authenticated Senku Service Bindin
 
   const logs = server.getLogs();
   const successfulSenkuLogs = logs.filter((log) => log.message.includes('"event":"profile.evaluation_completed"'));
-  assert.equal(successfulSenkuLogs.length, 1);
+  assert.equal(successfulSenkuLogs.length, 1, "only the success scenario emits profile.evaluation_completed");
   assert.equal(successfulSenkuLogs[0].message.includes('"clientId":"soyuz"'), true);
   assert.equal(JSON.stringify(logs).includes(SENKU_TOKEN), false, "machine credentials stay out of logs");
   assert.equal(JSON.stringify(logs).includes(PROVIDER_KEY), false, "provider credentials stay out of logs");
