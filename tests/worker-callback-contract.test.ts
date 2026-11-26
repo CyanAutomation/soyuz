@@ -25,6 +25,18 @@ const terminalOutcome = {
   },
 };
 
+const taskAdmission = {
+  schemaVersion: 1,
+  status: 'rejected',
+  reasonCode: 'high_risk',
+  signal: 'risk_level',
+  summary: 'Task admission rejected after a high-confidence high-risk classification.',
+  riskLevel: 'high',
+  riskScore: 2,
+  responseTimeMs: 17,
+  evaluatedAt: '2026-11-26T12:00:00.000Z',
+};
+
 describe("worker terminal callback contract", () => {
   it("accepts Kaseki terminal outcome fields on completed callbacks", () => {
     expect(WorkerCompletedSchema.safeParse({
@@ -41,7 +53,23 @@ describe("worker terminal callback contract", () => {
       failureClass: "validation_failed",
       failureMessage: "The validation command failed.",
       ...terminalOutcome,
+      taskAdmission,
     }).success).toBe(true);
+  });
+
+  it('rejects unbounded or noncanonical task-admission diagnostics', () => {
+    expect(WorkerFailedSchema.safeParse({
+      ...callbackBase,
+      failureClass: 'kaseki_admission_rejected',
+      failureMessage: 'Kaseki rejected this run during local admission.',
+      taskAdmission: { ...taskAdmission, rawPrompt: 'must not cross the callback boundary' },
+    }).success).toBe(false);
+    expect(WorkerFailedSchema.safeParse({
+      ...callbackBase,
+      failureClass: 'kaseki_admission_rejected',
+      failureMessage: 'Kaseki rejected this run during local admission.',
+      taskAdmission: { ...taskAdmission, riskScore: 100 },
+    }).success).toBe(false);
   });
 
   it("accepts Kaseki terminal outcome fields on cancelled callbacks", () => {

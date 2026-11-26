@@ -5,6 +5,7 @@ import {
   WorkerEventSchema,
   WorkerFailedSchema,
   WorkerStartedSchema,
+  type TaskAdmissionOutcome,
 } from "../contracts/worker-callbacks";
 import { serializeRunOutcomeSummary } from "../contracts/run-outcome";
 import {
@@ -41,6 +42,7 @@ type TerminalOutcomeData = {
   publishedUrl?: string;
   changedFileCount?: number;
   outcomeSummary?: unknown;
+  taskAdmission?: TaskAdmissionOutcome;
 };
 
 function terminalOutcomeResult(data: TerminalOutcomeData): Record<string, unknown> {
@@ -49,6 +51,7 @@ function terminalOutcomeResult(data: TerminalOutcomeData): Record<string, unknow
     ...(data.publishedUrl ? { publishedUrl: data.publishedUrl } : {}),
     ...(data.changedFileCount !== undefined ? { changedFileCount: data.changedFileCount } : {}),
     ...(data.outcomeSummary ? { outcomeSummary: data.outcomeSummary } : {}),
+    ...(data.taskAdmission ? { taskAdmission: data.taskAdmission } : {}),
   };
 }
 
