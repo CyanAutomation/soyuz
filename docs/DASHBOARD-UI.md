@@ -66,10 +66,10 @@ it explains when no outcome summaries exist. A run card keeps its creation time
 visible while its technical identifiers and detailed timestamps remain inside
 a disclosure that starts collapsed.
 
-The dashboard requests a 30-run page on initial load and can page through the
-unexpired history. This display limit is independent of the 90-day retention
-deadline. Search covers the rows currently loaded; the visible help text states
-the paging scope.
+The dashboard loads only the 30 most recent retained runs. Search, status
+filtering, and sorting apply within that set; outcome aggregates still cover all
+unexpired runs. This display limit is independent of the 90-day retention
+deadline.
 
 These patterns establish consistency, but they do not certify accessibility.
 Review keyboard use, zoom and reflow, forced colours, reduced motion, and

@@ -29,6 +29,14 @@ const runs: SearchableRun[] = [
 ];
 
 describe("run list search and sorting", () => {
+  it("filters a status within the loaded recent run window", () => {
+    expect(filterAndSortRuns(runs, "", "newest", "running").map((run) => run.displayId)).toEqual(["soyuz-9"]);
+  });
+
+  it("filters by status within the already loaded recent run set", () => {
+    expect(filterAndSortRuns(runs, "", "newest", "running").map((run) => run.displayId)).toEqual(["soyuz-9"]);
+  });
+
   it.each([
     ["apollo", "soyuz-9"],
     ["FEATURE/cache", "soyuz-12"],
