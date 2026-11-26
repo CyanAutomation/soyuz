@@ -143,7 +143,7 @@ function renderOperation(
 
 function renderAuthentication(spec: OpenApiDocument, document: Document, target: HTMLElement, operation: OpenApiOperation): void {
   const section = detailSection(document, target, "Authentication");
-  const security = operation.security ?? [];
+  const security = operation.security ?? spec.security ?? [];
   if (security.length === 0) {
     appendTo(section, textElement(document, "p", "Public endpoint"));
     return;

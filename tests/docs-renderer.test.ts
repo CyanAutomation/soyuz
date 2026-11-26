@@ -31,4 +31,19 @@ describe("OpenAPI reference renderer", () => {
     expect(document.querySelector("#api-content img")).toBeNull();
     expect(document.querySelector("#api-content")?.textContent ?? "").toContain('<img src=x onerror="alert(1)">');
   });
+
+  it("inherits document security unless an operation explicitly disables it", () => {
+    const { document } = parseHTML('<nav id="api-navigation"></nav><p id="api-status"></p><main id="api-content"></main><span id="api-origin"></span><h1 id="api-title"></h1><p id="api-description"></p><span id="api-version"></span>');
+    const securedDocument = structuredClone(spec);
+    securedDocument.security = [{ ClientBearer: [] }];
+    delete securedDocument.paths["/v1/runs"].get!.security;
+
+    renderOpenApiDocument(securedDocument, document as unknown as Document, "https://soyuz.test");
+
+    const operationText = (path: string) => Array.from(document.querySelectorAll("article.api-operation"))
+      .find((article) => article.querySelector(".api-operation__route code")?.textContent === path)?.textContent ?? "";
+    expect(operationText("/v1/runs")).toContain("ClientBearer");
+    expect(operationText("/v1/runs")).not.toContain("Public endpoint");
+    expect(operationText("/health")).toContain("Public endpoint");
+  });
 });

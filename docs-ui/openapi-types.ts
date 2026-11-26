@@ -77,6 +77,7 @@ export interface OpenApiDocument {
   info: { title: string; version: string; description?: string };
   servers?: Array<{ url: string; description?: string }>;
   tags?: OpenApiTag[];
+  security?: Array<Record<string, string[] | undefined>>;
   paths: Record<string, OpenApiPathItem>;
   components?: {
     schemas?: Record<string, OpenApiSchema>;
