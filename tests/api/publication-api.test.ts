@@ -863,6 +863,10 @@ beforeEach(clearDatabase);
       expect(publication).toMatchObject({
         state: "blocked", last_error_code: "KIRISAME_CALLER_CONFIGURATION_INVALID", attempt_count: 1,
       });
+      const status = await call(bindings, `/v1/runs/${data.runId}/publication`, { token: CLIENT_TOKEN });
+      expect(status.body.data.publication).toMatchObject({
+        lastErrorCode: "KIRISAME_CALLER_CONFIGURATION_INVALID", operatorReviewRequired: true,
+      });
       expect(publisher.calls).toHaveLength(0);
 
       if (credential === "KIRISAME_CALLER_ID") bindings.KIRISAME_CALLER_ID = "soyuz";
@@ -945,7 +949,7 @@ beforeEach(clearDatabase);
     expect(publisher.calls).toHaveLength(0);
   });
 
-  it("does not dispatch after the dispatch flag is disabled", async () => {
+  it("keeps the dispatch switch authoritative over an injected publisher", async () => {
     const r2 = memoryArtifactBucket();
     const { bindings } = testEnv({ artifacts: r2.bucket });
     const workerId = "dispatch-disabled-host";
@@ -963,6 +967,26 @@ beforeEach(clearDatabase);
       .bind(data.runId).first<PublicationRow>();
     expect(publication).toMatchObject({ state: "pending", attempt_count: 0 });
     expect(publisher.calls).toHaveLength(0);
+  });
+
+  it("validates the dispatch lease using the injected reconciliation time", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const workerId = "synthetic-time-dispatch-host";
+    const claimCallbackId = crypto.randomUUID();
+    const data = await registerPublicationInputs(bindings, {
+      workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000219",
+    });
+    await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
+    const at = new Date(Date.now() - 5 * 60_000);
+    const publisher = new MockPublisherEntrypoint(["success"]);
+
+    await reconcilePublications(bindings, at, publisher);
+
+    const publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+      .bind(data.runId).first<PublicationRow>();
+    expect(publication).toMatchObject({ state: "published", attempt_count: 1 });
+    expect(publisher.calls).toHaveLength(1);
   });
 
   it("rechecks the current policy after manifest verification and before calling Kirisame", async () => {
