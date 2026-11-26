@@ -24,6 +24,8 @@ export default defineConfig({
       "tests/verify-production-migrations.test.ts",
       "tests/worker-entry.test.ts",
       "tests/dashboard-markup.test.mjs",
+      "tests/docs-renderer.test.ts",
+      "tests/docs-page.test.mjs",
     ],
   },
 });

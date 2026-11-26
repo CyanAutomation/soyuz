@@ -10,7 +10,7 @@
     "dev": "npm run build && wrangler dev",
     "deploy": "npm run build && wrangler deploy",
     "postinstall": "patch-package",
-    "build": "tsc --noEmit -p tsconfig.browser.json && esbuild dashboard/app.ts --bundle --platform=browser --target=es2023 --format=esm --minify --outfile=public/dashboard/app.js",
+    "build": "tsc --noEmit -p tsconfig.browser.json && esbuild dashboard/app.ts --bundle --platform=browser --target=es2023 --format=esm --minify --outfile=public/dashboard/app.js && esbuild docs-ui/app.ts --bundle --platform=browser --target=es2023 --format=esm --minify --outfile=public/docs/app.js",
     "typecheck": "wrangler types && tsc --noEmit && tsc -p tsconfig.browser.json && tsc -p tsconfig.node.json",
     "test": "vitest run",
     "test:kaseki": "vitest run tests/kaseki-protocol.test.ts",

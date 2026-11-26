@@ -2,7 +2,7 @@ import path from "node:path";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 
@@ -34,6 +34,7 @@ export default defineConfig({
   ],
   test: {
     include: ["tests/**/*.test.ts"],
+    exclude: [...configDefaults.exclude, "tests/docs-renderer.test.ts"],
     setupFiles: ["./tests/apply-migrations.ts"],
     testTimeout: 15_000,
     hookTimeout: 15_000,

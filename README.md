@@ -30,17 +30,21 @@ curl --fail-with-body --silent --show-error \
 
 An accepted request returns HTTP `202` with a JSON body containing `data.id`, `data.status` (`queued`), and `requestId`. This local request writes to local D1 and the local Queue; it does not execute the request unless a Queue consumer is separately configured. Its explicit `publishMode: "none"` is a test-only exception for admission checks. Ordinary REST, agent and UTCP requests default to `pr`. Each invocation without an idempotency key creates a new run.
 
-The [transport contract](docs/CONTRACT.md) documents request fields, responses, pagination, and errors. For Cloudflare's Worker runtime test harness, run `npm test`; `npm run test:kaseki` runs the local Kaseki protocol simulation against Soyuz's actual Worker routes and D1. It covers queue handoff, duplicate delivery, claim recovery, callbacks, and cancellation without running a container or repository task. `npm run typecheck` refreshes Wrangler's binding/runtime types and checks TypeScript. `npm run dev` and `npm run deploy` compile the TypeScript dashboard assets first.
+The [transport contract](docs/CONTRACT.md) documents request fields, responses, pagination, and errors. The browsable [API reference](/docs/) is rendered from the [OpenAPI 3.1 document](/openapi.json) and covers the integration-facing HTTP API without a third-party documentation UI. For Cloudflare's Worker runtime test harness, run `npm test`; `npm run test:kaseki` runs the local Kaseki protocol simulation against Soyuz's actual Worker routes and D1. It covers queue handoff, duplicate delivery, claim recovery, callbacks, and cancellation without running a container or repository task. `npm run typecheck` refreshes Wrangler's binding/runtime types and checks TypeScript. `npm run dev` and `npm run deploy` compile the TypeScript dashboard and API reference assets first.
 
 ## API overview
 
 `GET /health` is public and checks that the Worker can read D1 and that both API keys are configured. If either check fails, it returns HTTP 503 with a message and request ID. Client endpoints use `Authorization: Bearer $CLIENT_API_TOKEN`:
 
 ```text
+GET  /docs/ (browsable API reference)
+GET  /openapi.json (OpenAPI 3.1 document)
 GET  /health
 POST /v1/runs
 GET  /v1/runs?limit=30&status=queued
+POST /v1/runs/:id/retry
 GET  /v1/run-outcomes
+GET  /v1/storage-usage
 GET  /v1/runs/:id
 GET  /v1/runs/:id/events?after=0&limit=100
 GET  /v1/runs/:id/publication
@@ -121,4 +125,4 @@ The opt-in Queue consumer and callback client are implemented in [`kaseki-agent`
 
 ## Development and support
 
-Run `npm run typecheck` to generate Wrangler types and check TypeScript, `npm test` to run the Worker runtime test suite, and `npm run build` to compile the browser dashboard. The dashboard build targets ES2023-capable browsers. The [CI workflow](.github/workflows/ci.yml) also validates the deployment bundle. See the [license](LICENSE) for reuse terms and [GitHub Issues](https://github.com/CyanAutomation/soyuz/issues) to report a problem.
+Run `npm run typecheck` to generate Wrangler types and check TypeScript, `npm test` to run the Worker runtime test suite, and `npm run build` to compile the browser dashboard and API reference. The browser build targets ES2023-capable browsers. The [CI workflow](.github/workflows/ci.yml) also validates the deployment bundle. See the [license](LICENSE) for reuse terms and [GitHub Issues](https://github.com/CyanAutomation/soyuz/issues) to report a problem.
