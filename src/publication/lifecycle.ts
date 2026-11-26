@@ -135,7 +135,7 @@ async function abandonIntent(env: Env, row: PublicationIntentRow, at: string): P
   `).bind(at, row.expires_at, row.publication_id).run();
 }
 
-/** Reconciles intents and dispatches only while the explicit publisher switch is enabled. */
+/** Injection selects the RPC transport; only the explicit dispatch switch authorizes publication. */
 export async function reconcilePublications(env: Env, at = new Date(), injectedPublisher?: PublisherEntrypoint): Promise<void> {
   await reconcilePublicationEligibility(env, undefined, at);
   const publisher = env.PUBLICATION_DISPATCH_ENABLED === "true"
@@ -217,7 +217,7 @@ async function prepareReservedPublication(
   const latest = await env.DB.prepare("SELECT * FROM publications WHERE publication_id = ?")
     .bind(current.publication_id).first<PublicationRow>();
   if (!isCurrentReservedAttempt(current, latest, attemptId)) return { status: "superseded" };
-  if (env.PUBLICATION_DISPATCH_ENABLED !== "true" || !hasDispatchLease(latest, Date.now(), timeoutMs)) {
+  if (env.PUBLICATION_DISPATCH_ENABLED !== "true" || !hasDispatchLease(latest, at.getTime(), timeoutMs)) {
     await releasePublicationAttempt(env, current, attemptId, at);
     return { status: "released" };
   }
@@ -674,7 +674,8 @@ export function safePublicationProjection(row: PublicationRow): Record<string, u
     nextAttemptAt: row.next_attempt_at,
     lastErrorCode: row.last_error_code,
     operatorReviewRequired: row.last_error_code === "PUBLICATION_OUTCOME_UNKNOWN"
-      || row.last_error_code === "PUBLICATION_POLICY_REVOKED",
+      || row.last_error_code === "PUBLICATION_POLICY_REVOKED"
+      || row.last_error_code === "KIRISAME_CALLER_CONFIGURATION_INVALID",
     branchSha: row.branch_sha,
     branchRef: row.state === "published" ? row.head_ref : null,
     pullRequestNumber: row.pr_number,
