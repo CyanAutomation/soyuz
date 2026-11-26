@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { resolve } from "node:path";
 import { createTestHarness } from "wrangler";
+import { createOpenRouterFaultResponse, OPENROUTER_TEST_FAILURE_MARKER, type OpenRouterFaultScenario } from "./test-support/provider-faults.ts";
 
 const SENKU_TOKEN = "senku-soyuz-cross-worker-test-token-000000";
 const KASEKI_TOKEN = "senku-kaseki-cross-worker-test-token-000000";
@@ -10,66 +11,30 @@ const TASK_MARKER = "SYNTHETIC_TASK_PROMPT_MUST_STAY_IN_SOYUZ";
 const OPENROUTER_URL = "https://openrouter.ai/api/alpha/decisions";
 const senkuConfig = process.env.SENKU_WRANGLER_CONFIG;
 
+type ProviderScenario = "success" | "http_503" | "malformed_json" | "timeout";
+
 let server: ReturnType<typeof createTestHarness> | undefined;
 let originalFetch: typeof fetch | undefined;
 let providerCalls = 0;
 let providerRequest: Record<string, unknown> | undefined;
+let providerScenario: ProviderScenario = "success";
 
 after(async () => {
-  if (server) await server.close();
   if (originalFetch) globalThis.fetch = originalFetch;
+  if (server) await server.close();
 });
 
-test("Soyuz calls the authenticated Senku Worker over its configured Service Binding", {
+test("Soyuz maps OpenRouter faults across the authenticated Senku Service Binding", {
   skip: senkuConfig ? false : "Set SENKU_WRANGLER_CONFIG to the Senku worktree wrangler.jsonc path.",
-}, async () => {
+}, async (t) => {
   if (!senkuConfig) return;
-
-  originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input, init) => {
-    const request = input instanceof Request ? input : new Request(input, init);
-    if (request.url !== OPENROUTER_URL) {
-      throw new Error("The cross-worker test blocks all external requests except its OpenRouter mock.");
-    }
-
-    providerCalls += 1;
-    providerRequest = await request.clone().json() as Record<string, unknown>;
-    const questions = providerRequest.questions as Record<string, Record<string, unknown>>;
-    const answers: Record<string, unknown> = {};
-    for (const [key, question] of Object.entries(questions)) {
-      if (question.type === "noul") {
-        answers[key] = { type: "noul", noul: 0.8 };
-      } else if (question.type === "choice") {
-        const choices = Object.keys(question.criteria as Record<string, unknown>);
-        answers[key] = {
-          type: "choice",
-          choice: choices[0],
-          probabilities: Object.fromEntries(choices.map((choice, index) => [choice, index === 0 ? 1 : 0])),
-          confidence: null,
-        };
-      } else {
-        const criteria = question.criteria as unknown[];
-        const scoreKeys = criteria.map((_criterion, index) => String(index));
-        answers[key] = {
-          type: "score",
-          score: 0,
-          legend: Object.fromEntries(criteria.map((criterion, index) => [String(index), criterion])),
-          probabilities: Object.fromEntries(scoreKeys.map((score, index) => [score, index === 0 ? 1 : 0])),
-          confidence: null,
-        };
-      }
-    }
-    return new Response(JSON.stringify({ model: "typesafe/jev-cross-worker-test", answers, usage: { input_tokens: 10, output_tokens: 5 } }), {
-      headers: { "content-type": "application/json" },
-    });
-  };
 
   server = createTestHarness({
     root: process.cwd(),
     workers: [
       {
         configPath: "./wrangler.jsonc",
-        bindingOverrides: { SENKU: "senku" },
+        bindingOverrides: { SENKU: "senku", KIRISAME: "kirisame-fixture" },
         vars: { SOYUZ_ENVIRONMENT: "development", SOYUZ_PUBLIC_URL: "https://soyuz.test" },
         secrets: {
           CLIENT_API_TOKEN: "soyuz-cross-worker-client-test-token-000000",
@@ -81,10 +46,18 @@ test("Soyuz calls the authenticated Senku Worker over its configured Service Bin
       },
       {
         configPath: resolve(senkuConfig),
+        vars: { SENKU_PROVIDER_TIMEOUT_MS: "1000" },
         secrets: {
           OPENROUTER_API_KEY: PROVIDER_KEY,
           SENKU_SOYUZ_API_TOKEN: SENKU_TOKEN,
           SENKU_KASEKI_API_TOKEN: KASEKI_TOKEN,
+        },
+      },
+      {
+        config: {
+          name: "kirisame-fixture",
+          main: "scripts/kirisame-fixture-worker.mjs",
+          compatibility_date: "2026-10-02",
         },
       },
       {
@@ -144,38 +117,126 @@ test("Soyuz calls the authenticated Senku Worker over its configured Service Bin
   assert.ok(runId, "Soyuz should retain the synthetic run before analysis");
   const before = await env.DB.prepare("SELECT status, stage FROM runs WHERE id = ?").bind(runId).first();
 
-  const decisionResponse = await soyuz.fetch("https://soyuz.test/dashboard/api/analysis/decisions", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${tokenBody.access_token}`,
-      "content-type": "application/json",
-      "cf-connecting-ip": "198.51.100.10",
-    },
-    body: JSON.stringify({ profileId: "run_operations_triage_v1", runId }),
-  });
-  const decisionBody = await decisionResponse.json() as {
-    data?: { model?: string; answers?: Record<string, unknown> };
+  originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (request.url !== OPENROUTER_URL) {
+      throw new Error("The cross-worker test blocks all external requests except its OpenRouter mock.");
+    }
+
+    providerCalls += 1;
+    providerRequest = await request.clone().json() as Record<string, unknown>;
+    switch (providerScenario) {
+      case "http_503":
+      case "malformed_json":
+      case "timeout":
+        return createOpenRouterFaultResponse(
+          request,
+          providerScenario as OpenRouterFaultScenario,
+        );
+      case "success":
+        return createProviderSuccessResponse(providerRequest);
+    }
   };
-  if (decisionResponse.status !== 200) console.error("Cross-Worker diagnostics", server.getLogs());
-  assert.equal(decisionResponse.status, 200, JSON.stringify(decisionBody));
-  assert.equal(decisionBody.data?.model, "typesafe/jev-cross-worker-test");
-  assert.deepEqual(Object.keys(decisionBody.data ?? {}).sort(), ["answers", "model"]);
-  assert.equal(providerCalls, 1, "the Service Binding must make exactly one provider attempt");
-  assert.equal(providerRequest?.model, "~typesafe/jev-latest");
-  const state = JSON.parse(String(providerRequest?.state)) as Record<string, unknown>;
-  assert.deepEqual(Object.keys(state).sort(), ["run", "source"]);
-  assert.equal((state.run as Record<string, unknown>).status, "queued");
-  assert.deepEqual(Object.keys(state.run as Record<string, unknown>).sort(), [
-    "completedAt", "createdAt", "failureClass", "lastHeartbeatAt", "operationalHealth",
-    "queuedAt", "stage", "startedAt", "status",
-  ]);
-  assert.equal(JSON.stringify(providerRequest).includes(TASK_MARKER), false, "raw task prompts stay inside Soyuz");
+
+  const scenarios: Array<{
+    name: string;
+    providerScenario: ProviderScenario;
+    status: number;
+    errorCode?: string;
+  }> = [
+    { name: "success returns the compatible dashboard shape", providerScenario: "success", status: 200 },
+    { name: "provider 503 maps to a safe unavailable response", providerScenario: "http_503", status: 502, errorCode: "JEV_PROVIDER_UNAVAILABLE" },
+    { name: "malformed provider JSON maps to an invalid response", providerScenario: "malformed_json", status: 502, errorCode: "JEV_RESPONSE_INVALID" },
+    { name: "provider timeout aborts and maps to a timeout response", providerScenario: "timeout", status: 504, errorCode: "JEV_PROVIDER_TIMEOUT" },
+  ];
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      providerScenario = scenario.providerScenario;
+      providerCalls = 0;
+      providerRequest = undefined;
+
+      const decisionResponse = await soyuz.fetch("https://soyuz.test/dashboard/api/analysis/decisions", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${tokenBody.access_token}`,
+          "content-type": "application/json",
+          "cf-connecting-ip": "198.51.100.10",
+        },
+        body: JSON.stringify({ profileId: "run_operations_triage_v1", runId }),
+      });
+      const decisionBody = await decisionResponse.json() as {
+        data?: { model?: string; answers?: Record<string, unknown> };
+        error?: { code?: string; message?: string };
+      };
+
+      if (decisionResponse.status !== scenario.status) {
+        console.error("Cross-Worker diagnostics", server?.getLogs());
+      }
+      assert.equal(decisionResponse.status, scenario.status, JSON.stringify(decisionBody));
+      if (scenario.errorCode) {
+        assert.equal(decisionBody.error?.code, scenario.errorCode);
+      } else {
+        assert.equal(decisionBody.data?.model, "typesafe/jev-cross-worker-test");
+        assert.deepEqual(Object.keys(decisionBody.data ?? {}).sort(), ["answers", "model"]);
+      }
+      assert.equal(providerCalls, 1, "the provider is attempted exactly once for each dashboard request");
+      const sentProviderRequest = latestProviderRequest();
+      assert.ok(sentProviderRequest);
+      assert.equal(sentProviderRequest.model, "~typesafe/jev-latest");
+      const state = JSON.parse(String(sentProviderRequest.state)) as Record<string, unknown>;
+      assert.deepEqual(Object.keys(state).sort(), ["run", "source"]);
+      assert.equal((state.run as Record<string, unknown>).status, "queued");
+      assert.equal(JSON.stringify(sentProviderRequest).includes(TASK_MARKER), false, "raw task prompts stay inside Soyuz");
+      assert.equal(JSON.stringify(decisionBody).includes(OPENROUTER_TEST_FAILURE_MARKER), false, "upstream bodies stay out of API responses");
+
+      const afterRun = await env.DB.prepare("SELECT status, stage FROM runs WHERE id = ?").bind(runId).first();
+      assert.deepEqual(afterRun, before, "advisory JEV success and failure must not change run state");
+    });
+  }
+
   const logs = server.getLogs();
   const successfulSenkuLogs = logs.filter((log) => log.message.includes('"event":"profile.evaluation_completed"'));
-  assert.equal(successfulSenkuLogs.length, 1);
+  assert.equal(successfulSenkuLogs.length, 1, "only the success scenario emits profile.evaluation_completed");
   assert.equal(successfulSenkuLogs[0].message.includes('"clientId":"soyuz"'), true);
   assert.equal(JSON.stringify(logs).includes(SENKU_TOKEN), false, "machine credentials stay out of logs");
-
-  const afterRun = await env.DB.prepare("SELECT status, stage FROM runs WHERE id = ?").bind(runId).first();
-  assert.deepEqual(afterRun, before, "advisory JEV analysis must not change run state");
+  assert.equal(JSON.stringify(logs).includes(PROVIDER_KEY), false, "provider credentials stay out of logs");
+  assert.equal(JSON.stringify(logs).includes(OPENROUTER_TEST_FAILURE_MARKER), false, "upstream bodies stay out of logs");
 });
+
+function latestProviderRequest(): Record<string, unknown> | undefined {
+  return providerRequest;
+}
+
+function createProviderSuccessResponse(providerRequest: Record<string, unknown> | undefined): Response {
+  assert.ok(providerRequest);
+  const questions = providerRequest.questions as Record<string, Record<string, unknown>>;
+  const answers: Record<string, unknown> = {};
+  for (const [key, question] of Object.entries(questions)) {
+    if (question.type === "noul") {
+      answers[key] = { type: "noul", noul: 0.8 };
+    } else if (question.type === "choice") {
+      const choices = Object.keys(question.criteria as Record<string, unknown>);
+      answers[key] = {
+        type: "choice",
+        choice: choices[0],
+        probabilities: Object.fromEntries(choices.map((choice, index) => [choice, index === 0 ? 1 : 0])),
+        confidence: null,
+      };
+    } else {
+      const criteria = question.criteria as unknown[];
+      const scoreKeys = criteria.map((_criterion, index) => String(index));
+      answers[key] = {
+        type: "score",
+        score: 0,
+        legend: Object.fromEntries(criteria.map((criterion, index) => [String(index), criterion])),
+        probabilities: Object.fromEntries(scoreKeys.map((score, index) => [score, index === 0 ? 1 : 0])),
+        confidence: null,
+      };
+    }
+  }
+  return new Response(JSON.stringify({ model: "typesafe/jev-cross-worker-test", answers, usage: { input_tokens: 10, output_tokens: 5 } }), {
+    headers: { "content-type": "application/json" },
+  });
+}
