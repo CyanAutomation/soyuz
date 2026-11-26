@@ -6,6 +6,7 @@ import {
   WorkerFailedSchema,
   WorkerStartedSchema,
 } from "../contracts/worker-callbacks";
+import { serializeRunOutcomeSummary } from "../contracts/run-outcome";
 import {
   findRunEvent,
   getRun,
@@ -220,6 +221,7 @@ async function completed(request: Request, env: Env, runId: string, requestId: s
       completed_at: payload.data.completedAt ?? now,
       exit_code: payload.data.exitCode ?? 0,
       result_json: Object.keys(result).length ? stableStringify(result) : null,
+      outcome_summary_json: serializeRunOutcomeSummary(payload.data.outcomeSummary),
     }, {
       eventId: payload.data.callbackId,
       type: "run.completed",
@@ -258,6 +260,7 @@ async function failed(request: Request, env: Env, runId: string, requestId: stri
       failure_class: payload.data.failureClass,
       failure_message: payload.data.failureMessage,
       result_json: Object.keys(result).length ? stableStringify(result) : null,
+      outcome_summary_json: serializeRunOutcomeSummary(payload.data.outcomeSummary),
     }, {
       eventId: payload.data.callbackId,
       type: "run.failed",
@@ -298,6 +301,7 @@ async function cancelled(request: Request, env: Env, runId: string, requestId: s
       failure_class: "cancelled",
       failure_message: payload.data.reason ?? null,
       result_json: Object.keys(result).length ? stableStringify(result) : null,
+      outcome_summary_json: serializeRunOutcomeSummary(payload.data.outcomeSummary),
     }, {
       eventId: payload.data.callbackId,
       type: "run.cancelled",

@@ -25,6 +25,7 @@ export interface RunRow {
   artifact_delivery_status: "not_reported" | "complete" | "partial" | "failed";
   request_hash: string;
   result_json: string | null;
+  outcome_summary_json: string | null;
   created_at: string;
   queued_at: string | null;
   started_at: string | null;
@@ -88,6 +89,7 @@ export type RunPatch = Partial<Pick<RunRow,
   | "failure_message"
   | "cancel_requested_at"
   | "result_json"
+  | "outcome_summary_json"
   | "admission_attempts"
   | "admission_last_attempt_at"
   | "last_heartbeat_at"
@@ -106,6 +108,7 @@ const RUN_PATCH_COLUMNS: ReadonlySet<keyof RunPatch> = new Set([
   "failure_message",
   "cancel_requested_at",
   "result_json",
+  "outcome_summary_json",
   "admission_attempts",
   "admission_last_attempt_at",
   "last_heartbeat_at",

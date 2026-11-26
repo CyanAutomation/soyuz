@@ -23,7 +23,7 @@ import {
   RUN_STATUS_OPTIONS,
 } from "./presentation.js";
 import { buildRunListPath, filterAndSortRuns, type RunSortOrder } from "./run-list.js";
-import { mergeRunListPage, shouldRenderRunList } from "./run-list-state.js";
+import { mergeRecentRunList, shouldRenderRunList } from "./run-list-state.js";
 
 interface OAuthRegistration {
   client_id: string;
@@ -35,7 +35,6 @@ interface OAuthTokenResponse {
 
 interface DashboardRunListResponse {
   runs: DashboardRunSummary[];
-  nextCursor: string | null;
   publicationStatusAvailable: boolean;
 }
 
@@ -96,14 +95,12 @@ const statusFilter = requiredElement<HTMLSelectElement>("#status-filter");
 const runSearch = requiredElement<HTMLInputElement>("#run-search");
 const runSort = requiredElement<HTMLSelectElement>("#run-sort");
 const runCount = requiredElement<HTMLElement>("#run-count");
-const loadMoreButton = requiredElement<HTMLButtonElement>("#load-more");
 const updatedLabel = requiredElement<HTMLElement>("#updated");
 const snackbar = createSnackBarController(requiredElement<HTMLElement>("#snackbar"));
 const oauthKeys = ["state", "verifier", "clientId", "redirectUri"] as const;
 let accessToken: string | null = null;
 let oauthClientId: string | null = null;
 let runRefreshTimer: ReturnType<typeof setInterval> | null = null;
-let nextCursor: string | null = null;
 let isLoadingRuns = false;
 let pendingRunReset = false;
 let runsById = new Map<string, DashboardRunSummary>();
@@ -132,9 +129,8 @@ runSearch.addEventListener("input", renderRuns);
 runSort.addEventListener("change", renderRuns);
 statusFilter.addEventListener("change", () => {
   expandedRunIds.clear();
-  void loadRuns({ reset: true });
+  renderRuns();
 });
-loadMoreButton.addEventListener("click", () => void loadRuns({ reset: false }));
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") void refreshRunsInBackground();
 });
@@ -254,13 +250,11 @@ function clearLocalSession(message: string, tone: NoticeTone = "info"): void {
   isLoadingRuns = false;
   pendingRunReset = false;
   stopRunRefresh();
-  nextCursor = null;
   runsById = new Map();
   runDetailsById.clear();
   jevStatesByRunId.clear();
   loadingEventRunIds.clear();
   expandedRunIds.clear();
-  loadMoreButton.hidden = true;
   updatedLabel.textContent = "";
   runsSection.replaceChildren();
   outcomeOverview.replaceChildren();
@@ -304,15 +298,9 @@ async function loadRuns(options: { reset: boolean; quiet?: boolean; refreshFirst
     if (options.reset) pendingRunReset = true;
     return;
   }
-  const cursor = runListRequestCursor(options, nextCursor);
-  if (cursor === undefined) return;
-
   startRunListLoad(options);
   try {
-    const result = await apiJson<DashboardRunListResponse>(buildRunListPath({
-      status: statusFilter.value || null,
-      cursor,
-    }));
+    const result = await apiJson<DashboardRunListResponse>(buildRunListPath());
     if (acceptRunListResponse(token, options, result)) void loadOutcomeOverview(token);
   } catch {
     showRunListError(token, options);
@@ -321,22 +309,12 @@ async function loadRuns(options: { reset: boolean; quiet?: boolean; refreshFirst
   }
 }
 
-function runListRequestCursor(
-  options: { reset: boolean; refreshFirstPage?: boolean },
-  currentCursor: string | null,
-): string | null | undefined {
-  if (options.reset || options.refreshFirstPage) return null;
-  return currentCursor || undefined;
-}
-
 function startRunListLoad(options: { reset: boolean; quiet?: boolean; refreshFirstPage?: boolean }): void {
   isLoadingRuns = true;
-  loadMoreButton.disabled = true;
   if (options.quiet) return;
-  const loadingMore = !options.reset && !options.refreshFirstPage;
-  setButtonBusy(loadingMore ? loadMoreButton : refreshButton, true, loadingMore ? "Loading more…" : "Loading runs…");
+  setButtonBusy(refreshButton, true, "Loading runs…");
   runsSection.setAttribute("aria-busy", "true");
-  setNotice(loadingMore ? "Loading more runs…" : "Loading recent runs…", "info");
+  setNotice("Loading recent runs…", "info");
 }
 
 function acceptRunListResponse(
@@ -345,13 +323,11 @@ function acceptRunListResponse(
   result: DashboardRunListResponse,
 ): boolean {
   if (token !== accessToken || !Array.isArray(result.runs)) return false;
-  runsById = mergeRunListPage(runsById, result.runs, options.reset);
+  runsById = mergeRecentRunList(runsById, result.runs, options.reset || Boolean(options.refreshFirstPage));
   if (options.reset || options.refreshFirstPage) runDetailsById.clear();
   publicationStatusAvailable = result.publicationStatusAvailable !== false;
-  nextCursor = result.nextCursor;
   if (shouldRenderRunList(Boolean(options.refreshFirstPage), expandedRunIds.size)) renderRuns();
   renderRunOperations();
-  loadMoreButton.hidden = !nextCursor;
   updatedLabel.textContent = `Last refreshed ${new Date().toLocaleTimeString()}`;
   setNotice("", "info");
   return true;
@@ -367,9 +343,7 @@ function finishRunListLoad(token: string, options: { quiet?: boolean }): void {
   isLoadingRuns = false;
   if (!options.quiet) {
     setButtonBusy(refreshButton, false);
-    setButtonBusy(loadMoreButton, false);
   }
-  loadMoreButton.disabled = !nextCursor;
   if (!pendingRunReset) return;
   pendingRunReset = false;
   void loadRuns({ reset: true });
@@ -399,24 +373,23 @@ async function loadOutcomeOverview(token: string): Promise<void> {
 function renderRuns(): void {
   const loadedRuns = [...runsById.values()];
   const order = runSort.value as RunSortOrder;
-  const runs = filterAndSortRuns(loadedRuns, runSearch.value, order);
+  const runs = filterAndSortRuns(loadedRuns, runSearch.value, order, statusFilter.value || null);
   clearRunDetailsRenderers();
   runsSection.replaceChildren(...runs.map(renderRun));
   if (runs.length === 0) {
     const empty = document.createElement("p");
     empty.className = "notice notice--empty run-list-empty";
     empty.textContent = loadedRuns.length > 0
-      ? "No retained runs match your search and status filter. Clear the search or choose a different status."
+      ? "No recent runs match your search and status filter. Clear the search or choose a different status."
       : statusFilter.value
-        ? "No retained runs match this status filter."
+        ? "No recent runs match this status filter."
         : "No runs yet. Runs submitted to Soyuz will appear here.";
     runsSection.append(empty);
   }
-  const matching = statusFilter.value ? "matching " : "";
   const runLabel = loadedRuns.length === 1 ? "run" : "runs";
   runCount.textContent = loadedRuns.length === 0
-    ? "No retained runs"
-    : `Showing ${runs.length} of ${loadedRuns.length} ${matching}retained ${runLabel}`;
+    ? "No recent runs"
+    : `Showing ${runs.length} of ${loadedRuns.length} recent ${runLabel}`;
 }
 
 function renderRunOperations(): void {

@@ -43,6 +43,7 @@ const {
   countRunEvents,
   memoryArtifactBucket,
   submit,
+  insertOutcomeRunFixture,
   claimRun,
   startRunningRun,
   uploadArtifact,
@@ -294,30 +295,29 @@ beforeEach(clearDatabase);
 
   it("[RUN-OUTCOMES-ALL-RETAINED-01] aggregates outcomes across every unexpired run beyond the newest 30", async () => {
     const { bindings } = testEnv();
-    const runIds: string[] = [];
-    for (let index = 0; index < 31; index += 1) {
+    for (let index = 0; index < 120; index += 1) {
       const key = `00000000-0000-4000-8000-${String(index + 3000).padStart(12, "0")}`;
-      const created = await submit(bindings, {}, key);
-      runIds.push(created.body.data.id as string);
+      await submit(bindings, {}, key);
     }
-    await bindings.DB.prepare("UPDATE runs SET result_json = ? WHERE id = ?").bind(JSON.stringify({
-      outcomeSummary: {
+    const olderOutcomeRunId = "00000000-0000-4000-8000-000000000121";
+    await insertOutcomeRunFixture(bindings, olderOutcomeRunId, new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000).toISOString(), {
         schemaVersion: 1,
         evaluation: { assessment: "good", reviewerConfidence: "high", improvementCategories: [] },
-      },
-    }), runIds[30]).run();
+    });
 
     const outcomes = await call(bindings, "/v1/run-outcomes", { token: CLIENT_TOKEN });
 
     expect(outcomes.response.status).toBe(200);
     expect(outcomes.body.data.scope).toMatchObject({
-      retainedRuns: 31,
-      includedRuns: 31,
+      retainedRuns: 121,
+      includedRuns: 121,
       runsWithOutcomeSummary: 1,
-      returnedRuns: 31,
-      runsTruncated: false,
+      returnedRuns: 100,
+      runsTruncated: true,
     });
     expect(outcomes.body.data.byAssessment).toEqual({ good: 1 });
+    expect(outcomes.body.data.runs).toHaveLength(100);
+    expect(outcomes.body.data.runs.some((run: { id: string }) => run.id === olderOutcomeRunId)).toBe(false);
   });
 
   it("[RUN-ADMISSION-01/QUEUE-MESSAGE-01/CONTRACT-VERSION-01/WORKER-READ-01] persists accepted runs and publishes a versioned Queue message", async () => {

@@ -4,7 +4,7 @@ Soyuz presents run health, execution, outcomes, publication, and JEV decision su
 
 ## Overview and refresh
 
-The run operations view groups the newest 30 retained runs into attention, active, completed, and publication sections. Host rules classify failed and admission-failed runs, as well as active runs with `suspect_stalled` health, as needing attention. The existing run cards remain the source for detailed event history, artifacts, failure detail, and result information.
+The run operations view groups the 30 most recent retained runs into attention, active, completed, and publication sections. Search, status filtering, and sorting apply only to those 30 runs; outcome aggregates continue to cover all unexpired runs. Host rules classify failed and admission-failed runs, as well as active runs with `suspect_stalled` health, as needing attention. The existing run cards remain the source for detailed event history, artifacts, failure detail, and result information.
 
 Summaries include status, stage, run age, queue and execution durations, heartbeat age, a bounded outcome summary, and publication status. Missing measurements display as unknown; a measured duration of zero remains zero. Publication is a separate lifecycle from execution, so a completed run can have a pending or retryable publication. The dashboard API reads only the publication status columns needed for this view. Manifest content, R2 keys, provider internals, repository details, and raw errors are excluded from the A2UI data model. If the publication ledger is unavailable, run history remains usable and the view reports publication status as unavailable.
 

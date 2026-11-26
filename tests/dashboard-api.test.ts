@@ -5,7 +5,7 @@ import { renderAuthUi } from "../dashboard/auth-ui.ts";
 import { revokeAccessToken } from "../dashboard/auth-api.ts";
 import { buildRunListPath, isActiveRunStatus } from "../dashboard/run-list.ts";
 import { safeHttpUrlForDisplay } from "../dashboard/ui/safe-url.ts";
-import { mergeRunListPage, shouldRenderRunList } from "../dashboard/run-list-state.ts";
+import { mergeRecentRunList, shouldRenderRunList } from "../dashboard/run-list-state.ts";
 
 vi.mock("../dashboard/a2ui-renderer.js", () => ({
   A2uiDomRenderer: class {
@@ -101,10 +101,8 @@ describe("dashboard API responses", () => {
     expect(safeHttpUrlForDisplay("javascript:alert(1)")).toBeNull();
   });
 
-  it("[DASHBOARD-RUN-LIST-01] encodes status and pagination cursors in run-list requests", () => {
+  it("[DASHBOARD-RUN-LIST-01] always requests only the first recent run-list page", () => {
     expect(buildRunListPath()).toBe("/dashboard/api/runs?limit=30");
-    expect(buildRunListPath({ status: "running" })).toBe("/dashboard/api/runs?limit=30&status=running");
-    expect(buildRunListPath({ status: "failed", cursor: "a+/=" })).toBe("/dashboard/api/runs?limit=30&status=failed&cursor=a%2B%2F%3D");
   });
 
   it("[DASHBOARD-RUN-LIST-02] classifies every known run state as active or terminal", () => {
@@ -116,22 +114,20 @@ describe("dashboard API responses", () => {
     }
   });
 
-  it("[DASHBOARD-RUN-LIST-STATE-01] merges pages by run ID and replaces stale pages on reset", () => {
-    const initial = mergeRunListPage(new Map(), [
-      { runId: "run-a", status: "running" },
-      { runId: "run-b", status: "queued" },
-    ], true);
-    const appended = mergeRunListPage(initial, [
-      { runId: "run-b", status: "completed" },
-      { runId: "run-c", status: "running" },
+  it("[DASHBOARD-RUN-LIST-STATE-01] retains the 30 newest runs while merging refreshes", () => {
+    const initial = mergeRecentRunList(new Map(), Array.from({ length: 30 }, (_, index) => ({
+      runId: `run-${String(index).padStart(2, "0")}`,
+      createdAt: new Date(Date.UTC(2026, 0, index + 1)).toISOString(),
+      status: "running",
+    })), true);
+    const refreshed = mergeRecentRunList(initial, [
+      { runId: "run-newest", createdAt: "2026-02-01T00:00:00.000Z", status: "completed" },
     ], false);
 
-    expect([...appended.values()]).toEqual([
-      { runId: "run-a", status: "running" },
-      { runId: "run-b", status: "completed" },
-      { runId: "run-c", status: "running" },
-    ]);
-    expect([...mergeRunListPage(appended, [{ runId: "run-d", status: "failed" }], true).keys()]).toEqual(["run-d"]);
+    expect(refreshed.size).toBe(30);
+    expect(refreshed.has("run-newest")).toBe(true);
+    expect(refreshed.has("run-00")).toBe(false);
+    expect([...refreshed.values()][0]?.runId).toBe("run-newest");
   });
 
   it("[DASHBOARD-RUN-LIST-STATE-02] preserves expanded details during a quiet first-page refresh", () => {
@@ -414,8 +410,8 @@ describe("dashboard application flows", () => {
     expect(runId).toBeTruthy();
   });
 
-  it("[DASHBOARD-RUN-LIST-FLOW-01] pauses hidden refreshes and supports pagination and status filtering", async () => {
-    const { nodes, requests, intervalCallbacks, documentStub } = await mountDashboard();
+  it("[DASHBOARD-RUN-LIST-FLOW-01] pauses hidden refreshes and filters the recent run set locally", async () => {
+    const { nodes, requests, intervalCallbacks, documentStub } = await mountDashboard(undefined, {}, true);
 
     expect(flattenText(nodeAt(nodes, "#status-filter"))).toContain("Cancellation requested");
     expect(intervalCallbacks).toHaveLength(1);
@@ -427,32 +423,28 @@ describe("dashboard application flows", () => {
     documentStub.visibilityState = "visible";
     intervalCallbacks[0]!();
     await vi.waitFor(() => expect(requests.filter(({ path }) => path === "/dashboard/api/runs?limit=30")).toHaveLength(2));
-    await vi.waitFor(() => expect(nodeAt(nodes, "#load-more").disabled).toBe(false));
-
-    nodeAt(nodes, "#load-more").dispatch("click");
-    await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=30&cursor=cursor%2B%2F1")).toBe(true));
     await vi.waitFor(() => expect(nodeAt(nodes, "#runs").children).toHaveLength(2));
-    await vi.waitFor(() => expect(nodeAt(nodes, "#load-more").hidden).toBe(true));
 
     nodeAt(nodes, "#run-search").value = "other-project";
     nodeAt(nodes, "#run-search").dispatch("input");
     expect(nodeAt(nodes, "#runs").children).toHaveLength(1);
     expect(flattenText(nodeAt(nodes, "#runs"))).toContain("example/other-project");
-    expect(nodeAt(nodes, "#run-count").textContent).toBe("Showing 1 of 2 retained runs");
+    expect(nodeAt(nodes, "#run-count").textContent).toBe("Showing 1 of 2 recent runs");
 
     nodeAt(nodes, "#run-search").value = "";
     nodeAt(nodes, "#run-search").dispatch("input");
 
     nodeAt(nodes, "#status-filter").value = "running";
     nodeAt(nodes, "#status-filter").dispatch("change");
-    await vi.waitFor(() => expect(requests.some(({ path }) => path === "/dashboard/api/runs?limit=30&status=running")).toBe(true));
-    await vi.waitFor(() => expect(nodeAt(nodes, "#runs").children).toHaveLength(1));
+    expect(requests.filter(({ path }) => path === "/dashboard/api/runs?limit=30")).toHaveLength(2);
+    expect(nodeAt(nodes, "#runs").children).toHaveLength(1);
   });
 });
 
 async function mountDashboard(
   publishedUrl: string | undefined = "https://github.com/example/project/pull/7",
   runOverrides: Record<string, unknown> = {},
+  includeSecondRun = false,
 ) {
   const nodes = new Map([
     ["#notice", createNode()],
@@ -468,7 +460,6 @@ async function mountDashboard(
     ["#run-sort", createNode("SELECT")],
     ["#run-count", createNode("P")],
     ["#status-filter", createNode()],
-    ["#load-more", createNode()],
     ["#updated", createNode()],
     ["#snackbar", createNode()],
   ]);
@@ -519,6 +510,16 @@ async function mountDashboard(
     failureMessage: null,
     ...runOverrides,
   };
+  const secondRun = {
+    ...run,
+    runId: "00000000-0000-4000-8000-000000000102",
+    displayId: "soyuz-214",
+    repoUrl: "https://github.com/example/other-project",
+    ref: "feature/cache-fix",
+    createdAt: "2026-10-19T12:00:00.000Z",
+    status: "completed",
+  };
+  const recentRuns = includeSecondRun ? [run, secondRun] : [run];
   const fetcher = vi.fn(async (path: string, init: RequestInit = {}): Promise<FakeResponse> => {
     requests.push({ path, init });
     const requestBody = init.body instanceof URLSearchParams
@@ -534,7 +535,7 @@ async function mountDashboard(
       improvementCategories: [], phaseDurations: [],
     });
     if (path === "/dashboard/api/analysis/feedback-summary") return jsonResponse({ profiles: [] });
-    if (path === "/dashboard/api/runs?limit=30") return jsonResponse({ runs: [run], nextCursor: "cursor+/1" });
+    if (path === "/dashboard/api/runs?limit=30") return jsonResponse({ runs: recentRuns, nextCursor: "cursor+/1" });
     if (path === `/dashboard/api/runs/${runId}`) return jsonResponse({
       ...run,
       outcomeSummary: "Validation passed",
@@ -549,18 +550,6 @@ async function mountDashboard(
     if (path === `/dashboard/api/runs/${runId}/artifacts`) return jsonResponse({ artifacts: [] });
     if (path === `/dashboard/api/runs/${runId}/events?limit=100`) return jsonResponse({ events: initialEvents, nextAfter: 100, hasMore: true });
     if (path === `/dashboard/api/runs/${runId}/events?after=100&limit=100`) return jsonResponse({ events: [{ sequence: 101, type: "run.completed", stage: "validation", step: "checks", timestamp: "2026-10-18T12:02:00.000Z", payload: { status: "completed" } }], nextAfter: 101, hasMore: false });
-    if (path === "/dashboard/api/runs?limit=30&cursor=cursor%2B%2F1") {
-      return jsonResponse({ runs: [{
-        ...run,
-        runId: "00000000-0000-4000-8000-000000000102",
-        displayId: "soyuz-214",
-        repoUrl: "https://github.com/example/other-project",
-        ref: "feature/cache-fix",
-        createdAt: "2026-10-19T12:00:00.000Z",
-        status: "completed",
-      }], nextCursor: null });
-    }
-    if (path === "/dashboard/api/runs?limit=30&status=running") return jsonResponse({ runs: [run], nextCursor: null });
     if (path === "/oauth/token") return { ok: false, status: 503, json: async () => ({}) };
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -586,7 +575,7 @@ async function mountDashboard(
   vi.stubGlobal("clearInterval", vi.fn());
   await import("../dashboard/app.ts");
   await vi.waitFor(() => expect(nodeAt(nodes, "#connect").textContent).toBe("Sign out"));
-  await vi.waitFor(() => expect(nodeAt(nodes, "#runs").children).toHaveLength(1));
+  await vi.waitFor(() => expect(nodeAt(nodes, "#runs").children).toHaveLength(recentRuns.length));
 
   return { nodes, requests, intervalCallbacks, writeClipboard, documentStub, run, runId };
 }

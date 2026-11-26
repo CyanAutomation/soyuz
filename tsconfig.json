@@ -21,6 +21,7 @@
     "tests/migration-history.test.ts",
     "tests/verify-production-database.test.ts",
     "tests/verify-production-migrations.test.ts",
+    "tests/backfill-outcome-summaries.test.ts",
     "tests/run-list.test.ts",
     "tests/dashboard-ui.test.ts",
     "tests/outcome-overview.test.ts"

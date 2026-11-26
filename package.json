@@ -22,6 +22,7 @@
     "cf:types": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply soyuz-runs --local",
     "db:migrate:remote": "wrangler d1 migrations apply soyuz-runs --remote",
+    "db:backfill-outcome-summaries": "node scripts/backfill-outcome-summaries.ts",
     "soyuz:smoke": "node scripts/soyuz-production-smoke.ts"
   },
   "dependencies": {

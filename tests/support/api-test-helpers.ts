@@ -2,6 +2,8 @@ import { env as runtimeEnv } from "cloudflare:workers";
 import { vi } from "vitest";
 import { handleRequest } from "../../src/index";
 import type { Env } from "../../src/env";
+import { RunRequestSchema } from "../../src/contracts/run-request";
+import { serializeRunOutcomeSummary } from "../../src/contracts/run-outcome";
 import { insertRun, getRun, RunTransitionError, transitionRun } from "../../src/db/runs";
 import { reconcileAdmissions, reconcileStalledRuns } from "../../src/queue/reconcile";
 import { purgeExpiredArtifacts } from "../../src/api/artifacts";
@@ -273,6 +275,23 @@ export function validRequest(overrides: Record<string, unknown> = {}) {
     taskPrompt: "Update the project documentation and keep the API examples current.",
     ...overrides,
   };
+}
+
+export async function insertOutcomeRunFixture(env: Env, id: string, createdAt: string, outcomeSummary: unknown): Promise<void> {
+  const request = RunRequestSchema.parse(validRequest());
+  await insertRun(env.DB, {
+    id,
+    request,
+    requestHash: "0".repeat(64),
+    idempotencyKey: null,
+    correlationId: id,
+    requestId: id,
+    createdAt,
+  });
+  const summaryJson = serializeRunOutcomeSummary(outcomeSummary);
+  if (!summaryJson) throw new TypeError("Outcome fixture must be a valid run outcome summary");
+  await env.DB.prepare("UPDATE runs SET result_json = ?, outcome_summary_json = ? WHERE id = ?")
+    .bind(JSON.stringify({ outcomeSummary }), summaryJson, id).run();
 }
 
 export async function clearDatabase(): Promise<void> {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { stableStringify } from "../lib/canonical-json";
 
 export const RunOutcomeSummarySchema = z.object({
   schemaVersion: z.literal(1),
@@ -29,3 +30,22 @@ export const RunOutcomeSummarySchema = z.object({
 });
 
 export type RunOutcomeSummary = z.infer<typeof RunOutcomeSummarySchema>;
+
+function parseRunOutcomeSummary(value: unknown): RunOutcomeSummary | undefined {
+  const parsed = RunOutcomeSummarySchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+export function parseRunOutcomeSummaryJson(value: string | null | undefined): RunOutcomeSummary | undefined {
+  if (!value) return undefined;
+  try {
+    return parseRunOutcomeSummary(JSON.parse(value) as unknown);
+  } catch {
+    return undefined;
+  }
+}
+
+export function serializeRunOutcomeSummary(value: unknown): string | null {
+  const summary = parseRunOutcomeSummary(value);
+  return summary ? stableStringify(summary) : null;
+}

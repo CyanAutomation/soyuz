@@ -1,4 +1,5 @@
 import { insufficientScope, type OAuthResourceAuth, type OAuthResourceContext } from "@cloudflare/workers-oauth-provider";
+import { DASHBOARD_RECENT_RUN_LIMIT } from "../contracts/dashboard";
 import { listRunsPage, readRun, readRunEventsPage, RunApplicationError } from "../application/runs";
 import { parseEventPayload, parseResult, type RunEventRow, type RunRow } from "../db/runs";
 import type { Env } from "../env";
@@ -66,7 +67,7 @@ async function routeDashboardApiRequest(
     return successResponse(requestId, { githubLogin: context.props.githubLogin });
   }
   if (segments.length === 1 && segments[0] === "outcomes") {
-    return await handleRunOutcomes(new Request(new URL("/v1/run-outcomes", url), request), env, requestId)
+    return await handleRunOutcomes(new Request(new URL("/v1/run-outcomes", url), request), env, requestId, DASHBOARD_RECENT_RUN_LIMIT)
       ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
   }
   if (segments.length === 1 && segments[0] === "runs") {

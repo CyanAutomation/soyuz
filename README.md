@@ -86,7 +86,7 @@ All Soyuz↔Kaseki messages carry `contractVersion: "1"`. AI clients discover th
 
 Client and worker keys are static bearer secrets; Soyuz does not assign them an automatic expiry time. Rotating or revoking a configured key makes earlier keys invalid. Authentication errors return 401 with guidance to use the current key; a missing server-side key returns 503 so it is distinguishable from a caller credential error.
 
-The recent-runs dashboard includes a sanitized outcome overview for the newest 30 retained runs. The dashboard continues to use its GitHub OAuth login, user-ID allowlist, sessions, and read-only dashboard access. Cloudflare Access migration remains a separate future workstream.
+The dashboard shows run cards for the newest 30 retained runs and computes its sanitized outcome aggregates across all unexpired runs. It continues to use GitHub OAuth, a user-ID allowlist, and read-only dashboard access. Cloudflare Access migration remains a separate future workstream.
 
 The dashboard's shared design tokens, page headers, toolbars, cards, badges, and DOM helpers are documented in the [dashboard UI foundation](docs/DASHBOARD-UI.md).
 

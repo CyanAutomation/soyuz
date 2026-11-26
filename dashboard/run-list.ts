@@ -1,11 +1,5 @@
 import { getRunStatusPresentation } from "./presentation.js";
-
-const RUN_LIST_LIMIT = 30;
-
-export interface RunListQuery {
-  status?: string | null;
-  cursor?: string | null;
-}
+import { DASHBOARD_RECENT_RUN_LIMIT } from "../src/contracts/dashboard.js";
 
 export interface SearchableRun {
   displayId: string;
@@ -18,11 +12,8 @@ export interface SearchableRun {
 
 export type RunSortOrder = "newest" | "oldest" | "repository" | "status";
 
-export function buildRunListPath(query: RunListQuery = {}): string {
-  const params = new URLSearchParams({ limit: String(RUN_LIST_LIMIT) });
-  if (query.status) params.set("status", query.status);
-  if (query.cursor) params.set("cursor", query.cursor);
-  return `/dashboard/api/runs?${params.toString()}`;
+export function buildRunListPath(): string {
+  return `/dashboard/api/runs?limit=${DASHBOARD_RECENT_RUN_LIMIT}`;
 }
 
 export function isActiveRunStatus(status: string): boolean {
@@ -34,18 +25,21 @@ export function filterAndSortRuns<T extends SearchableRun>(
   runs: readonly T[],
   query: string,
   order: RunSortOrder,
+  status?: string | null,
 ): T[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const filtered = normalizedQuery
-    ? runs.filter((run) => [
+  const filtered = runs.filter((run) => {
+    if (status && run.status !== status) return false;
+    if (!normalizedQuery) return true;
+    return [
       run.displayId,
       run.runId,
       run.repoUrl,
       run.ref,
       run.status.replaceAll("_", " "),
       getRunStatusPresentation(run.status).label,
-    ].join(" ").toLocaleLowerCase().includes(normalizedQuery))
-    : [...runs];
+    ].join(" ").toLocaleLowerCase().includes(normalizedQuery);
+  });
 
   return filtered.sort((left, right) => {
     if (order === "repository") {

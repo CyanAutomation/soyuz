@@ -495,6 +495,9 @@ it("returns a retention response instead of a database error for a late worker c
     expect(completed.body.data.result.publishedUrl).toBe("https://github.com/example/project/pull/7");
     expect(completed.body.data.result.outcomeSummary.scorecard).toMatchObject({ score: 87, grade: "B" });
     expect(completedReplay.body.data.status).toBe("completed");
+    const storedProjection = await bindings.DB.prepare("SELECT outcome_summary_json FROM runs WHERE id = ?")
+      .bind(runId).first<{ outcome_summary_json: string | null }>();
+    expect(JSON.parse(storedProjection?.outcome_summary_json ?? "null")).toEqual(completedBody.outcomeSummary);
 
     await bindings.DB.prepare("UPDATE runs SET repo_url = ? WHERE id = ?")
       .bind("https://user:secret@github.com/example/project?token=private#details", runId).run();

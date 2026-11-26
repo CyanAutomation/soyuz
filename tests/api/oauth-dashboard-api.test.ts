@@ -47,6 +47,7 @@ const {
   countRunEvents,
   memoryArtifactBucket,
   submit,
+  insertOutcomeRunFixture,
   claimRun,
   startRunningRun,
   uploadArtifact,
@@ -220,14 +221,14 @@ beforeEach(clearDatabase);
     const { bindings } = testEnv({ oauth: true });
     const created = await submit(bindings);
     const runId = created.body.data.id as string;
-    await bindings.DB.prepare("UPDATE runs SET result_json = ? WHERE id = ?").bind(JSON.stringify({
-      outcomeSummary: {
+    const outcomeSummary = {
         schemaVersion: 1,
         scorecard: { score: 87, grade: "B", rubricVersion: "v1", completeness: "complete", confidence: 90, scoredAt: "2026-10-18T12:00:00.000Z" },
         evaluation: { assessment: "good", reviewerConfidence: "high", improvementCategories: [{ category: "validation", priority: "medium", count: 2 }] },
         phaseDurationMs: { coding: 120_000 },
-      },
-    }), runId).run();
+    };
+    await bindings.DB.prepare("UPDATE runs SET result_json = ?, outcome_summary_json = ? WHERE id = ?")
+      .bind(JSON.stringify({ outcomeSummary }), JSON.stringify(outcomeSummary), runId).run();
     const accessToken = await createOAuthAccessToken(bindings);
 
     const outcomes = await call(bindings, "/dashboard/api/outcomes", { token: accessToken });
@@ -238,6 +239,38 @@ beforeEach(clearDatabase);
       improvementCategories: [{ category: "validation", priority: "medium", count: 2 }],
     });
     expect(JSON.stringify(outcomes.body.data)).not.toContain("prompt");
+  });
+
+  it("[DASHBOARD-OUTCOMES-UI-30-01] caps dashboard run projections at 30 while aggregating all retained runs", async () => {
+    const { bindings } = testEnv({ oauth: true });
+    for (let index = 0; index < 30; index += 1) {
+      const key = `00000000-0000-4000-8000-${String(index + 5000).padStart(12, "0")}`;
+      await submit(bindings, {}, key);
+    }
+    const outcomeSummary = {
+      schemaVersion: 1,
+      evaluation: { assessment: "good", reviewerConfidence: "high", improvementCategories: [] },
+    };
+    const olderOutcomeRunId = "00000000-0000-4000-8000-000000000131";
+    await insertOutcomeRunFixture(bindings, olderOutcomeRunId, new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000).toISOString(), outcomeSummary);
+    const accessToken = await createOAuthAccessToken(bindings);
+
+    const dashboard = await call(bindings, "/dashboard/api/outcomes", { token: accessToken });
+    expect(dashboard.response.status).toBe(200);
+    expect(dashboard.body.data.scope).toMatchObject({
+      retainedRuns: 31,
+      includedRuns: 31,
+      runsWithOutcomeSummary: 1,
+      returnedRuns: 30,
+      runsTruncated: true,
+    });
+    expect(dashboard.body.data.byAssessment).toEqual({ good: 1 });
+    expect(dashboard.body.data.runs).toHaveLength(30);
+    expect(dashboard.body.data.runs.some((run: { id: string }) => run.id === olderOutcomeRunId)).toBe(false);
+
+    const client = await call(bindings, "/v1/run-outcomes", { token: CLIENT_TOKEN });
+    expect(client.body.data.scope.returnedRuns).toBe(31);
+    expect(client.body.data.runs.some((run: { id: string }) => run.id === olderOutcomeRunId)).toBe(true);
   });
 
   it("[DASHBOARD-SECURITY-01] adds browser security headers to dashboard assets", async () => {
