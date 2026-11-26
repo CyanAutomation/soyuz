@@ -1,0 +1,4739 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Soyuz API",
+    "version": "1.0.0",
+    "summary": "HTTP integration contract for Soyuz",
+    "description": "Soyuz accepts authenticated run requests, stores canonical run state, and exposes run, artifact, publication, and worker lifecycle operations. Successful REST responses use a data/requestId envelope. Errors use an error object containing code, message, and requestId. Run records and associated artifacts are retained for 90 days.",
+    "contact": {
+      "name": "Soyuz support",
+      "url": "https://github.com/CyanAutomation/soyuz/issues"
+    },
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    }
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "The current Soyuz host"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Public service readiness"
+    },
+    {
+      "name": "Discovery",
+      "description": "Public integration discovery"
+    },
+    {
+      "name": "Runs",
+      "description": "Client run lifecycle and history"
+    },
+    {
+      "name": "Agent API",
+      "description": "Bounded, sanitized run operations for agents"
+    },
+    {
+      "name": "Artifacts",
+      "description": "Retained run artifact metadata and downloads"
+    },
+    {
+      "name": "Publications",
+      "description": "Publication status and worker publication admission"
+    },
+    {
+      "name": "Worker callbacks",
+      "description": "Execution host state reads and lifecycle callbacks"
+    },
+    {
+      "name": "Operations",
+      "description": "Run outcome and artifact storage summaries"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "tags": [
+          "Health"
+        ],
+        "summary": "Check Soyuz readiness",
+        "description": "Public readiness check for the Worker, required API credentials, and required D1 schema.",
+        "responses": {
+          "200": {
+            "description": "Soyuz is ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                },
+                "example": {
+                  "status": "ok",
+                  "contractVersion": "1",
+                  "requestId": "00000000-0000-4000-8000-000000000001"
+                }
+              }
+            }
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": []
+      }
+    },
+    "/utcp": {
+      "get": {
+        "operationId": "getUtcpManual",
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Get the UTCP discovery manual",
+        "description": "Returns the public UTCP manual for the bounded agent tools. Its tool templates use the client bearer credential; the manual contains no secret values.",
+        "responses": {
+          "200": {
+            "description": "UTCP manual",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UtcpManual"
+                }
+              }
+            }
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": []
+      }
+    },
+    "/v1/runs": {
+      "get": {
+        "operationId": "listRuns",
+        "tags": [
+          "Runs"
+        ],
+        "summary": "List retained runs",
+        "description": "Returns newest-first run summaries. The default page size is 30 and the maximum is 100. Pagination is independent of the 90-day retention window.",
+        "security": [
+          {
+            "ClientBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Number of runs to return.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 30
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by lifecycle status.",
+            "schema": {
+              "$ref": "#/components/schemas/RunStatus"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque continuation cursor from a previous response.",
+            "schema": {
+              "type": "string",
+              "maxLength": 512
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createRun",
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Submit a run",
+        "description": "Validates and queues a run. A fresh request returns 202. A matching idempotency replay may return 200; reuse the same key and request after an uncertain response. Kaseki submission credentials may also call this operation when configured.",
+        "security": [
+          {
+            "ClientBearer": []
+          },
+          {
+            "KasekiSubmissionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRequest"
+              },
+              "example": {
+                "repoUrl": "https://github.com/example/service",
+                "ref": "main",
+                "taskPrompt": "Add a health endpoint and update the API documentation.",
+                "taskMode": "patch",
+                "publishMode": "pr",
+                "timeoutSeconds": 1800
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Existing run returned for an idempotency replay",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Run admitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/runs/{runId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "get": {
+        "operationId": "getRun",
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Get a run",
+        "security": [
+          {
+            "ClientBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Canonical run state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/runs/{runId}/retry": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "operationId": "retryRun",
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Retry a terminal run",
+        "description": "Creates one new run from a terminal source run. The new run records retryOf. A matching retry idempotency key replays the same run. Kaseki submission credentials may also call this operation when configured.",
+        "security": [
+          {
+            "ClientBearer": []
+          },
+          {
+            "KasekiSubmissionBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryRunRequest"
+              },
+              "example": {
+                "idempotencyKey": "d744c5a2-1d8f-4a2e-bc4d-6813d6fc0133"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Existing retry returned for an idempotency replay",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Retry admitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/runs/{runId}/events": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "get": {
+        "operationId": "listRunEvents",
+        "tags": [
+          "Runs"
+        ],
+        "summary": "List run events",
+        "description": "Returns append-only operational events in sequence order.",
+        "security": [
+          {
+            "ClientBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Return events after this sequence number.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum events to return.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunEventsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/runs/{runId}/cancel": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "operationId": "cancelRun",
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Cancel a run",
+        "description": "Cancels queued or claimed work, or records cancellation intent for running work. Kaseki submission credentials may also call this operation when configured.",
+        "security": [
+          {
+            "ClientBearer": []
+          },
+          {
+            "KasekiSubmissionBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancellation was already recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Cancellation recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/runs/{runId}/artifacts": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "get": {
+        "operationId": "listRunArtifacts",
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "List run artifacts",
+        "description": "Lists retained artifact metadata. Artifact bytes are available from the artifact download operation.",
+        "security": [
+          {
+            "ClientBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Artifact list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/runs/{runId}/artifacts/{artifactId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        },
+        {
+          "$ref": "#/components/parameters/ArtifactId"
+        }
+      ],
+      "get": {
+        "operationId": "downloadRunArtifact",
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Download a run artifact",
+        "description": "Returns the artifact bytes as an attachment after checking caller authorization, run retention, and artifact expiry.",
+        "security": [
+          {
+            "ClientBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Artifact bytes",
+            "headers": {
+              "Content-Disposition": {
+                "description": "Attachment filename",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Length": {
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/runs/{runId}/publication": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "get": {
+        "operationId": "getPublicationStatus",
+        "tags": [
+          "Publications"
+        ],
+        "summary": "Get safe publication status",
+        "description": "Returns a safe publication ledger projection and validated legacy published URL. It never returns manifest bytes, storage keys, raw RPC bodies, or credentials.",
+        "security": [
+          {
+            "ClientBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Publication status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicationStatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/run-outcomes": {
+      "get": {
+        "operationId": "listRunOutcomes",
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Get retained run outcome summaries",
+        "description": "Returns aggregate assessment, grade, score, improvement category, and phase duration summaries across unexpired runs, with a bounded per-run projection.",
+        "security": [
+          {
+            "ClientBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Outcome overview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOutcomesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/storage-usage": {
+      "get": {
+        "operationId": "getStorageUsage",
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Get artifact storage usage",
+        "description": "Returns artifact storage totals, operational cleanup information, upload rejection counts, and a dry-run retention impact projection.",
+        "security": [
+          {
+            "ClientBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Storage usage summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageUsageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/agent/runs": {
+      "get": {
+        "operationId": "listAgentRuns",
+        "tags": [
+          "Agent API"
+        ],
+        "summary": "List sanitized run summaries",
+        "description": "Returns a bounded cursor-paginated projection without worker lease data, request content, arbitrary errors, logs, repository contents, or artifacts. The default and maximum page size is 30.",
+        "security": [
+          {
+            "ClientBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/RunStatus"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30,
+              "default": 30
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 512
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sanitized run page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createAgentRun",
+        "tags": [
+          "Agent API"
+        ],
+        "summary": "Submit an agent-facing run",
+        "description": "Admits a bounded request using the client bearer key and returns a sanitized projection. publishMode defaults to pr. Use idempotencyKey and reuse it after uncertain responses.",
+        "security": [
+          {
+            "ClientBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentRunRequest"
+              },
+              "example": {
+                "repoUrl": "https://github.com/example/service",
+                "taskPrompt": "Add a health endpoint and update the API documentation.",
+                "idempotencyKey": "d744c5a2-1d8f-4a2e-bc4d-6813d6fc0133"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Existing run returned for an idempotency replay",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Agent run admitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/agent/runs/{runId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "get": {
+        "operationId": "getAgentRun",
+        "tags": [
+          "Agent API"
+        ],
+        "summary": "Get sanitized run detail",
+        "security": [
+          {
+            "ClientBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sanitized run detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunDetailResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/agent/runs/{runId}/events": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "get": {
+        "operationId": "listAgentRunEvents",
+        "tags": [
+          "Agent API"
+        ],
+        "summary": "List sanitized run events",
+        "description": "Returns at most 200 events per page. Event payloads are allowlisted and bounded.",
+        "security": [
+          {
+            "ClientBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sanitized event page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentEventsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/agent/runs/{runId}/cancel": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "operationId": "cancelAgentRun",
+        "tags": [
+          "Agent API"
+        ],
+        "summary": "Cancel an agent-facing run",
+        "description": "Records cancellation intent and returns sanitized run detail.",
+        "security": [
+          {
+            "ClientBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancellation already recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunDetailResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Cancellation recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRunDetailResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/worker/runs/{runId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "get": {
+        "operationId": "getWorkerRun",
+        "tags": [
+          "Worker callbacks"
+        ],
+        "summary": "Read canonical run state as a worker",
+        "security": [
+          {
+            "WorkerBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Worker run state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkerRunResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/worker/runs/{runId}/claim": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "operationId": "claimWorkerRun",
+        "tags": [
+          "Worker callbacks"
+        ],
+        "summary": "Claim queued work",
+        "description": "Atomically claims a queued run. callbackId is also the per-attempt fencing token; echo it as claimCallbackId in subsequent callbacks.",
+        "security": [
+          {
+            "WorkerBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkerClaimRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Run claimed or matching claim replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkerRunResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/worker/runs/{runId}/started": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "operationId": "startWorkerRun",
+        "tags": [
+          "Worker callbacks"
+        ],
+        "summary": "Report execution start",
+        "security": [
+          {
+            "WorkerBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkerStartedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Run state updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkerRunResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/worker/runs/{runId}/events": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "operationId": "appendWorkerRunEvent",
+        "tags": [
+          "Worker callbacks"
+        ],
+        "summary": "Append a worker event",
+        "description": "Events are bounded operational metadata, not stdout or stderr. Event payloads are limited to 12 KB. Reuse eventId and the same payload when retrying.",
+        "security": [
+          {
+            "WorkerBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkerEventRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Matching event replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkerEventResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Event recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkerEventResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/worker/runs/{runId}/completed": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "operationId": "completeWorkerRun",
+        "tags": [
+          "Worker callbacks"
+        ],
+        "summary": "Report successful completion",
+        "security": [
+          {
+            "WorkerBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkerCompletedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Run marked completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkerRunResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/worker/runs/{runId}/failed": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "operationId": "failWorkerRun",
+        "tags": [
+          "Worker callbacks"
+        ],
+        "summary": "Report failed execution",
+        "description": "May also persist a pre-execution admission failure for a live claimed run.",
+        "security": [
+          {
+            "WorkerBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkerFailedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Run marked failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkerRunResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/worker/runs/{runId}/cancelled": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "operationId": "confirmWorkerCancellation",
+        "tags": [
+          "Worker callbacks"
+        ],
+        "summary": "Confirm cancellation",
+        "description": "Confirms that a worker has stopped a run. A live claim may also report a confirmed pre-start cancellation.",
+        "security": [
+          {
+            "WorkerBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkerCancelledRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Run marked cancelled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkerRunResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/worker/runs/{runId}/artifacts/{artifactId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        },
+        {
+          "$ref": "#/components/parameters/ArtifactId"
+        }
+      ],
+      "put": {
+        "operationId": "uploadWorkerArtifact",
+        "tags": [
+          "Artifacts",
+          "Worker callbacks"
+        ],
+        "summary": "Upload a run artifact",
+        "description": "Streams one artifact (maximum 25,000,000 bytes); at most 100 artifacts are retained per run. Retries with the same artifact ID, bytes, and metadata are idempotent. Requires the current worker and claim IDs.",
+        "security": [
+          {
+            "WorkerBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Content-Length",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 25000000
+            }
+          },
+          {
+            "name": "X-Artifact-Name",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "Optional printable filename; defaults to artifact-{artifactId}."
+          },
+          {
+            "name": "X-Artifact-Kind",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "log",
+                "patch",
+                "report",
+                "other"
+              ],
+              "default": "other"
+            },
+            "description": "Optional artifact kind; defaults to other."
+          },
+          {
+            "name": "X-Soyuz-Worker-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "X-Soyuz-Claim-Callback-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Soyuz-Engine-Id",
+            "in": "header",
+            "description": "Optional execution engine identifier.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "kaseki-agent",
+                "rusty-fossil",
+                "unknown"
+              ],
+              "default": "unknown"
+            }
+          },
+          {
+            "name": "X-Soyuz-Engine-Version",
+            "in": "header",
+            "description": "Optional engine version.",
+            "schema": {
+              "type": "string",
+              "maxLength": 120
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/zip": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Matching upload replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Artifact stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/worker/runs/{runId}/publication-manifests/{artifactId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        },
+        {
+          "$ref": "#/components/parameters/ArtifactId",
+          "description": "UUIDv7 artifact identifier from the publication manifest."
+        }
+      ],
+      "put": {
+        "operationId": "uploadPublicationManifest",
+        "tags": [
+          "Publications",
+          "Worker callbacks"
+        ],
+        "summary": "Upload a private publication manifest",
+        "description": "Uploads a validated Kirisame publication artifact v1 (maximum request size 9 MiB). Requires the active claim fence and server-side publication policy. The manifest is kept private.",
+        "security": [
+          {
+            "WorkerBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Content-Length",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9437184
+            }
+          },
+          {
+            "name": "X-Soyuz-Worker-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "X-Soyuz-Claim-Callback-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicationManifest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Manifest stored or matching upload replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicationManifestResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Manifest stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicationManifestResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    },
+    "/v1/worker/runs/{runId}/publication-intents": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "operationId": "registerPublicationIntent",
+        "tags": [
+          "Publications",
+          "Worker callbacks"
+        ],
+        "summary": "Register a publication intent",
+        "description": "Registers one idempotent intent for a live run. PR mode requires title and body; branch mode rejects PR metadata. Soyuz checks the uploaded manifest, validation evidence, canonical run destination, and repository allowlist before accepting the intent.",
+        "security": [
+          {
+            "WorkerBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Soyuz-Worker-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "X-Soyuz-Claim-Callback-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicationIntentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Intent registered or matching intent replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicationIntentResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Intent registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicationIntentResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/CommonError"
+          },
+          "default": {
+            "$ref": "#/components/responses/CommonError"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ClientBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "API token",
+        "description": "Client API token sent as Authorization: Bearer <CLIENT_API_TOKEN>."
+      },
+      "KasekiSubmissionBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "scoped API token",
+        "description": "Optional Kaseki submission token. It is restricted to run create, retry, and cancel operations and must differ from the general client token."
+      },
+      "WorkerBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "API token",
+        "description": "Worker API token sent as Authorization: Bearer <WORKER_API_TOKEN>. Keep it distinct from client credentials."
+      }
+    },
+    "parameters": {
+      "RunId": {
+        "name": "runId",
+        "in": "path",
+        "required": true,
+        "description": "Canonical Soyuz run UUID. Do not use the human-facing displayId in API paths.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "ArtifactId": {
+        "name": "artifactId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "description": "Optional RFC UUID for safe retries. If both the header and request body contain a key, they must match.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "responses": {
+      "CommonError": {
+        "description": "Request failed",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "Soyuz is temporarily unavailable",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "requestId"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requestId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "details": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "requestId"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "unavailable"
+            ]
+          },
+          "contractVersion": {
+            "type": "string",
+            "const": "1"
+          },
+          "message": {
+            "type": "string"
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "RunStatus": {
+        "type": "string",
+        "enum": [
+          "admitting",
+          "queued",
+          "claimed",
+          "running",
+          "cancel_requested",
+          "completed",
+          "failed",
+          "cancelled",
+          "admission_failed"
+        ]
+      },
+      "RunRequest": {
+        "type": "object",
+        "required": [
+          "repoUrl"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "repoUrl": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://",
+            "maxLength": 2048,
+            "description": "Absolute HTTPS repository URL."
+          },
+          "projectName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "default": "main"
+          },
+          "taskPrompt": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 32000,
+            "description": "Required unless startupCheck is true."
+          },
+          "changedFilesAllowlist": {
+            "type": "array",
+            "maxItems": 500,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          "allowlist": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "include": {
+                "type": "array",
+                "maxItems": 500,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                }
+              }
+            }
+          },
+          "maxDiffBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000000
+          },
+          "validationCommands": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            }
+          },
+          "autoLintCleanup": {
+            "$ref": "#/components/schemas/AutoLintCleanup"
+          },
+          "validation": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "commands": {
+                "type": "array",
+                "maxItems": 50,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2048
+                }
+              },
+              "autoLintCleanup": {
+                "$ref": "#/components/schemas/AutoLintCleanup"
+              }
+            }
+          },
+          "goalSetting": {
+            "$ref": "#/components/schemas/OptionalRunFeature"
+          },
+          "scouting": {
+            "$ref": "#/components/schemas/OptionalRunFeature"
+          },
+          "goalCheck": {
+            "$ref": "#/components/schemas/GoalCheck"
+          },
+          "runEvaluation": {
+            "$ref": "#/components/schemas/OptionalRunFeature"
+          },
+          "taskMode": {
+            "type": "string",
+            "enum": [
+              "patch",
+              "inspect"
+            ],
+            "default": "patch"
+          },
+          "publishMode": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "none",
+              "branch",
+              "pr"
+            ],
+            "default": "pr"
+          },
+          "startupCheck": {
+            "type": "boolean"
+          },
+          "startupCheckMode": {
+            "type": "string",
+            "enum": [
+              "boot",
+              "baseline-validation"
+            ]
+          },
+          "tracing": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "correlationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "requestId": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 60,
+            "maximum": 10800
+          },
+          "repo_url": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/repoUrl"
+              }
+            ],
+            "description": "Accepted legacy alias for repoUrl."
+          },
+          "project_name": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/projectName"
+              }
+            ],
+            "description": "Accepted legacy alias for projectName."
+          },
+          "git_ref": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/ref"
+              }
+            ],
+            "description": "Accepted legacy alias for ref."
+          },
+          "task_prompt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/taskPrompt"
+              }
+            ],
+            "description": "Accepted legacy alias for taskPrompt."
+          },
+          "changed_files_allowlist": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/changedFilesAllowlist"
+              }
+            ],
+            "description": "Accepted legacy alias for changedFilesAllowlist.",
+            "type": "array"
+          },
+          "max_diff_bytes": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/maxDiffBytes"
+              }
+            ],
+            "description": "Accepted legacy alias for maxDiffBytes."
+          },
+          "validation_commands": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/validationCommands"
+              }
+            ],
+            "description": "Accepted legacy alias for validationCommands.",
+            "type": "array"
+          },
+          "auto_lint_cleanup": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/autoLintCleanup"
+              }
+            ],
+            "description": "Accepted legacy alias for autoLintCleanup."
+          },
+          "goal_setting": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/goalSetting"
+              }
+            ],
+            "description": "Accepted legacy alias for goalSetting."
+          },
+          "scouting_config": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/scouting"
+              }
+            ],
+            "description": "Accepted legacy alias for scouting."
+          },
+          "goal_check": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/goalCheck"
+              }
+            ],
+            "description": "Accepted legacy alias for goalCheck."
+          },
+          "run_evaluation": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/runEvaluation"
+              }
+            ],
+            "description": "Accepted legacy alias for runEvaluation."
+          },
+          "task_mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/taskMode"
+              }
+            ],
+            "description": "Accepted legacy alias for taskMode."
+          },
+          "publish_mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/publishMode"
+              }
+            ],
+            "description": "Accepted legacy alias for publishMode."
+          },
+          "startup_check": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/startupCheck"
+              }
+            ],
+            "description": "Accepted legacy alias for startupCheck."
+          },
+          "startup_check_mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/startupCheckMode"
+              }
+            ],
+            "description": "Accepted legacy alias for startupCheckMode."
+          },
+          "idempotency_key": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/idempotencyKey"
+              }
+            ],
+            "description": "Accepted legacy alias for idempotencyKey."
+          },
+          "timeout_seconds": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RunRequest/properties/timeoutSeconds"
+              }
+            ],
+            "description": "Accepted legacy alias for timeoutSeconds."
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "startupCheck"
+              ],
+              "properties": {
+                "startupCheck": {
+                  "const": true
+                }
+              }
+            },
+            "then": {},
+            "else": {
+              "required": [
+                "taskPrompt"
+              ]
+            }
+          }
+        ]
+      },
+      "AutoLintCleanup": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "commands": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            }
+          }
+        }
+      },
+      "OptionalRunFeature": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 60,
+            "maximum": 10800
+          }
+        }
+      },
+      "RetryRunRequest": {
+        "type": "object",
+        "required": [
+          "idempotencyKey"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "Run": {
+        "type": "object",
+        "required": [
+          "id",
+          "displayId",
+          "status",
+          "repoUrl",
+          "ref",
+          "createdAt",
+          "origin",
+          "retryOf"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "displayId": {
+            "type": "string",
+            "pattern": "^soyuz-[0-9]+$"
+          },
+          "contractVersion": {
+            "type": "string",
+            "const": "1"
+          },
+          "repoUrl": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "projectName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "taskMode": {
+            "type": "string",
+            "enum": [
+              "patch",
+              "inspect"
+            ]
+          },
+          "publishMode": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "none",
+              "branch",
+              "pr"
+            ]
+          },
+          "request": {
+            "$ref": "#/components/schemas/RunRequest"
+          },
+          "result": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "queuedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "startedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "artifactDeliveryStatus": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workerId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "claimExpiresAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "lastHeartbeatAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "operationalHealth": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "healthy",
+              "suspect_stalled"
+            ]
+          },
+          "origin": {
+            "type": "object",
+            "required": [
+              "type",
+              "id"
+            ],
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              }
+            }
+          },
+          "retryOf": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "exitCode": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "failureClass": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failureMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cancelRequestedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "correlationId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "requestId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "RunSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "displayId",
+          "contractVersion",
+          "repoUrl",
+          "ref",
+          "status",
+          "createdAt",
+          "updatedAt",
+          "expiresAt",
+          "origin",
+          "retryOf"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "displayId": {
+            "type": "string",
+            "pattern": "^soyuz-[0-9]+$"
+          },
+          "contractVersion": {
+            "type": "string",
+            "const": "1"
+          },
+          "repoUrl": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "projectName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "taskMode": {
+            "type": "string",
+            "enum": [
+              "patch",
+              "inspect"
+            ]
+          },
+          "publishMode": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "none",
+              "branch",
+              "pr"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "queuedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "startedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "artifactDeliveryStatus": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "operationalHealth": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "healthy",
+              "suspect_stalled"
+            ]
+          },
+          "origin": {
+            "type": "object",
+            "required": [
+              "type",
+              "id"
+            ],
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              }
+            }
+          },
+          "retryOf": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "exitCode": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "failureClass": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failureMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "RunEnvelope": {
+        "type": "object",
+        "required": [
+          "data",
+          "requestId"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Run"
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "RunResponse": {
+        "$ref": "#/components/schemas/RunEnvelope"
+      },
+      "RunListResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "requestId"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "runs",
+              "nextCursor"
+            ],
+            "properties": {
+              "runs": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RunSummary"
+                }
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "RunEvent": {
+        "type": "object",
+        "required": [
+          "runId",
+          "sequence",
+          "eventId",
+          "type",
+          "timestamp",
+          "recordedAt",
+          "payload"
+        ],
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "const": "1"
+          },
+          "runId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sequence": {
+            "type": "integer"
+          },
+          "eventId": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "workerId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "step": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "recordedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "RunEventsResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "requestId"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "events",
+              "nextAfter",
+              "hasMore"
+            ],
+            "properties": {
+              "events": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RunEvent"
+                }
+              },
+              "nextAfter": {
+                "type": "integer"
+              },
+              "hasMore": {
+                "type": "boolean"
+              }
+            }
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "Artifact": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "contentType",
+          "size",
+          "createdAt",
+          "expiresAt",
+          "available"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "log",
+              "patch",
+              "report",
+              "other"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "contentType": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "artifactType": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "type": "integer"
+          },
+          "sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "producerId": {
+            "type": "string"
+          },
+          "engineId": {
+            "type": "string"
+          },
+          "engineVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "available": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ArtifactResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "requestId"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Artifact"
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ArtifactListResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "requestId"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "artifacts"
+            ],
+            "properties": {
+              "artifacts": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Artifact"
+                }
+              }
+            }
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "PublicationStatusResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "requestId"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "publication",
+              "legacyPublishedUrl"
+            ],
+            "properties": {
+              "publication": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/PublicationStatus"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "legacyPublishedUrl": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uri"
+              }
+            }
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "PublicationStatus": {
+        "type": "object",
+        "description": "Safe ledger projection. Internal storage keys, manifest bytes, and raw RPC data are omitted.",
+        "required": [
+          "publicationId",
+          "runId",
+          "contractVersion",
+          "repository",
+          "mode",
+          "state",
+          "attemptCount",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "publicationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "runId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "contractVersion": {
+            "type": "string",
+            "const": "1"
+          },
+          "repository": {
+            "type": "object",
+            "required": [
+              "owner",
+              "name"
+            ],
+            "properties": {
+              "owner": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "branch",
+              "pr"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "publishing",
+              "published",
+              "retryable_failure",
+              "blocked"
+            ]
+          },
+          "attemptCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "nextAttemptAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "lastErrorCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "branchSha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "branchRef": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pullRequestNumber": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "pullRequestUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "RunOutcomesResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "requestId"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "scope",
+              "byAssessment",
+              "byReviewerConfidence",
+              "byGrade",
+              "averageScore",
+              "improvementCategories",
+              "phaseDurations",
+              "runs"
+            ],
+            "properties": {
+              "scope": {
+                "type": "object",
+                "required": [
+                  "retainedRuns",
+                  "includedRuns",
+                  "runsWithOutcomeSummary",
+                  "returnedRuns",
+                  "runsTruncated"
+                ],
+                "properties": {
+                  "retainedRuns": {
+                    "type": "integer"
+                  },
+                  "includedRuns": {
+                    "type": "integer"
+                  },
+                  "runsWithOutcomeSummary": {
+                    "type": "integer"
+                  },
+                  "returnedRuns": {
+                    "type": "integer"
+                  },
+                  "runsTruncated": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "byAssessment": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer"
+                }
+              },
+              "byReviewerConfidence": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer"
+                }
+              },
+              "byGrade": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer"
+                }
+              },
+              "averageScore": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "improvementCategories": {
+                "type": "array",
+                "maxItems": 20,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "category",
+                    "priority",
+                    "count"
+                  ],
+                  "properties": {
+                    "category": {
+                      "type": "string"
+                    },
+                    "priority": {
+                      "type": "string",
+                      "enum": [
+                        "low",
+                        "medium",
+                        "high",
+                        "unknown"
+                      ]
+                    },
+                    "count": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              },
+              "phaseDurations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "phase",
+                    "count",
+                    "averageMs"
+                  ],
+                  "properties": {
+                    "phase": {
+                      "type": "string"
+                    },
+                    "count": {
+                      "type": "integer"
+                    },
+                    "averageMs": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              },
+              "runs": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "displayId",
+                    "repoUrl",
+                    "status",
+                    "createdAt",
+                    "completedAt",
+                    "expiresAt",
+                    "artifactDeliveryStatus",
+                    "outcomeSummary"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "displayId": {
+                      "type": "string"
+                    },
+                    "repoUrl": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "$ref": "#/components/schemas/RunStatus"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "completedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "date-time"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "artifactDeliveryStatus": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "outcomeSummary": {
+                      "oneOf": [
+                        {
+                          "$ref": "#/components/schemas/RunOutcomeSummary"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "StorageUsageResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "requestId"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "asOf",
+              "retentionPolicyVersion",
+              "maximumRetentionDays",
+              "usage",
+              "dryRunRetentionImpact"
+            ],
+            "properties": {
+              "asOf": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "retentionPolicyVersion": {
+                "type": "integer"
+              },
+              "maximumRetentionDays": {
+                "type": "integer"
+              },
+              "usage": {
+                "type": "object",
+                "required": [
+                  "artifactCount",
+                  "totalBytes",
+                  "runCount",
+                  "averageBytesPerRun",
+                  "growth",
+                  "byCategory",
+                  "byExecutionEngine",
+                  "expiredMetadataCount",
+                  "cleanup",
+                  "uploadRejections",
+                  "reconciliation"
+                ],
+                "properties": {
+                  "artifactCount": {
+                    "type": "integer"
+                  },
+                  "totalBytes": {
+                    "type": "integer"
+                  },
+                  "runCount": {
+                    "type": "integer"
+                  },
+                  "averageBytesPerRun": {
+                    "type": "integer"
+                  },
+                  "growth": {
+                    "type": "object",
+                    "properties": {
+                      "successfulUploadsLast7Days": {
+                        "type": "integer"
+                      },
+                      "bytesUploadedLast7Days": {
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  "byCategory": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "category": {
+                          "type": "string"
+                        },
+                        "artifactCount": {
+                          "type": "integer"
+                        },
+                        "totalBytes": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  },
+                  "byExecutionEngine": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "engineId": {
+                          "type": "string"
+                        },
+                        "artifactCount": {
+                          "type": "integer"
+                        },
+                        "totalBytes": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  },
+                  "expiredMetadataCount": {
+                    "type": "integer"
+                  },
+                  "cleanup": {
+                    "type": "object",
+                    "properties": {
+                      "pendingObjectDeletes": {
+                        "type": "integer"
+                      },
+                      "retriedObjectDeletes": {
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  "uploadRejections": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "day": {
+                          "type": "string",
+                          "format": "date"
+                        },
+                        "code": {
+                          "type": "string"
+                        },
+                        "count": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  },
+                  "reconciliation": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              },
+              "dryRunRetentionImpact": {
+                "type": "object",
+                "required": [
+                  "asOf",
+                  "expiredRuns",
+                  "expiredEvents",
+                  "expiredArtifacts",
+                  "expiredPublicationManifests",
+                  "expiredPublicationRecords",
+                  "expiredObjectReferences",
+                  "estimatedObjectBytes",
+                  "queuedObjectDeletions",
+                  "recordsWithInvalidExpiry",
+                  "recordsRequiringManualReconciliation",
+                  "recordsRequiringChecksumReconciliation"
+                ],
+                "properties": {
+                  "asOf": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "expiredRuns": {
+                    "type": "integer"
+                  },
+                  "expiredEvents": {
+                    "type": "integer"
+                  },
+                  "expiredArtifacts": {
+                    "type": "integer"
+                  },
+                  "expiredPublicationManifests": {
+                    "type": "integer"
+                  },
+                  "expiredPublicationRecords": {
+                    "type": "integer"
+                  },
+                  "expiredObjectReferences": {
+                    "type": "integer"
+                  },
+                  "estimatedObjectBytes": {
+                    "type": "integer"
+                  },
+                  "queuedObjectDeletions": {
+                    "type": "integer"
+                  },
+                  "recordsWithInvalidExpiry": {
+                    "type": "integer"
+                  },
+                  "recordsRequiringManualReconciliation": {
+                    "type": "integer"
+                  },
+                  "recordsRequiringChecksumReconciliation": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "AgentRunRequest": {
+        "type": "object",
+        "required": [
+          "repoUrl",
+          "taskPrompt"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "repoUrl": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https://",
+            "maxLength": 2048
+          },
+          "taskPrompt": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 32000
+          },
+          "ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "default": "main"
+          },
+          "taskMode": {
+            "type": "string",
+            "enum": [
+              "patch",
+              "inspect"
+            ],
+            "default": "patch"
+          },
+          "publishMode": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "none",
+              "branch",
+              "pr"
+            ],
+            "default": "pr"
+          },
+          "validationCommands": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            }
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 60,
+            "maximum": 10800
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "AgentRunSummary": {
+        "type": "object",
+        "required": [
+          "runId",
+          "displayId",
+          "status",
+          "createdAt",
+          "repoUrl",
+          "ref",
+          "publishMode"
+        ],
+        "properties": {
+          "runId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "displayId": {
+            "type": "string",
+            "pattern": "^soyuz-[0-9]+$"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "repoUrl": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "publishMode": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "none",
+              "branch",
+              "pr"
+            ]
+          }
+        }
+      },
+      "AgentRunListItem": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AgentRunSummary"
+          }
+        ],
+        "properties": {
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "taskMode": {
+            "type": "string",
+            "enum": [
+              "patch",
+              "inspect"
+            ]
+          },
+          "queuedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "startedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "AgentRunDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AgentRunListItem"
+          }
+        ],
+        "properties": {
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "outcomeSummary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "publishedUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "changedFileCount": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "failureClass": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cancellation": {
+            "type": "object",
+            "required": [
+              "state",
+              "requestedAt"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "requested",
+                  "cancelled"
+                ]
+              },
+              "requestedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      },
+      "AgentRunResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "requestId"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AgentRunSummary"
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "AgentRunListResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "requestId"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "runs",
+              "nextCursor"
+            ],
+            "properties": {
+              "runs": {
+                "type": "array",
+                "maxItems": 30,
+                "items": {
+                  "$ref": "#/components/schemas/AgentRunListItem"
+                }
+              },
+              "nextCursor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "AgentRunDetailResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "requestId"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AgentRunDetail"
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "AgentEvent": {
+        "type": "object",
+        "required": [
+          "sequence",
+          "eventId",
+          "type",
+          "timestamp",
+          "payload"
+        ],
+        "properties": {
+          "sequence": {
+            "type": "integer"
+          },
+          "eventId": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "step": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "maxLength": 160
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "AgentEventsResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "requestId"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "runId",
+              "displayId",
+              "events",
+              "nextAfter",
+              "hasMore"
+            ],
+            "properties": {
+              "runId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "displayId": {
+                "type": "string"
+              },
+              "events": {
+                "type": "array",
+                "maxItems": 200,
+                "items": {
+                  "$ref": "#/components/schemas/AgentEvent"
+                }
+              },
+              "nextAfter": {
+                "type": "integer"
+              },
+              "hasMore": {
+                "type": "boolean"
+              }
+            }
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "WorkerRun": {
+        "type": "object",
+        "required": [
+          "runId",
+          "displayId",
+          "contractVersion",
+          "status",
+          "updatedAt",
+          "origin",
+          "retryOf"
+        ],
+        "properties": {
+          "runId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "displayId": {
+            "type": "string"
+          },
+          "contractVersion": {
+            "type": "string",
+            "const": "1"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunStatus"
+          },
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "claimExpiresAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "cancelRequestedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "workerId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "claimCallbackId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastHeartbeatAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "operationalHealth": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "healthy",
+              "suspect_stalled"
+            ]
+          },
+          "origin": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              }
+            }
+          },
+          "retryOf": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "WorkerRunResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "requestId"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WorkerRun"
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "WorkerClaimRequest": {
+        "type": "object",
+        "required": [
+          "contractVersion",
+          "callbackId",
+          "workerId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "const": "1"
+          },
+          "callbackId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable idempotency key and attempt fencing token."
+          },
+          "workerId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "leaseSeconds": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 300,
+            "default": 120
+          }
+        }
+      },
+      "WorkerStartedRequest": {
+        "type": "object",
+        "required": [
+          "contractVersion",
+          "callbackId",
+          "workerId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "const": "1"
+          },
+          "callbackId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workerId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "claimCallbackId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "stage": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      },
+      "WorkerEventRequest": {
+        "type": "object",
+        "required": [
+          "contractVersion",
+          "eventId",
+          "workerId",
+          "type"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "const": "1"
+          },
+          "eventId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workerId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "claimCallbackId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "stage.changed",
+              "step.changed",
+              "progress.updated",
+              "worker.heartbeat",
+              "validation.completed",
+              "publish.completed",
+              "artifacts.uploaded"
+            ]
+          },
+          "stage": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "step": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "payload": {
+            "type": "object",
+            "default": {},
+            "description": "JSON event metadata, capped at 12 KB."
+          }
+        }
+      },
+      "WorkerEventResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "requestId"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "runId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "sequence": {
+                "type": "integer"
+              },
+              "eventId": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "timestamp": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "additionalProperties": true
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "WorkerCompletedRequest": {
+        "type": "object",
+        "required": [
+          "contractVersion",
+          "callbackId",
+          "workerId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "const": "1"
+          },
+          "callbackId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workerId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "claimCallbackId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "exitCode": {
+            "type": "integer",
+            "const": 0
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "publishedUrl": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048
+          },
+          "changedFileCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          },
+          "outcomeSummary": {
+            "$ref": "#/components/schemas/RunOutcomeSummary"
+          }
+        }
+      },
+      "WorkerFailedRequest": {
+        "type": "object",
+        "required": [
+          "contractVersion",
+          "callbackId",
+          "workerId",
+          "failureClass",
+          "failureMessage"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "const": "1"
+          },
+          "callbackId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workerId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "claimCallbackId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "exitCode": {
+            "type": "integer"
+          },
+          "failureClass": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "failureMessage": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "publishedUrl": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048
+          },
+          "changedFileCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          },
+          "outcomeSummary": {
+            "$ref": "#/components/schemas/RunOutcomeSummary"
+          }
+        }
+      },
+      "WorkerCancelledRequest": {
+        "type": "object",
+        "required": [
+          "contractVersion",
+          "callbackId",
+          "workerId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "const": "1"
+          },
+          "callbackId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workerId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "claimCallbackId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "exitCode": {
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "publishedUrl": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048
+          },
+          "changedFileCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          },
+          "outcomeSummary": {
+            "$ref": "#/components/schemas/RunOutcomeSummary"
+          }
+        }
+      },
+      "PublicationIntentRequest": {
+        "type": "object",
+        "required": [
+          "contractVersion",
+          "artifactId",
+          "artifactDigest",
+          "mode"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "const": "1"
+          },
+          "artifactId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "UUIDv7 of the uploaded publication manifest."
+          },
+          "artifactDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "branch",
+              "pr"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 10000
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "mode": {
+                  "const": "pr"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "title",
+                "body"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "mode": {
+                  "const": "branch"
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "title"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "body"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "PublicationManifest": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Versioned Kirisame publication artifact v1.",
+        "required": [
+          "contractVersion",
+          "artifactId",
+          "runId",
+          "repository",
+          "baseRef",
+          "baseSha",
+          "fileCount",
+          "totalBytes",
+          "files"
+        ],
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "const": "1"
+          },
+          "artifactId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "runId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "repository": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "owner",
+              "name"
+            ],
+            "properties": {
+              "owner": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 39
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              }
+            }
+          },
+          "baseRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "baseSha": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "fileCount": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "totalBytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5242880
+          },
+          "files": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "operation",
+                    "path",
+                    "content"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "add"
+                    },
+                    "path": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1024
+                    },
+                    "content": {
+                      "$ref": "#/components/schemas/PublicationFileContent"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "operation",
+                    "path",
+                    "baseBlobSha",
+                    "content"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "modify"
+                    },
+                    "path": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1024
+                    },
+                    "baseBlobSha": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{40}$"
+                    },
+                    "content": {
+                      "$ref": "#/components/schemas/PublicationFileContent"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "operation",
+                    "path",
+                    "baseBlobSha"
+                  ],
+                  "properties": {
+                    "operation": {
+                      "const": "delete"
+                    },
+                    "path": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1024
+                    },
+                    "baseBlobSha": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{40}$"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "PublicationIntentResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "requestId"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "publicationId",
+              "runId",
+              "state",
+              "mode",
+              "artifactDigest"
+            ],
+            "properties": {
+              "publicationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "runId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "state": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "branch",
+                  "pr"
+                ]
+              },
+              "artifactDigest": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              }
+            }
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "PublicationManifestResponse": {
+        "type": "object",
+        "required": [
+          "data",
+          "requestId"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "runId",
+              "artifactId",
+              "artifactDigest",
+              "size"
+            ],
+            "properties": {
+              "runId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "artifactId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "artifactDigest": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9437184
+              },
+              "expiresAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "UtcpManual": {
+        "type": "object",
+        "required": [
+          "utcp_version",
+          "manual_version",
+          "tools"
+        ],
+        "properties": {
+          "utcp_version": {
+            "type": "string"
+          },
+          "manual_version": {
+            "type": "string"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "description",
+                "inputs",
+                "outputs",
+                "tool_call_template"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "inputs": {
+                  "type": "object"
+                },
+                "outputs": {
+                  "type": "object"
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "tool_call_template": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "GoalCheck": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "maxRetries": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 60,
+            "maximum": 10800
+          }
+        }
+      },
+      "RunOutcomeSummary": {
+        "type": "object",
+        "required": [
+          "schemaVersion"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "integer",
+            "const": 1
+          },
+          "scorecard": {
+            "type": "object",
+            "required": [
+              "score",
+              "grade",
+              "rubricVersion",
+              "completeness",
+              "confidence",
+              "scoredAt"
+            ],
+            "properties": {
+              "score": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "grade": {
+                "type": "string",
+                "enum": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "F"
+                ]
+              },
+              "rubricVersion": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "completeness": {
+                "type": "string",
+                "enum": [
+                  "complete",
+                  "provisional",
+                  "not_applicable",
+                  "unavailable"
+                ]
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "scoredAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          "evaluation": {
+            "type": "object",
+            "required": [
+              "assessment",
+              "reviewerConfidence",
+              "improvementCategories"
+            ],
+            "properties": {
+              "assessment": {
+                "type": "string",
+                "enum": [
+                  "excellent",
+                  "good",
+                  "mixed",
+                  "poor",
+                  "unknown"
+                ]
+              },
+              "reviewerConfidence": {
+                "type": "string",
+                "enum": [
+                  "high",
+                  "medium",
+                  "low",
+                  "unknown"
+                ]
+              },
+              "taskCompletionScore": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5
+              },
+              "improvementCategories": {
+                "type": "array",
+                "maxItems": 20,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "category",
+                    "priority",
+                    "count"
+                  ],
+                  "properties": {
+                    "category": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+                    },
+                    "priority": {
+                      "type": "string",
+                      "enum": [
+                        "low",
+                        "medium",
+                        "high",
+                        "unknown"
+                      ]
+                    },
+                    "count": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 10000
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "phaseDurationMs": {
+            "type": "object",
+            "properties": {
+              "goal_setting": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 86400000
+              },
+              "scouting": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 86400000
+              },
+              "coding": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 86400000
+              },
+              "validation": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 86400000
+              },
+              "goal_check": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 86400000
+              },
+              "run_evaluation": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 86400000
+              }
+            }
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "scorecard"
+            ]
+          },
+          {
+            "required": [
+              "evaluation"
+            ]
+          }
+        ]
+      },
+      "PublicationFileContent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mediaType",
+          "encoding",
+          "byteLength",
+          "sha256",
+          "data"
+        ],
+        "properties": {
+          "mediaType": {
+            "type": "string",
+            "const": "text/plain; charset=utf-8"
+          },
+          "encoding": {
+            "type": "string",
+            "const": "base64"
+          },
+          "byteLength": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1048576
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "data": {
+            "type": "string",
+            "maxLength": 1398104,
+            "contentEncoding": "base64"
+          }
+        }
+      }
+    }
+  }
+}

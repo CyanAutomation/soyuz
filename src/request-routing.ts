@@ -19,6 +19,10 @@ export async function handleRequest(request: Request, env: Env, context?: Execut
       return handleHealth(requestId, env);
     case "utcp":
       return handleUtcpDiscovery(request, env, requestId);
+    case "docs-redirect":
+      return Response.redirect(new URL("/docs/", url), 308);
+    case "docs-assets":
+      return handlePublicAssets(request, env, requestId);
     case "agent-api":
       return handleAgentRequest(request, env, url, requestId);
     case "dashboard-redirect":
@@ -26,7 +30,7 @@ export async function handleRequest(request: Request, env: Env, context?: Execut
     case "dashboard-api":
       return handleDashboardApi(request, env, requestId, executionContext);
     case "dashboard-assets":
-      return handleDashboardAssets(request, env, requestId);
+      return handlePublicAssets(request, env, requestId);
     case "oauth":
       return handleOAuthRequest(request, env, requestId, executionContext);
     case "worker-api":
@@ -38,7 +42,7 @@ export async function handleRequest(request: Request, env: Env, context?: Execut
   }
 }
 
-type RequestRoute = "health" | "utcp" | "agent-api" | "dashboard-redirect" | "dashboard-api" | "dashboard-assets" | "oauth" | "worker-api" | "client-api" | "not-found";
+type RequestRoute = "health" | "utcp" | "agent-api" | "docs-redirect" | "docs-assets" | "dashboard-redirect" | "dashboard-api" | "dashboard-assets" | "oauth" | "worker-api" | "client-api" | "not-found";
 
 function requestRoute(pathname: string, method: string): RequestRoute {
   return controlPlaneRoute(pathname, method)
@@ -51,6 +55,8 @@ function requestRoute(pathname: string, method: string): RequestRoute {
 function controlPlaneRoute(pathname: string, method: string): RequestRoute | null {
   if (pathname === "/health" && method === "GET") return "health";
   if (pathname === "/utcp" && method === "GET") return "utcp";
+  if (pathname === "/docs") return "docs-redirect";
+  if (pathname === "/docs/" || pathname.startsWith("/docs/") || pathname === "/openapi.json") return "docs-assets";
   if (pathname === "/v1/agent/runs" || pathname.startsWith("/v1/agent/runs/")) return "agent-api";
   return null;
 }
@@ -112,7 +118,7 @@ async function handleHealth(requestId: string, env: Env): Promise<Response> {
   }
 }
 
-async function handleDashboardAssets(request: Request, env: Env, requestId: string): Promise<Response> {
+async function handlePublicAssets(request: Request, env: Env, requestId: string): Promise<Response> {
   if (!env.ASSETS) return errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
   const response = await env.ASSETS.fetch(request);
   const headers = new Headers(response.headers);

@@ -9,3 +9,4 @@ dist/
 public/dashboard/*.js
 public/dashboard/**/*.js
 /public/dashboard/analysis/app.js
+public/docs/*.js

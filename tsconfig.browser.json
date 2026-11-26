@@ -12,6 +12,7 @@
   },
   "include": [
     "dashboard/**/*.ts",
+    "docs-ui/**/*.ts",
     "tests/dashboard-api.test.ts",
     "tests/a2ui-renderer.test.ts",
     "tests/run-list.test.ts",
