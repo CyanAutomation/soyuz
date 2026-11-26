@@ -2,7 +2,7 @@
 
 # Soyuz
 
-Soyuz is the Cloudflare control plane for Kaseki. It accepts authenticated run requests, persists canonical run state in D1, publishes versioned jobs to Cloudflare Queues, and records callbacks from Kaseki execution hosts. A separate publication ledger authorizes and tracks Kirisame v1 publications after a successful run; publication errors never change execution status. Production dispatch is enabled through the private Kirisame Service Binding and restricted to the configured repository allowlist.
+Soyuz is the Cloudflare control plane for Kaseki. It accepts authenticated run requests, persists canonical run state in D1, publishes versioned jobs to Cloudflare Queues, and records callbacks from Kaseki execution hosts. A separate publication ledger authorizes and tracks Kirisame v1 publications after a successful run; publication errors never change execution status. The source declares a private Kirisame Service Binding and exact repository policy. See the [Phase 2C.1 readiness snapshot](docs/PHASE-2C1-READINESS.md) for the latest independently verified production state.
 
 ## Local development
 
@@ -76,7 +76,7 @@ PUT  /v1/worker/runs/:id/publication-manifests/:artifactId
 POST /v1/worker/runs/:id/publication-intents
 ```
 
-Artifact uploads require the current worker ID and claim callback ID as headers, are limited to 25 MB each and 100 per run, and are retained for 30 days. The dashboard uses OAuth with an explicit GitHub user-ID allowlist; it exposes read-only run and artifact data.
+Artifact uploads require the current worker ID and claim callback ID as headers, are limited to 25 MB each and 100 per run, and expire with the owning run at its canonical 90-day deadline. The dashboard uses OAuth with an explicit GitHub user-ID allowlist; it exposes read-only run and artifact data.
 
 Publication manifests use a separate private R2 prefix, are capped at 9 MiB, and can only be registered under the active worker claim. Soyuz verifies the Kirisame v1 manifest and canonical SHA-256 digest, requires a matching `validation.completed` event authenticated with the Worker API credential, and checks an exact repository/base/mode allowlist. A publication intent is materialized only after a successful execution with no legacy `publishedUrl`. See [Kirisame publication lifecycle](docs/KIRISAME-PUBLICATION.md) for claim fencing, retries, artifact pins, and migration ordering.
 
@@ -94,7 +94,7 @@ The dashboard's shared design tokens, page headers, toolbars, cards, badges, and
 
 The execution state machine remains unchanged. Kirisame publication has its own `pending`, `publishing`, `published`, `retryable_failure`, and `blocked` states, attempt leases, immutable request fingerprint, and append-only events. The scheduler uses a D1 compare-and-set and bounded retry backoff. It sends the same request and publication ID after uncertain outcomes. `/v1/runs/:id/publication` is a client-authenticated, read-only projection; it does not expose manifests or storage keys. Legacy Kaseki `publishedUrl` remains visible on the run and is never republished.
 
-The source configuration declares a private `KIRISAME` binding and an exact Somatic PR-to-`main` allowlist, with `PUBLICATION_DISPATCH_ENABLED=true`. Production dispatch is enabled; keep the allowlist scoped. Kaseki terminal callbacks can carry only bounded admission metadata, while classifier answers and request text stay on the host. Tests inject the `MockPublisherEntrypoint`; they do not contact GitHub. D1 migration `0009_durable_publications.sql` is additive and must be applied locally for tests; production history already includes it.
+The source configuration declares a private `KIRISAME` binding and an exact Somatic PR-to-`main` allowlist, with `PUBLICATION_DISPATCH_ENABLED=true`. Production Worker settings require independent verification; source configuration alone does not prove a live binding or secret. Kaseki terminal callbacks can carry only bounded admission metadata, while classifier answers and request text stay on the host. Tests inject the `MockPublisherEntrypoint`; they do not contact GitHub. D1 migration `0009_durable_publications.sql` is additive and must be applied locally for tests; production history includes it.
 
 ## Provisioning Cloudflare resources
 

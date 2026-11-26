@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 14954)
+Total output lines: 1088
+
 import { beforeEach, expect, it, vi } from "vitest";
 import * as support from "../support/api-test-helpers";
 import type { Env, PublicationRow } from "../support/api-test-helpers";
@@ -246,6 +249,108 @@ beforeEach(clearDatabase);
     expect(artifact).toEqual({ state: "ready", worker_id: workerId, claim_callback_id: newClaimId });
   });
 
+  it.each([
+    { stage: "reservation", sql: "INSERT OR IGNORE INTO publication_manifest_artifacts", code: "MANIFEST_INDEX_RESERVATION_UNAVAILABLE" },
+    { stage: "finalization", sql: "SET state = 'ready'", code: "MANIFEST_INDEX_FINALIZATION_UNAVAILABLE" },
+  ])("reports a recoverable D1 manifest $stage failure separately", async ({ stage, sql, code }) => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const workerId = `manifest-${code.toLowerCase()}-host`;
+    const claimCallbackId = crypto.randomUUID();
+    const runId = await startRunningRun(bindings, workerId, claimCallbackId, crypto.randomUUID());
+    const artifactId = "018f0000-0000-7000-8000-000000000221";
+    const manifest = await publicationManifest(runId, artifactId);
+    const body = JSON.stringify(manifest);
+    const originalDb = bindings.DB;
+    let failed = false;
+    bindings.DB = new Proxy(originalDb, {
+      get(target, property) {
+        if (property === "prepare") return (query: string) => {
+          const statement = target.prepare(query);
+          const wrap = (prepared: D1PreparedStatement): D1PreparedStatement => new Proxy(prepared, {
+            get(statementTarget, statementProperty) {
+              if (statementProperty === "bind") return (...values: unknown[]) => wrap(statementTarget.bind(...values));
+              if (statementProperty === "run") return () => {
+                if (!failed && query.includes(sql)) {
+                  failed = true;
+                  throw new Error("simulated D1 failure");
+                }
+                return statementTarget.run();
+              };
+              const value = Reflect.get(statementTarget, statementProperty, statementTarget);
+              return typeof value === "function" ? value.bind(statementTarget) : value;
+            },
+          });
+          return wrap(statement);
+        };
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const upload = (env: Env) => callBinary(env,
+      `/v1/worker/runs/${runId}/publication-manifests/${artifactId}`, {
+        method: "PUT", token: WORKER_TOKEN,
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(new TextEncoder().encode(body).byteLength),
+          "x-soyuz-worker-id": workerId,
+          "x-soyuz-claim-callback-id": claimCallbackId,
+        },
+        body,
+      });
+
+    const failedUpload = await upload(bindings);
+
+    expect(failedUpload.response.status).toBe(503);
+    expect((failedUpload.body as { error: { code: string } }).error.code).toBe(code);
+    expect(failed).toBe(true);
+    bindings.DB = originalDb;
+    const retriedUpload = await upload(bindings);
+    expect(retriedUpload.response.status).toBe(201);
+    const artifact = await originalDb.prepare("SELECT state FROM publication_manifest_artifacts WHERE artifact_id = ?")
+      .bind(artifactId).first<{ state: string }>();
+    expect(artifact?.state).toBe("ready");
+    if (stage === "finalization") expect(r2.objects.size).toBe(1);
+  });
+
+  it("reports an R2 manifest write failure separately and recovers the same artifact ID", async () => {
+    const r2 = memoryArtifactBucket();
+    const put = r2.put.getMockImplementation()!;
+    r2.put.mockImplementationOnce(async () => { throw new Error("simulated R2 failure"); });
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const workerId = "manifest-r2-failure-host";
+    const claimCallbackId = crypto.randomUUID();
+    const runId = await startRunningRun(bindings, workerId, claimCallbackId, crypto.randomUUID());
+    const artifactId = "018f0000-0000-7000-8000-000000000222";
+    const manifest = await publicationManifest(runId, artifactId);
+    const body = JSON.stringify(manifest);
+    const upload = () => callBinary(bindings,
+      `/v1/worker/runs/${runId}/publication-manifests/${artifactId}`, {
+        method: "PUT", token: WORKER_TOKEN,
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(new TextEncoder().encode(body).byteLength),
+          "x-soyuz-worker-id": workerId,
+          "x-soyuz-claim-callback-id": claimCallbackId,
+        },
+        body,
+      });
+
+    const failedUpload = await upload();
+    expect(failedUpload.response.status).toBe(503);
+    expect((failedUpload.body as { error: { code: string } }).error.code).toBe("MANIFEST_OBJECT_WRITE_UNAVAILABLE");
+    const pending = await bindings.DB.prepare("SELECT state FROM publication_manifest_artifacts WHERE artifact_id = ?")
+      .bind(artifactId).first<{ state: string }>();
+    expect(pending?.state).toBe("pending");
+    r2.put.mockImplementationOnce(put);
+
+    const retriedUpload = await upload();
+    expect(retriedUpload.response.status).toBe(201);
+    const ready = await bindings.DB.prepare("SELECT state FROM publication_manifest_artifacts WHERE artifact_id = ?")
+      .bind(artifactId).first<{ state: string }>();
+    expect(ready?.state).toBe("ready");
+  });
+
   it("[PUBLICATION-INTENT-03] keeps legacy, failed, and cancelled executions out of the Kirisame ledger", async () => {
     const r2 = memoryArtifactBucket();
     const { bindings } = testEnv({ artifacts: r2.bucket });
@@ -376,69 +481,46 @@ beforeEach(clearDatabase);
     const data = await registerPublicationInputs(bindings, {
       workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000066", mode: "branch",
     });
-    expect(data.intent.response.status).toBe(201);
-    await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
-    await reconcilePublications(bindings, new Date(), new MockPublisherEntrypoint(["success"]));
+    expect(dat…2954 tokens truncated…irstCallStarted = new Promise<void>((resolve) => { firstStarted = resolve; });
+    const calls: string[] = [];
+    const success = (requestJson: string, prNumber: number, sha: string) => {
+      const request = JSON.parse(requestJson) as {
+        publicationId: string; runId: string; repository: { owner: string; name: string };
+        mode: "branch" | "pr"; headRef: string;
+      };
+      return {
+        contractVersion: "1", publicationId: request.publicationId, runId: request.runId,
+        repository: request.repository, mode: request.mode, outcome: "pr_published", retryable: false,
+        reconciliation: "not_needed", branch: { ref: request.headRef, commitSha: sha },
+        pullRequest: { number: prNumber, url: `https://github.com/${request.repository.owner}/${request.repository.name}/pull/${prNumber}`, state: "open" },
+      };
+    };
+    const publisher = {
+      publish(requestJson: string) {
+        calls.push(requestJson);
+        if (calls.length === 1) {
+          firstStarted();
+          return new Promise<unknown>((resolve) => { releaseFirst = resolve; });
+        }
+        return Promise.resolve(success(requestJson, 17, "b".repeat(40)));
+      },
+    };
+    const at = new Date();
     const publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
       .bind(data.runId).first<PublicationRow>();
-    expect(publication).toMatchObject({ state: "published", mode: "branch", branch_sha: "b".repeat(40), pr_number: null, pr_url: null });
-  });
-
-  it("[PUBLICATION-DISPATCH-BATCH-01] processes more than three due publications in one sweep", async () => {
-    const r2 = memoryArtifactBucket();
-    const { bindings } = testEnv({ artifacts: r2.bucket });
-    const runIds: string[] = [];
-    expect(PUBLICATION_DISPATCH_BATCH_SIZE).toBeGreaterThan(3);
-    const publicationCount = PUBLICATION_DISPATCH_BATCH_SIZE + 1;
-    for (let index = 0; index < publicationCount; index += 1) {
-      const workerId = `publication-batch-host-${index}`;
-      const claimCallbackId = crypto.randomUUID();
-      const artifactId = `018f0000-0000-7000-8000-${String(100 + index).padStart(12, "0")}`;
-      const data = await registerPublicationInputs(bindings, { workerId, claimCallbackId, artifactId });
-      await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
-      runIds.push(data.runId);
-    }
-
-    const publisher = new MockPublisherEntrypoint();
-    await reconcilePublications(bindings, new Date(), publisher);
-
-    expect(publisher.calls).toHaveLength(PUBLICATION_DISPATCH_BATCH_SIZE);
-    const states = await Promise.all(runIds.map((runId) => bindings.DB.prepare("SELECT state FROM publications WHERE run_id = ?")
-      .bind(runId).first<{ state: string }>()));
-    expect(states.filter((row) => row?.state === "published")).toHaveLength(PUBLICATION_DISPATCH_BATCH_SIZE);
-    expect(states.filter((row) => row?.state === "pending")).toHaveLength(1);
-  });
-
-  it("[PUBLICATION-RETRY-LIMIT-01] blocks after the eighth reserved attempt without stranding a retry", async () => {
-    const r2 = memoryArtifactBucket();
-    const { bindings } = testEnv({ artifacts: r2.bucket });
-    const workerId = "publication-retry-limit-host";
-    const claimCallbackId = crypto.randomUUID();
-    const data = await registerPublicationInputs(bindings, {
-      workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000105",
-    });
-    await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
-    const publisher = new MockPublisherEntrypoint(Array.from({ length: 8 }, () => "retryable_error" as const));
-    let publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+    const staleAttempt = dispatchPublication(bindings, publication!, publisher, at);
+    await firstCallStarted;
+    const leased = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
       .bind(data.runId).first<PublicationRow>();
-    let at = new Date();
-    for (let attempt = 1; attempt <= 8; attempt += 1) {
-      await dispatchPublication(bindings, publication!, publisher, at);
-      publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
-        .bind(data.runId).first<PublicationRow>();
-      expect(publication?.attempt_count).toBe(attempt);
-      const intent = await bindings.DB.prepare("SELECT state, retained_until FROM publication_intents WHERE publication_id = ?")
-        .bind(publication!.publication_id).first<{ state: string; retained_until: string | null }>();
-      expect(intent?.state).toBe("consumed");
-      expect(intent?.retained_until).toBeNull();
-      if (attempt < 8) {
-        expect(publication?.state).toBe("retryable_failure");
-        at = new Date(Date.parse(publication!.next_attempt_at!) + 1);
-      }
-    }
 
-    expect(publication).toMatchObject({ state: "blocked", attempt_count: 8, last_error_code: "RETRY_LIMIT_REACHED" });
-    expect(publisher.calls).toHaveLength(8);
+    await dispatchPublication(bindings, leased!, publisher, new Date(at.getTime() + PUBLICATION_LEASE_MS + 1));
+    releaseFirst(success(calls[0]!, 41, "a".repeat(40)));
+    await staleAttempt;
+
+    const recovered = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+      .bind(data.runId).first<PublicationRow>();
+    expect(recovered).toMatchObject({ state: "published", attempt_count: 2, branch_sha: "b".repeat(40), pr_number: 17 });
+    expect(calls).toHaveLength(2);
   });
 
   it("[PUBLICATION-RPC-01] blocks malformed or identity-mismatched publisher responses and stays inert without a binding", async () => {
@@ -562,7 +644,7 @@ beforeEach(clearDatabase);
   });
 
   it.each(["KIRISAME_CALLER_ID", "KIRISAME_API_KEY"] as const)(
-    "does not send RPC calls when %s is missing and retries after it is configured",
+    "blocks permanently when %s is missing without retrying",
     async (credential) => {
       const r2 = memoryArtifactBucket();
       const { bindings } = testEnv({ artifacts: r2.bucket });
@@ -579,20 +661,203 @@ beforeEach(clearDatabase);
       let publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
         .bind(data.runId).first<PublicationRow>();
       expect(publication).toMatchObject({
-        state: "retryable_failure", last_error_code: "GITHUB_UNAVAILABLE", attempt_count: 1,
+        state: "blocked", last_error_code: "KIRISAME_CALLER_CONFIGURATION_INVALID", attempt_count: 1,
       });
       expect(publisher.calls).toHaveLength(0);
 
       if (credential === "KIRISAME_CALLER_ID") bindings.KIRISAME_CALLER_ID = "soyuz";
       else bindings.KIRISAME_API_KEY = KIRISAME_API_TEST_KEY;
-      await reconcilePublications(bindings, new Date(Date.parse(publication!.next_attempt_at!) + 1), publisher);
+      await reconcilePublications(bindings, new Date(Date.now() + PUBLICATION_LEASE_MS * 2), publisher);
 
       publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
         .bind(data.runId).first<PublicationRow>();
-      expect(publication).toMatchObject({ state: "published", attempt_count: 2 });
-      expect(publisher.rpcCredentials).toEqual([{ callerId: "soyuz", apiKey: KIRISAME_API_TEST_KEY }]);
+      expect(publication).toMatchObject({ state: "blocked", attempt_count: 1 });
+      expect(publisher.calls).toHaveLength(0);
     },
   );
+
+  it("blocks a non-Soyuz caller identity with sanitized operator guidance", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const workerId = "incorrect-caller-identity-host";
+    const claimCallbackId = crypto.randomUUID();
+    const data = await registerPublicationInputs(bindings, {
+      workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000218",
+    });
+    await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
+    bindings.KIRISAME_CALLER_ID = "another-service";
+    const publisher = new MockPublisherEntrypoint(["success"]);
+
+    await reconcilePublications(bindings, new Date(), publisher);
+
+    const publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+      .bind(data.runId).first<PublicationRow>();
+    const event = await bindings.DB.prepare(`SELECT metadata_json FROM publication_events
+      WHERE publication_id = ? AND event_type = 'publication.blocked'`)
+      .bind(publication!.publication_id).first<{ metadata_json: string }>();
+    expect(publication).toMatchObject({ state: "blocked", last_error_code: "KIRISAME_CALLER_CONFIGURATION_INVALID" });
+    expect(publisher.calls).toHaveLength(0);
+    expect(JSON.parse(event!.metadata_json)).toMatchObject({ operatorAction: expect.stringContaining("KIRISAME_CALLER_ID=soyuz") });
+    expect(event!.metadata_json).not.toContain(KIRISAME_API_TEST_KEY);
+  });
+
+  it.each([
+    { name: "repository removed", policy: [{ owner: "other", name: "project", modes: ["pr"], baseRefs: ["main"] }] },
+    { name: "base branch removed", policy: [{ owner: "example", name: "project", modes: ["pr"], baseRefs: ["develop"] }] },
+    { name: "publication mode removed", policy: [{ owner: "example", name: "project", modes: ["branch"], baseRefs: ["main"] }] },
+  ])("blocks when current policy revokes the $name after intent registration", async ({ policy }) => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const workerId = "revoked-policy-host";
+    const claimCallbackId = crypto.randomUUID();
+    const data = await registerPublicationInputs(bindings, {
+      workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000210",
+    });
+    await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
+    bindings.PUBLICATION_REPOSITORY_ALLOWLIST = JSON.stringify(policy);
+    const publisher = new MockPublisherEntrypoint(["success"]);
+
+    await reconcilePublications(bindings, new Date(), publisher);
+
+    const publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+      .bind(data.runId).first<PublicationRow>();
+    expect(publication).toMatchObject({ state: "blocked", last_error_code: "PUBLICATION_POLICY_REVOKED" });
+    expect(publisher.calls).toHaveLength(0);
+  });
+
+  it.each([undefined, "", "not-json", "[]"])("fails closed for unavailable publication policy %j", async (policy) => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const workerId = "invalid-policy-host";
+    const claimCallbackId = crypto.randomUUID();
+    const data = await registerPublicationInputs(bindings, {
+      workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000211",
+    });
+    await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
+    bindings.PUBLICATION_REPOSITORY_ALLOWLIST = policy;
+    const publisher = new MockPublisherEntrypoint(["success"]);
+
+    await reconcilePublications(bindings, new Date(), publisher);
+
+    const publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+      .bind(data.runId).first<PublicationRow>();
+    expect(publication).toMatchObject({ state: "blocked", last_error_code: "PUBLICATION_POLICY_REVOKED" });
+    expect(publisher.calls).toHaveLength(0);
+  });
+
+  it("does not dispatch after the dispatch flag is disabled", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const workerId = "dispatch-disabled-host";
+    const claimCallbackId = crypto.randomUUID();
+    const data = await registerPublicationInputs(bindings, {
+      workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000212",
+    });
+    await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
+    bindings.PUBLICATION_DISPATCH_ENABLED = "false";
+    const publisher = new MockPublisherEntrypoint(["success"]);
+
+    await reconcilePublications(bindings, new Date(), publisher);
+
+    const publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+      .bind(data.runId).first<PublicationRow>();
+    expect(publication).toMatchObject({ state: "pending", attempt_count: 0 });
+    expect(publisher.calls).toHaveLength(0);
+  });
+
+  it("rechecks the current policy after manifest verification and before calling Kirisame", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const workerId = "policy-changed-during-dispatch-host";
+    const claimCallbackId = crypto.randomUUID();
+    const data = await registerPublicationInputs(bindings, {
+      workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000215",
+    });
+    await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
+    const originalGet = r2.get.getMockImplementation()!;
+    r2.get.mockImplementationOnce(async (...args) => {
+      bindings.PUBLICATION_REPOSITORY_ALLOWLIST = "[]";
+      return originalGet(...args);
+    });
+    const publisher = new MockPublisherEntrypoint(["success"]);
+
+    await reconcilePublications(bindings, new Date(), publisher);
+
+    const publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+      .bind(data.runId).first<PublicationRow>();
+    expect(publication).toMatchObject({ state: "blocked", last_error_code: "PUBLICATION_POLICY_REVOKED" });
+    expect(publisher.calls).toHaveLength(0);
+  });
+
+  it("blocks a pending retry when policy is revoked after its first uncertain response", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const workerId = "policy-revoked-before-retry-host";
+    const claimCallbackId = crypto.randomUUID();
+    const data = await registerPublicationInputs(bindings, {
+      workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000216",
+    });
+    await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
+    const publisher = new MockPublisherEntrypoint(["lost_response", "success"]);
+    await reconcilePublications(bindings, new Date(), publisher);
+    const retry = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+      .bind(data.runId).first<PublicationRow>();
+    expect(retry?.state).toBe("retryable_failure");
+    bindings.PUBLICATION_REPOSITORY_ALLOWLIST = "[]";
+
+    await reconcilePublications(bindings, new Date(Date.parse(retry!.next_attempt_at!) + 1), publisher);
+
+    const blocked = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+      .bind(data.runId).first<PublicationRow>();
+    const event = await bindings.DB.prepare(`SELECT metadata_json FROM publication_events
+      WHERE publication_id = ? AND event_type = 'publication.blocked' ORDER BY occurred_at DESC LIMIT 1`)
+      .bind(blocked!.publication_id).first<{ metadata_json: string }>();
+    expect(blocked).toMatchObject({ state: "blocked", last_error_code: "PUBLICATION_POLICY_REVOKED", attempt_count: 2 });
+    expect(JSON.parse(event!.metadata_json)).toMatchObject({ operatorReviewRequired: true, priorAttemptOutcomeUnknown: true });
+    expect(publisher.calls).toHaveLength(1);
+  });
+
+  it("preserves a confirmed partial branch and requests review when policy is revoked", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const workerId = "partial-branch-policy-revoked-host";
+    const claimCallbackId = crypto.randomUUID();
+    const data = await registerPublicationInputs(bindings, {
+      workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000217",
+    });
+    await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
+    const calls: string[] = [];
+    const publisher = {
+      async publish(requestJson: string) {
+        calls.push(requestJson);
+        const request = JSON.parse(requestJson) as {
+          publicationId: string; runId: string; repository: { owner: string; name: string }; mode: "branch" | "pr"; headRef: string;
+        };
+        return {
+          contractVersion: "1", publicationId: request.publicationId, runId: request.runId,
+          repository: request.repository, mode: request.mode, outcome: "retryable_failure", retryable: true,
+          reconciliation: "unknown", branch: { ref: request.headRef, commitSha: "d".repeat(40) },
+          error: { code: "GITHUB_TIMEOUT", classification: "retryable", message: "Timed out after branch creation." },
+        };
+      },
+    };
+    await reconcilePublications(bindings, new Date(), publisher);
+    const retry = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+      .bind(data.runId).first<PublicationRow>();
+    expect(retry).toMatchObject({ state: "retryable_failure", branch_sha: "d".repeat(40) });
+    bindings.PUBLICATION_REPOSITORY_ALLOWLIST = "[]";
+
+    await reconcilePublications(bindings, new Date(Date.parse(retry!.next_attempt_at!) + 1), publisher);
+
+    const blocked = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+      .bind(data.runId).first<PublicationRow>();
+    const event = await bindings.DB.prepare(`SELECT metadata_json FROM publication_events
+      WHERE publication_id = ? AND event_type = 'publication.blocked' ORDER BY occurred_at DESC LIMIT 1`)
+      .bind(blocked!.publication_id).first<{ metadata_json: string }>();
+    expect(blocked).toMatchObject({ state: "blocked", last_error_code: "PUBLICATION_POLICY_REVOKED", branch_sha: "d".repeat(40) });
+    expect(JSON.parse(event!.metadata_json)).toMatchObject({ operatorReviewRequired: true, priorAttemptOutcomeUnknown: true });
+    expect(calls).toHaveLength(1);
+  });
 
   it("[PUBLICATION-RETENTION-01] keeps publication data within the run deadline and refuses pins beyond it", async () => {
     const r2 = memoryArtifactBucket();

@@ -7,6 +7,7 @@ import {
   handleClientRequest,
   handleDashboardApi,
   handleOAuthRequest,
+  handleOperatorRequest,
   handleWorkerRequest,
 } from "./request-handlers";
 
@@ -35,6 +36,8 @@ export async function handleRequest(request: Request, env: Env, context?: Execut
       return handleOAuthRequest(request, env, requestId, executionContext);
     case "worker-api":
       return handleWorkerRequest(request, env, url, requestId);
+    case "operator-api":
+      return handleOperatorRequest(request, env, requestId);
     case "client-api":
       return handleClientRequest(request, env, url, requestId, executionContext);
     default:
@@ -42,7 +45,7 @@ export async function handleRequest(request: Request, env: Env, context?: Execut
   }
 }
 
-type RequestRoute = "health" | "utcp" | "agent-api" | "docs-redirect" | "docs-assets" | "dashboard-redirect" | "dashboard-api" | "dashboard-assets" | "oauth" | "worker-api" | "client-api" | "not-found";
+type RequestRoute = "health" | "utcp" | "agent-api" | "docs-redirect" | "docs-assets" | "dashboard-redirect" | "dashboard-api" | "dashboard-assets" | "oauth" | "worker-api" | "operator-api" | "client-api" | "not-found";
 
 function requestRoute(pathname: string, method: string): RequestRoute {
   return controlPlaneRoute(pathname, method)
@@ -58,6 +61,7 @@ function controlPlaneRoute(pathname: string, method: string): RequestRoute | nul
   if (pathname === "/docs") return "docs-redirect";
   if (pathname === "/docs/" || pathname.startsWith("/docs/") || pathname === "/openapi.json") return "docs-assets";
   if (pathname === "/v1/agent/runs" || pathname.startsWith("/v1/agent/runs/")) return "agent-api";
+  if (pathname === "/v1/operator/kirisame/preflight" && method === "POST") return "operator-api";
   return null;
 }
 

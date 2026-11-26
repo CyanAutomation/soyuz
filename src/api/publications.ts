@@ -124,27 +124,39 @@ async function uploadManifest(
   const now = new Date().toISOString();
   const expiry = access.run.expires_at;
 
+  let reservation: { existing: ManifestArtifactRow } | { response: Response };
   try {
-    const reservation = await reserveManifestUpload(env, access, artifactId, rawDigest, bytes.byteLength, objectKey, now, expiry, requestId);
-    if ("response" in reservation) return reservation.response;
+    reservation = await reserveManifestUpload(env, access, artifactId, rawDigest, bytes.byteLength, objectKey, now, expiry, requestId);
+  } catch {
+    return errorResponse(requestId, 503, "MANIFEST_INDEX_RESERVATION_UNAVAILABLE", "Soyuz could not reserve the manifest in its D1 index. Retry with the same artifact ID.");
+  }
+  if ("response" in reservation) return reservation.response;
+
+  try {
     await env.ARTIFACTS.put(objectKey, bytes, {
       httpMetadata: { contentType: "application/json; charset=utf-8" },
       customMetadata: { runId: access.run.id, artifactId, kind: "publication_manifest", sha256: validation.digest },
     });
-    const ready = await markManifestReady(env, access, artifactId, rawDigest);
-    if (!ready) {
-      return errorResponse(requestId, 409, "STALE_CLAIM", "Worker claim changed while storing the publication manifest.");
-    }
-    return successResponse(requestId, {
-      artifactId,
-      runId: access.run.id,
-      artifactDigest: validation.digest,
-      size: bytes.byteLength,
-      expiresAt: reservation.existing.state === "ready" ? undefined : expiry,
-    }, reservation.existing.state === "ready" ? 200 : 201);
   } catch {
-    return errorResponse(requestId, 503, "MANIFEST_STORAGE_UNAVAILABLE", "Soyuz could not store the publication manifest. Retry with the same artifact ID.");
+    return errorResponse(requestId, 503, "MANIFEST_OBJECT_WRITE_UNAVAILABLE", "Soyuz could not write the manifest object to R2. Retry with the same artifact ID.");
   }
+
+  let ready: boolean;
+  try {
+    ready = await markManifestReady(env, access, artifactId, rawDigest);
+  } catch {
+    return errorResponse(requestId, 503, "MANIFEST_INDEX_FINALIZATION_UNAVAILABLE", "Soyuz wrote the manifest object but could not finalize its D1 index. Retry with the same artifact ID.");
+  }
+  if (!ready) {
+    return errorResponse(requestId, 409, "STALE_CLAIM", "Worker claim changed while storing the publication manifest.");
+  }
+  return successResponse(requestId, {
+    artifactId,
+    runId: access.run.id,
+    artifactDigest: validation.digest,
+    size: bytes.byteLength,
+    expiresAt: reservation.existing.state === "ready" ? undefined : expiry,
+  }, reservation.existing.state === "ready" ? 200 : 201);
 }
 
 async function readManifestUpload(request: Request, requestId: string): Promise<

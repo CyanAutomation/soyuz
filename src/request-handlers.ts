@@ -9,6 +9,7 @@ import { handleWorkerArtifacts } from "./api/worker-artifacts";
 import { handleWorkerPublication, handleClientPublicationStatus } from "./api/publications";
 import { errorResponse, rateLimitedResponse } from "./api/http";
 import { handleWorkerCallbacks } from "./api/workers";
+import { handleKirisameOperatorPreflight } from "./api/operator-preflight";
 import type { Env } from "./env";
 import { DEFAULT_RUN_ORIGIN, type RunOrigin } from "./application/runs";
 
@@ -102,6 +103,11 @@ export async function handleWorkerRequest(request: Request, env: Env, url: URL, 
   if (publicationResponse) return publicationResponse;
   const response = await handleWorkerCallbacks(request, env, url, requestId);
   return response ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
+}
+
+export async function handleOperatorRequest(request: Request, env: Env, requestId: string): Promise<Response> {
+  return await handleKirisameOperatorPreflight(request, env, requestId)
+    ?? errorResponse(requestId, 404, "NOT_FOUND", "Route was not found");
 }
 
 type ClientAuthorization = { origin: RunOrigin } | { response: Response };
