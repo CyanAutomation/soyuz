@@ -2,7 +2,7 @@
 
 # Soyuz
 
-Soyuz is the Cloudflare control plane for Kaseki. It accepts authenticated run requests, persists canonical run state in D1, publishes versioned jobs to Cloudflare Queues, and records callbacks from Kaseki execution hosts. A separate, opt-in publication ledger can authorize and track Kirisame v1 publications after a successful run; publication errors never change execution status. Production dispatch remains disabled, and the source Service Binding has not yet been deployed.
+Soyuz is the Cloudflare control plane for Kaseki. It accepts authenticated run requests, persists canonical run state in D1, publishes versioned jobs to Cloudflare Queues, and records callbacks from Kaseki execution hosts. A separate publication ledger authorizes and tracks Kirisame v1 publications after a successful run; publication errors never change execution status. Production dispatch is enabled through the private Kirisame Service Binding and restricted to the configured repository allowlist.
 
 ## Local development
 
@@ -94,7 +94,7 @@ The dashboard's shared design tokens, page headers, toolbars, cards, badges, and
 
 The execution state machine remains unchanged. Kirisame publication has its own `pending`, `publishing`, `published`, `retryable_failure`, and `blocked` states, attempt leases, immutable request fingerprint, and append-only events. The scheduler uses a D1 compare-and-set and bounded retry backoff. It sends the same request and publication ID after uncertain outcomes. `/v1/runs/:id/publication` is a client-authenticated, read-only projection; it does not expose manifests or storage keys. Legacy Kaseki `publishedUrl` remains visible on the run and is never republished.
 
-The source configuration has a private `KIRISAME` binding and an exact Somatic PR-to-`main` allowlist, with `PUBLICATION_DISPATCH_ENABLED=false`. Production has not yet received this binding configuration. Kaseki source now implements the claim-bound producer, but the trusted execution host has not received that rollout or enabled its default-off feature flag. Tests inject the `MockPublisherEntrypoint`; they do not contact GitHub. D1 migration `0009_durable_publications.sql` is additive and must be applied locally for tests; production history already includes it. Keep dispatch off until host preflight and per-run legacy-publisher checks pass.
+The source configuration declares a private `KIRISAME` binding and an exact Somatic PR-to-`main` allowlist, with `PUBLICATION_DISPATCH_ENABLED=true`. Production dispatch is enabled; keep the allowlist scoped. Kaseki terminal callbacks can carry only bounded admission metadata, while classifier answers and request text stay on the host. Tests inject the `MockPublisherEntrypoint`; they do not contact GitHub. D1 migration `0009_durable_publications.sql` is additive and must be applied locally for tests; production history already includes it.
 
 ## Provisioning Cloudflare resources
 

@@ -176,7 +176,7 @@ The `0011` migration backfills deadlines from existing canonical run creation ti
 
 The Worker build that reads `0009` fails health checks if those tables are missing. The required order is: review migration impact, apply pending migrations to local D1 and pass migration tests, separately authorize and apply them to production D1, verify production migration history read-only, then promote Worker code. The main-branch workflow can deploy after merge, so do not merge or otherwise trigger that deployment until the production migration is complete. This implementation does not apply the remote migration.
 
-`wrangler.jsonc` declares the private `KIRISAME` Service Binding only in Soyuz, an exact allowlist for `CyanAutomation/somatic` PRs to `main`, and `PUBLICATION_DISPATCH_ENABLED=false`. This source configuration is not yet deployed. Production dispatch remains off until the trusted Kaseki producer and host preflight are ready; a broadening of the allowlist or enabling dispatch requires a separate reviewed rollout. Applying `0009` alone does not enable publishing.
+`wrangler.jsonc` declares the private `KIRISAME` Service Binding only in Soyuz, an exact allowlist for `CyanAutomation/somatic` PRs to `main`, and `PUBLICATION_DISPATCH_ENABLED=true`. Production dispatch is enabled. Keep the allowlist scoped, and verify callback compatibility and identical replay in a canonical-run canary after coordinated rollouts. Applying `0009` alone does not enable publishing.
 
 Generate runtime and binding types after changing Wrangler bindings:
 

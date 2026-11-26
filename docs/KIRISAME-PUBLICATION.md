@@ -1,6 +1,6 @@
 # Kirisame publication lifecycle
 
-Soyuz owns the durable publication authorization, state, retry schedule, and status projection. Kirisame owns GitHub App authentication and GitHub writes. The source configuration declares the private `KIRISAME` binding to `kirisame.PublisherEntrypoint`, an exact Somatic PR-to-`main` allowlist, and `PUBLICATION_DISPATCH_ENABLED=false`; these settings have not yet been deployed. Production D1 migration `0009` is already applied. Kaseki source now implements the trusted host producer, but the execution host rollout and default-off feature flag remain pending. Dispatch stays gated until host preflight and per-run legacy-publisher checks pass.
+Soyuz owns the durable publication authorization, state, retry schedule, and status projection. Kirisame owns GitHub App authentication and GitHub writes. The source configuration declares the private `KIRISAME` binding to `kirisame.PublisherEntrypoint`, an exact Somatic PR-to-`main` allowlist, and `PUBLICATION_DISPATCH_ENABLED=true`; production dispatch is enabled and migration `0009` is applied. Keep the allowlist scoped and use canonical-run canaries with identical replay verification after coordinated producer and callback contract changes.
 
 ## Lifecycle and state model
 
@@ -32,7 +32,7 @@ Soyuz validates the Kirisame `contracts/v1/publication-artifact.schema.json` sha
 
 The trust signal is a `validation.completed` callback sent by the authenticated execution host under the current claim. Its `payload.publicationEvidence` contains `evidenceVersion: "1"`, `outcome: "passed"`, the run/artifact IDs and digest, repository, base ref, and base SHA. Registration requires this event to match the uploaded manifest and current claim. Soyuz does not accept an arbitrary agent field such as `validationPassed: true`. The Worker API credential must remain on the host and must not be mounted into the coding container; this credential boundary is required for the event to represent host validation.
 
-Intent registration uses `POST /v1/worker/runs/:runId/publication-intents` under the same current claim and accepts only contract version `1`, an artifact ID and digest, explicit `branch` or `pr` mode, and PR title/body when applicable. Soyuz requires a canonical `patch` run whose `publishMode` exactly matches this mode. It also requires a JSON `PUBLICATION_REPOSITORY_ALLOWLIST` rule with exact owner, repository name, permitted mode, and base ref. Missing, malformed, or empty rules deny intent creation. Production does not set this variable in Phase 2B.
+Intent registration uses `POST /v1/worker/runs/:runId/publication-intents` under the same current claim and accepts only contract version `1`, an artifact ID and digest, explicit `branch` or `pr` mode, and PR title/body when applicable. Soyuz requires a canonical `patch` run whose `publishMode` exactly matches this mode. It also requires a JSON `PUBLICATION_REPOSITORY_ALLOWLIST` rule with exact owner, repository name, permitted mode, and base ref. Missing, malformed, or empty rules deny intent creation. Production uses the single scoped Somatic PR-to-`main` rule declared in `wrangler.jsonc`.
 
 The first valid intent gets a Soyuz-generated UUIDv7 publication ID. Repeating an identical registration under that same run returns it; changes to manifest, destination, base SHA, mode, PR metadata, or digest conflict. The head ref is fixed to `kirisame/p/{publicationId}`. The fingerprint covers the canonical full v1 RPC request, including the manifest and its digest.
 
@@ -44,7 +44,7 @@ For a Kirisame-routed run, Kaseki persists the route before execution, disables 
 
 ## State model and attempt fencing
 
-The one-minute scheduled Worker reconciliation materializes completed intents and processes due attempts only when a publisher is explicitly injected or dispatch is separately enabled with a binding. Production dispatch remains disabled. Tests inject a local mock and do not contact GitHub.
+The one-minute scheduled Worker reconciliation materializes completed intents and processes due attempts only when a publisher is explicitly injected or dispatch is enabled with a binding. Production dispatch is enabled. Tests inject a local mock and do not contact GitHub.
 
 The reservation is a D1 compare-and-set on publication ID, immutable fingerprint, eligible state/time, and the attempt limit. It sets a random UUIDv7 `attempt_id`, increments `attempt_count`, and writes its event in the same D1 batch. The lease is two minutes. Only the matching current attempt ID may write an RPC result. An expired lease is recorded as reconciled and replaced with a newer fence. A delayed result from an older attempt cannot overwrite the newer result or terminal state.
 

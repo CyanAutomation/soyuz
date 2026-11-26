@@ -26,11 +26,67 @@ const PublicationValidationEvidenceSchema = z.object({
   baseRef: z.string().min(1).max(128),
   baseSha: z.string().regex(/^[a-f0-9]{40}$/),
 }).strict();
+const TaskAdmissionReasonCodeSchema = z.enum([
+  "admitted",
+  "unsafe_condition",
+  "high_risk",
+  "credential_signal",
+  "evaluation_unavailable",
+]);
+const TaskAdmissionSignalSchema = z.enum([
+  "contains_credentials",
+  "changes_permissions",
+  "crosses_security_boundary",
+  "risk_level",
+  "local_credential_signal",
+]);
+const TaskAdmissionSummarySchema = z.enum([
+  "Task admission allowed after safety evaluation.",
+  "Task admission rejected after a high-confidence unsafe-condition classification.",
+  "Task admission rejected after a high-confidence high-risk classification.",
+  "Task admission rejected by deterministic credential screening.",
+  "Task admission evaluation was unavailable; the configured fail-open policy was applied.",
+  "Task admission rejected after a local safety evaluation.",
+  "Task admission rejected after a credential-related safety signal.",
+  "Task admission rejected after a permission-change safety signal.",
+  "Task admission rejected after a security-boundary safety signal.",
+]);
+
+/** Safe, bounded admission metadata; classifier answers and request text stay on Kaseki. */
+const TaskAdmissionOutcomeSchema = z.object({
+  schemaVersion: z.literal(1),
+  status: z.enum(["allowed", "rejected", "degraded"]),
+  reasonCode: TaskAdmissionReasonCodeSchema,
+  signal: TaskAdmissionSignalSchema.optional(),
+  summary: TaskAdmissionSummarySchema,
+  riskLevel: z.enum(["low", "review", "high"]).optional(),
+  riskScore: z.number().int().min(0).max(2).optional(),
+  responseTimeMs: z.number().int().min(0).max(86_400_000),
+  evaluatedAt: z.string().datetime({ offset: true }),
+}).strict().superRefine((result, context) => {
+  if ((result.status === "degraded") !== (result.reasonCode === "evaluation_unavailable")) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["reasonCode"], message: "degraded admission results must use evaluation_unavailable" });
+  }
+  if (result.status === "allowed" && result.reasonCode !== "admitted") {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["reasonCode"], message: "allowed admission results must use admitted" });
+  }
+  if (result.status === "rejected"
+    && !["unsafe_condition", "high_risk", "credential_signal"].some((reasonCode) => reasonCode === result.reasonCode)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["reasonCode"], message: "rejected admission results need a rejection reason" });
+  }
+  if (result.riskScore !== undefined && result.riskLevel !== undefined
+    && result.riskScore !== { low: 0, review: 1, high: 2 }[result.riskLevel]) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["riskScore"], message: "riskScore must match riskLevel" });
+  }
+});
+export type TaskAdmissionOutcome = z.infer<typeof TaskAdmissionOutcomeSchema>;
+
 const TerminalOutcomeFields = {
   summary: z.string().max(2_000).optional(),
   publishedUrl: z.string().url().max(2_048).refine(isHttpUrl, "publishedUrl must use HTTP or HTTPS").optional(),
   changedFileCount: z.number().int().min(0).max(100_000).optional(),
   outcomeSummary: RunOutcomeSummarySchema.optional(),
+  taskAdmission: TaskAdmissionOutcomeSchema.optional(),
 };
 
 export const WorkerStartedSchema = FencedCallbackBase.extend({

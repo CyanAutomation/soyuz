@@ -21,7 +21,7 @@
     "SOYUZ_ENVIRONMENT": "production",
     "SOYUZ_PUBLIC_URL": "https://soyuz.scheimann.workers.dev",
     "SOYUZ_OAUTH_ALLOWED_GITHUB_IDS": "68898852",
-    "PUBLICATION_DISPATCH_ENABLED": "false",
+    "PUBLICATION_DISPATCH_ENABLED": "true",
     "KIRISAME_CALLER_ID": "soyuz",
     "PUBLICATION_REPOSITORY_ALLOWLIST": "[{\"owner\":\"CyanAutomation\",\"name\":\"somatic\",\"modes\":[\"pr\"],\"baseRefs\":[\"main\"]}]"
   },

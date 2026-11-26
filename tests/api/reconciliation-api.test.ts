@@ -495,24 +495,49 @@ beforeEach(clearDatabase);
     const runId = submitted.body.data.id as string;
     await claimRun(bindings, runId, "docker-host-admission");
 
+    const failureBody = {
+      contractVersion: "1",
+      callbackId: "00000000-0000-4000-8000-000000000064",
+      workerId: "docker-host-admission",
+      failureClass: "kaseki_admission_rejected",
+      failureMessage: "Local admission rejected the run.",
+      taskAdmission: {
+        schemaVersion: 1,
+        status: "rejected",
+        reasonCode: "high_risk",
+        signal: "risk_level",
+        summary: "Task admission rejected after a high-confidence high-risk classification.",
+        riskLevel: "high",
+        riskScore: 2,
+        responseTimeMs: 17,
+        evaluatedAt: "2026-11-26T12:00:00.000Z",
+      },
+    };
     const failed = await call(bindings, `/v1/worker/runs/${runId}/failed`, {
       method: "POST",
       token: WORKER_TOKEN,
-      body: {
-        contractVersion: "1",
-        callbackId: "00000000-0000-4000-8000-000000000064",
-        workerId: "docker-host-admission",
-        failureClass: "kaseki_admission_rejected",
-        failureMessage: "Local admission rejected the run.",
-      },
+      body: failureBody,
+    });
+    const replay = await call(bindings, `/v1/worker/runs/${runId}/failed`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: failureBody,
     });
     const stored = await getRun(bindings.DB, runId);
+    const terminalEvent = await bindings.DB.prepare(
+      "SELECT payload_json FROM run_events WHERE run_id = ? AND type = 'run.failed'",
+    ).bind(runId).first<{ payload_json: string }>();
     expect(failed.response.status).toBe(200);
+    expect(replay.response.status).toBe(200);
+    expect(replay.body.data.status).toBe("failed");
+    expect(replay.body.data.result.taskAdmission).toEqual(failureBody.taskAdmission);
     expect(stored).toMatchObject({
       status: "failed",
       started_at: null,
       failure_class: "kaseki_admission_rejected",
       failure_message: "Local admission rejected the run.",
     });
+    expect(JSON.parse(stored?.result_json ?? "null").taskAdmission).toEqual(failureBody.taskAdmission);
+    expect(JSON.parse(terminalEvent?.payload_json ?? "null").taskAdmission).toEqual(failureBody.taskAdmission);
     expect(await countRunEvents(bindings, runId, "run.failed")).toBe(1);
   });
