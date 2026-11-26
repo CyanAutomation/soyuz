@@ -32,7 +32,6 @@ const TaskAdmissionReasonCodeSchema = z.enum([
   "high_risk",
   "credential_signal",
   "evaluation_unavailable",
-  "rejected",
 ]);
 const TaskAdmissionSignalSchema = z.enum([
   "contains_credentials",
@@ -47,7 +46,7 @@ const TaskAdmissionSummarySchema = z.enum([
   "Task admission rejected after a high-confidence high-risk classification.",
   "Task admission rejected by deterministic credential screening.",
   "Task admission evaluation was unavailable; the configured fail-open policy was applied.",
-  "Task admission rejected this run for a local safety condition.",
+  "Task admission rejected after a local safety evaluation.",
   "Task admission rejected after a credential-related safety signal.",
   "Task admission rejected after a permission-change safety signal.",
   "Task admission rejected after a security-boundary safety signal.",
@@ -71,7 +70,8 @@ const TaskAdmissionOutcomeSchema = z.object({
   if (result.status === "allowed" && result.reasonCode !== "admitted") {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["reasonCode"], message: "allowed admission results must use admitted" });
   }
-  if (result.status === "rejected" && ["admitted", "evaluation_unavailable"].includes(result.reasonCode)) {
+  if (result.status === "rejected"
+    && !["unsafe_condition", "high_risk", "credential_signal"].some((reasonCode) => reasonCode === result.reasonCode)) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["reasonCode"], message: "rejected admission results need a rejection reason" });
   }
   if (result.riskScore !== undefined && result.riskLevel !== undefined

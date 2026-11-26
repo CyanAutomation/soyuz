@@ -72,6 +72,15 @@ describe("worker terminal callback contract", () => {
     }).success).toBe(false);
   });
 
+  it('rejects an ambiguous generic reason code for rejected admission', () => {
+    expect(WorkerFailedSchema.safeParse({
+      ...callbackBase,
+      failureClass: 'kaseki_admission_rejected',
+      failureMessage: 'Kaseki rejected this run during local admission.',
+      taskAdmission: { ...taskAdmission, reasonCode: 'rejected' },
+    }).success).toBe(false);
+  });
+
   it("accepts Kaseki terminal outcome fields on cancelled callbacks", () => {
     expect(WorkerCancelledSchema.safeParse({
       ...callbackBase,
