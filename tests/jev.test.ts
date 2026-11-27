@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { buildSenkuInput } from "../src/jev/analysis";
 import { JEV_PROFILE_CONTRACTS, type JevProfileId } from "../src/jev/profiles";
+import { JEV_PROFILE_IDS } from "../src/jev/profile-ids";
+import pinnedProfiles from "../src/jev/senku-profiles.v1.json";
 import { requestSenkuDecision, SenkuDecisionError, SENKU_REQUEST_TIMEOUT_MS } from "../src/jev/senku-client";
 
 const TOKEN = "senku-soyuz-test-token-value-long-enough";
@@ -21,6 +23,25 @@ const OUTPUT_REVIEW_INPUT = {
   canonicalRun: { status: "completed", failureClass: null, exitCode: 0, changedFileCount: 3 },
   summary: "Recorded bounded summary.",
 };
+
+function answerContractsFromSchema(schema: unknown): Record<string, unknown> {
+  const output = schema as { properties?: Record<string, {
+    properties?: Record<string, { const?: unknown; enum?: unknown; maximum?: unknown }>;
+  }> };
+  return Object.fromEntries(Object.entries(output.properties ?? {}).map(([id, answer]) => {
+    const properties = answer.properties ?? {};
+    const type = properties.type?.const;
+    if (type === "noul") return [id, { type }];
+    if (type === "choice") return [id, { type, choices: properties.choice?.enum }];
+    if (type === "score") {
+      const legendProperties = properties.legend as unknown as { properties?: Record<string, { const?: unknown }> };
+      const legend = Object.entries(legendProperties.properties ?? {})
+        .sort(([left], [right]) => Number(left) - Number(right)).map(([, item]) => item.const);
+      return [id, { type, legend }];
+    }
+    throw new Error(`Unsupported pinned answer type for ${id}.`);
+  }));
+}
 
 function validAnswers(profileId: JevProfileId): Record<string, unknown> {
   switch (profileId) {
@@ -113,6 +134,15 @@ function environment(overrides: Partial<Env> = {}): Env {
 }
 
 describe("Soyuz to Senku decision client", () => {
+  it("keeps Soyuz profile IDs and answer contracts aligned with the pinned artifact", () => {
+    const allowedProfiles = pinnedProfiles.profiles.filter((profile) => profile.allowedClients.includes("soyuz"));
+    expect(allowedProfiles.map((profile) => profile.id).sort()).toEqual([...JEV_PROFILE_IDS].sort());
+    for (const profile of allowedProfiles) {
+      expect(JEV_PROFILE_CONTRACTS[profile.id as JevProfileId].answers)
+        .toEqual(answerContractsFromSchema(profile.outputSchema));
+    }
+  });
+
   it("preserves nullable output evidence, accepts exit code -1, and bounds recorded summaries", () => {
     const summary = "😀".repeat(2_001);
     const row = {
@@ -163,13 +193,15 @@ describe("Soyuz to Senku decision client", () => {
   it("sends the versioned profile envelope and machine token through one binding call", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL) => senkuResponse("run_operations_triage_v1"));
     const binding = { fetch: fetchMock } as unknown as Fetcher;
-    const result = await requestSenkuDecision(environment(), "run_operations_triage_v1", TRIAGE_INPUT, binding);
+    const result = await requestSenkuDecision(environment(), "run_operations_triage_v1", TRIAGE_INPUT, binding, undefined, "soyuz-request-42");
 
     expect(binding.fetch).toHaveBeenCalledTimes(1);
     const request = fetchMock.mock.calls[0]![0] as Request;
-    expect(request.url).toBe("https://senku.internal/v1/profiles/run_operations_triage_v1/evaluate");
+    expect(request.url).toBe("https://service.example.invalid/v1/profiles/run_operations_triage_v1/evaluate");
     expect(request.method).toBe("POST");
     expect(request.headers.get("authorization")).toBe("Bearer " + TOKEN);
+    expect(request.headers.get("x-correlation-id")).toBe("soyuz-request-42");
+    expect(Number(request.headers.get("x-senku-deadline-ms"))).toBeGreaterThan(Date.now());
     expect(JSON.parse(await request.clone().text())).toEqual({ schemaVersion: "1", input: TRIAGE_INPUT });
     expect(result).toMatchObject({
       model: "typesafe/jev-test",
@@ -178,6 +210,32 @@ describe("Soyuz to Senku decision client", () => {
       usage: { input_tokens: 120, output_tokens: 80 },
     });
     expect(result.answers).toHaveProperty("needs_followup");
+  });
+
+  it("accepts additive envelope fields and reports more than one provider attempt", async () => {
+    const binding = {
+      fetch: vi.fn(async () => senkuResponse("run_operations_triage_v1", {
+        attemptCount: 2,
+        serverTiming: { providerAttempts: 2 },
+      })),
+    } as unknown as Fetcher;
+
+    const result = await requestSenkuDecision(environment(), "run_operations_triage_v1", TRIAGE_INPUT, binding);
+
+    expect(result.attemptCount).toBe(2);
+  });
+
+  it("maps Senku rate limits to a 429 response with correlation and Retry-After metadata", async () => {
+    const binding = {
+      fetch: vi.fn(async () => new Response(JSON.stringify({
+        error: { code: "PROVIDER_RATE_LIMITED", message: "safe", requestId: "dec-00000000-0000-4000-8000-000000000002" },
+      }), { status: 429, headers: { "content-type": "application/json", "retry-after": "7" } })),
+    } as unknown as Fetcher;
+    await expect(requestSenkuDecision(
+      environment(), "run_operations_triage_v1", TRIAGE_INPUT, binding, undefined, "soyuz-rate-limit-9",
+    )).rejects.toMatchObject({
+      code: "PROVIDER_RATE_LIMITED", correlationId: "soyuz-rate-limit-9", retryAfterSeconds: 7,
+    });
   });
 
   it("uses the existing Soyuz output-review profile IDs and accepts nullable evidence and confidence", async () => {
@@ -232,7 +290,7 @@ describe("Soyuz to Senku decision client", () => {
     ["mismatched score legend", { answers: { ...validAnswers("run_operations_triage_v1"), severity: { ...answerRecord("run_operations_triage_v1", "severity"), legend: { "0": "Routine", "1": "Urgent", "2": "Needs review" } } } }],
     ["invalid confidence", { answers: { ...validAnswers("run_operations_triage_v1"), likely_area: { ...answerRecord("run_operations_triage_v1", "likely_area"), confidence: 2 } } }],
     ["wrong result", { result: {} }],
-    ["invalid attempt count", { attemptCount: 2 }],
+    ["invalid attempt count", { attemptCount: 0 }],
     ["invalid usage", { usage: { input_tokens: -1 } }],
     ["invalid output token count", { usage: { output_tokens: -1 } }],
     ["invalid total token count", { usage: { total_tokens: -1 } }],

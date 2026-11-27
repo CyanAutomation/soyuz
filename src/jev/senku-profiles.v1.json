@@ -1,0 +1,3076 @@
+{
+  "schemaVersion": "1",
+  "compatibilityPolicy": "Response envelope fields may be added. Required fields, meanings, and answer contracts may change only under a new schemaVersion.",
+  "profiles": [
+    {
+      "schemaVersion": "1",
+      "id": "kaseki_context_routing_v1",
+      "version": "1",
+      "name": "Kaseki context routing",
+      "description": "Choose advisory context-preservation or local-output reduction routes from bounded evidence; Kaseki deterministic transformations remain authoritative.",
+      "owner": "kaseki",
+      "questionCount": 32,
+      "dynamicQuestions": true,
+      "maxEvidenceBytes": 32768,
+      "operations": [
+        "evaluate"
+      ],
+      "outputSchema": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 32,
+        "propertyNames": {
+          "pattern": "^(?:route|disposition|(?:file|observation|plan|test)_[0-9]+)$"
+        },
+        "additionalProperties": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "noul",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "noul"
+                },
+                "noul": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "probabilities": {
+                  "type": "object",
+                  "required": [
+                    "false",
+                    "true"
+                  ],
+                  "additionalProperties": false,
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03,
+                  "properties": {
+                    "false": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "true": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "null",
+                  "const": null
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "choice",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "choice"
+                },
+                "choice": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "probabilities": {
+                  "type": "object",
+                  "minProperties": 2,
+                  "maxProperties": 12,
+                  "propertyNames": {
+                    "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                  },
+                  "additionalProperties": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "score",
+                "legend",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "score"
+                },
+                "score": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 11
+                },
+                "legend": {
+                  "type": "object",
+                  "minProperties": 2,
+                  "maxProperties": 12,
+                  "propertyNames": {
+                    "pattern": "^(?:[0-9]|1[01])$"
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000
+                  }
+                },
+                "probabilities": {
+                  "type": "object",
+                  "minProperties": 2,
+                  "maxProperties": 12,
+                  "propertyNames": {
+                    "pattern": "^(?:[0-9]|1[01])$"
+                  },
+                  "additionalProperties": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          ]
+        }
+      },
+      "limits": {
+        "requestBytes": 131072,
+        "maxEvidenceBytes": 32768,
+        "questionCount": 32
+      },
+      "evaluationEndpoint": "/v1/profiles/{profileId}/evaluate",
+      "allowedClients": [
+        "kaseki",
+        "rusty_fossil"
+      ],
+      "outputVariants": {
+        "tool_output": {
+          "type": "object",
+          "required": [
+            "route"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "route": {
+              "type": "object",
+              "required": [
+                "type",
+                "choice",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "choice"
+                },
+                "choice": {
+                  "type": "string",
+                  "enum": [
+                    "preserve",
+                    "compact_repeated",
+                    "structural_code"
+                  ]
+                },
+                "probabilities": {
+                  "type": "object",
+                  "required": [
+                    "preserve",
+                    "compact_repeated",
+                    "structural_code"
+                  ],
+                  "additionalProperties": false,
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03,
+                  "properties": {
+                    "preserve": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "compact_repeated": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "structural_code": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        },
+        "semantic_context": {
+          "type": "object",
+          "required": [
+            "disposition"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "disposition": {
+              "type": "object",
+              "required": [
+                "type",
+                "choice",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "choice"
+                },
+                "choice": {
+                  "type": "string",
+                  "enum": [
+                    "preserve",
+                    "condense",
+                    "discard"
+                  ]
+                },
+                "probabilities": {
+                  "type": "object",
+                  "required": [
+                    "preserve",
+                    "condense",
+                    "discard"
+                  ],
+                  "additionalProperties": false,
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03,
+                  "properties": {
+                    "preserve": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "condense": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "discard": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        },
+        "phase_transfer": {
+          "type": "object",
+          "required": [
+            "file_0",
+            "observation_0",
+            "plan_0",
+            "test_0"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "file_0": {
+              "type": "object",
+              "required": [
+                "type",
+                "choice",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "choice"
+                },
+                "choice": {
+                  "type": "string",
+                  "enum": [
+                    "preserve",
+                    "condense",
+                    "discard"
+                  ]
+                },
+                "probabilities": {
+                  "type": "object",
+                  "required": [
+                    "preserve",
+                    "condense",
+                    "discard"
+                  ],
+                  "additionalProperties": false,
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03,
+                  "properties": {
+                    "preserve": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "condense": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "discard": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            },
+            "observation_0": {
+              "type": "object",
+              "required": [
+                "type",
+                "choice",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "choice"
+                },
+                "choice": {
+                  "type": "string",
+                  "enum": [
+                    "preserve",
+                    "condense",
+                    "discard"
+                  ]
+                },
+                "probabilities": {
+                  "type": "object",
+                  "required": [
+                    "preserve",
+                    "condense",
+                    "discard"
+                  ],
+                  "additionalProperties": false,
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03,
+                  "properties": {
+                    "preserve": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "condense": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "discard": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            },
+            "plan_0": {
+              "type": "object",
+              "required": [
+                "type",
+                "choice",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "choice"
+                },
+                "choice": {
+                  "type": "string",
+                  "enum": [
+                    "preserve",
+                    "condense",
+                    "discard"
+                  ]
+                },
+                "probabilities": {
+                  "type": "object",
+                  "required": [
+                    "preserve",
+                    "condense",
+                    "discard"
+                  ],
+                  "additionalProperties": false,
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03,
+                  "properties": {
+                    "preserve": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "condense": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "discard": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            },
+            "test_0": {
+              "type": "object",
+              "required": [
+                "type",
+                "choice",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "choice"
+                },
+                "choice": {
+                  "type": "string",
+                  "enum": [
+                    "preserve",
+                    "condense",
+                    "discard"
+                  ]
+                },
+                "probabilities": {
+                  "type": "object",
+                  "required": [
+                    "preserve",
+                    "condense",
+                    "discard"
+                  ],
+                  "additionalProperties": false,
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03,
+                  "properties": {
+                    "preserve": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "condense": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "discard": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "schemaVersion": "1",
+      "id": "kaseki_goal_check_v1",
+      "version": "1",
+      "name": "Kaseki goal check",
+      "description": "Assess bounded run evidence against caller-provided goal criteria; the criteria are data and local outcome policy remains authoritative.",
+      "owner": "kaseki",
+      "questionCount": 64,
+      "dynamicQuestions": true,
+      "maxEvidenceBytes": 49152,
+      "operations": [
+        "evaluate"
+      ],
+      "outputSchema": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 64,
+        "propertyNames": {
+          "pattern": "^criterion_[1-9][0-9]*(?:_applicability)?$"
+        },
+        "additionalProperties": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "noul",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "noul"
+                },
+                "noul": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "probabilities": {
+                  "type": "object",
+                  "required": [
+                    "false",
+                    "true"
+                  ],
+                  "additionalProperties": false,
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03,
+                  "properties": {
+                    "false": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "true": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "null",
+                  "const": null
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "choice",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "choice"
+                },
+                "choice": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "probabilities": {
+                  "type": "object",
+                  "minProperties": 2,
+                  "maxProperties": 12,
+                  "propertyNames": {
+                    "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                  },
+                  "additionalProperties": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "score",
+                "legend",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "score"
+                },
+                "score": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 11
+                },
+                "legend": {
+                  "type": "object",
+                  "minProperties": 2,
+                  "maxProperties": 12,
+                  "propertyNames": {
+                    "pattern": "^(?:[0-9]|1[01])$"
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000
+                  }
+                },
+                "probabilities": {
+                  "type": "object",
+                  "minProperties": 2,
+                  "maxProperties": 12,
+                  "propertyNames": {
+                    "pattern": "^(?:[0-9]|1[01])$"
+                  },
+                  "additionalProperties": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          ]
+        }
+      },
+      "limits": {
+        "requestBytes": 131072,
+        "maxEvidenceBytes": 49152,
+        "questionCount": 64
+      },
+      "evaluationEndpoint": "/v1/profiles/{profileId}/evaluate",
+      "allowedClients": [
+        "kaseki",
+        "rusty_fossil"
+      ],
+      "outputVariants": {
+        "with_applicability": {
+          "type": "object",
+          "required": [
+            "criterion_1_applicability",
+            "criterion_1"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "criterion_1_applicability": {
+              "type": "object",
+              "required": [
+                "type",
+                "choice",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "choice"
+                },
+                "choice": {
+                  "type": "string",
+                  "enum": [
+                    "applicable",
+                    "not_applicable",
+                    "unknown"
+                  ]
+                },
+                "probabilities": {
+                  "type": "object",
+                  "required": [
+                    "applicable",
+                    "not_applicable",
+                    "unknown"
+                  ],
+                  "additionalProperties": false,
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03,
+                  "properties": {
+                    "applicable": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "not_applicable": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "unknown": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            },
+            "criterion_1": {
+              "type": "object",
+              "required": [
+                "type",
+                "noul",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "noul"
+                },
+                "noul": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "probabilities": {
+                  "type": "object",
+                  "required": [
+                    "false",
+                    "true"
+                  ],
+                  "additionalProperties": false,
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03,
+                  "properties": {
+                    "false": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "true": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "null",
+                  "const": null
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "schemaVersion": "1",
+      "id": "kaseki_output_review_v1",
+      "version": "1",
+      "name": "Kaseki output review",
+      "description": "Assess the recorded Kaseki result summary against its canonical run status.",
+      "owner": "soyuz",
+      "questionCount": 3,
+      "dynamicQuestions": false,
+      "maxEvidenceBytes": 8192,
+      "operations": [
+        "evaluate"
+      ],
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "summary_specificity",
+          "outcome_alignment",
+          "evidence_strength"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "summary_specificity": {
+            "type": "object",
+            "required": [
+              "type",
+              "noul",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "noul"
+              },
+              "noul": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "false",
+                  "true"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "false": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "true": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": "null",
+                "const": null
+              }
+            }
+          },
+          "outcome_alignment": {
+            "type": "object",
+            "required": [
+              "type",
+              "choice",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "choice"
+              },
+              "choice": {
+                "type": "string",
+                "enum": [
+                  "consistent",
+                  "unclear",
+                  "inconsistent"
+                ]
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "consistent",
+                  "unclear",
+                  "inconsistent"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "consistent": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "unclear": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "inconsistent": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
+          "evidence_strength": {
+            "type": "object",
+            "required": [
+              "type",
+              "score",
+              "legend",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "score"
+              },
+              "score": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "legend": {
+                "type": "object",
+                "required": [
+                  "0",
+                  "1",
+                  "2"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "0": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "const": "Insufficient"
+                  },
+                  "1": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "const": "Some concrete detail"
+                  },
+                  "2": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "const": "Clear and specific"
+                  }
+                }
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "0",
+                  "1",
+                  "2"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "0": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "1": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "2": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          }
+        }
+      },
+      "limits": {
+        "requestBytes": 131072,
+        "maxEvidenceBytes": 8192,
+        "questionCount": 3
+      },
+      "evaluationEndpoint": "/v1/profiles/{profileId}/evaluate",
+      "allowedClients": [
+        "soyuz"
+      ]
+    },
+    {
+      "schemaVersion": "1",
+      "id": "kaseki_output_review_v2",
+      "version": "2",
+      "name": "Kaseki output and outcome review",
+      "description": "Score the recorded Kaseki result and how well it supports the canonical run outcome.",
+      "owner": "soyuz",
+      "questionCount": 4,
+      "dynamicQuestions": false,
+      "maxEvidenceBytes": 8192,
+      "operations": [
+        "evaluate"
+      ],
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "summary_specificity",
+          "outcome_alignment",
+          "evidence_strength",
+          "recorded_outcome"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "summary_specificity": {
+            "type": "object",
+            "required": [
+              "type",
+              "noul",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "noul"
+              },
+              "noul": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "false",
+                  "true"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "false": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "true": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": "null",
+                "const": null
+              }
+            }
+          },
+          "outcome_alignment": {
+            "type": "object",
+            "required": [
+              "type",
+              "choice",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "choice"
+              },
+              "choice": {
+                "type": "string",
+                "enum": [
+                  "consistent",
+                  "unclear",
+                  "inconsistent"
+                ]
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "consistent",
+                  "unclear",
+                  "inconsistent"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "consistent": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "unclear": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "inconsistent": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
+          "evidence_strength": {
+            "type": "object",
+            "required": [
+              "type",
+              "score",
+              "legend",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "score"
+              },
+              "score": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "legend": {
+                "type": "object",
+                "required": [
+                  "0",
+                  "1",
+                  "2"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "0": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "const": "Insufficient"
+                  },
+                  "1": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "const": "Some concrete detail"
+                  },
+                  "2": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "const": "Clear and specific"
+                  }
+                }
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "0",
+                  "1",
+                  "2"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "0": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "1": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "2": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
+          "recorded_outcome": {
+            "type": "object",
+            "required": [
+              "type",
+              "score",
+              "legend",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "score"
+              },
+              "score": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "legend": {
+                "type": "object",
+                "required": [
+                  "0",
+                  "1",
+                  "2"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "0": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "const": "Outcome unclear or unsuccessful"
+                  },
+                  "1": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "const": "Partial or limited outcome evidence"
+                  },
+                  "2": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "const": "Successful and clearly reported outcome"
+                  }
+                }
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "0",
+                  "1",
+                  "2"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "0": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "1": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "2": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          }
+        }
+      },
+      "limits": {
+        "requestBytes": 131072,
+        "maxEvidenceBytes": 8192,
+        "questionCount": 4
+      },
+      "evaluationEndpoint": "/v1/profiles/{profileId}/evaluate",
+      "allowedClients": [
+        "soyuz"
+      ]
+    },
+    {
+      "schemaVersion": "1",
+      "id": "kaseki_run_evaluation_v1",
+      "version": "1",
+      "name": "Kaseki run evaluation",
+      "description": "Score bounded coding-run evidence and provide an advisory failure diagnosis when requested.",
+      "owner": "kaseki",
+      "questionCount": 5,
+      "dynamicQuestions": true,
+      "maxEvidenceBytes": 98304,
+      "operations": [
+        "evaluate"
+      ],
+      "outputSchema": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 5,
+        "propertyNames": {
+          "pattern": "^(?:overall_assessment|reviewer_confidence|task_completion_score|validation_failure_cause|validation_recovery_action)$"
+        },
+        "additionalProperties": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "noul",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "noul"
+                },
+                "noul": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "probabilities": {
+                  "type": "object",
+                  "required": [
+                    "false",
+                    "true"
+                  ],
+                  "additionalProperties": false,
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03,
+                  "properties": {
+                    "false": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "true": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "null",
+                  "const": null
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "choice",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "choice"
+                },
+                "choice": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "probabilities": {
+                  "type": "object",
+                  "minProperties": 2,
+                  "maxProperties": 12,
+                  "propertyNames": {
+                    "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                  },
+                  "additionalProperties": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "type",
+                "score",
+                "legend",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "score"
+                },
+                "score": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 11
+                },
+                "legend": {
+                  "type": "object",
+                  "minProperties": 2,
+                  "maxProperties": 12,
+                  "propertyNames": {
+                    "pattern": "^(?:[0-9]|1[01])$"
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000
+                  }
+                },
+                "probabilities": {
+                  "type": "object",
+                  "minProperties": 2,
+                  "maxProperties": 12,
+                  "propertyNames": {
+                    "pattern": "^(?:[0-9]|1[01])$"
+                  },
+                  "additionalProperties": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          ]
+        }
+      },
+      "limits": {
+        "requestBytes": 131072,
+        "maxEvidenceBytes": 98304,
+        "questionCount": 5
+      },
+      "evaluationEndpoint": "/v1/profiles/{profileId}/evaluate",
+      "allowedClients": [
+        "kaseki",
+        "rusty_fossil"
+      ],
+      "outputVariants": {
+        "with_failure_diagnosis": {
+          "type": "object",
+          "required": [
+            "overall_assessment",
+            "reviewer_confidence",
+            "task_completion_score",
+            "validation_failure_cause",
+            "validation_recovery_action"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "overall_assessment": {
+              "type": "object",
+              "required": [
+                "type",
+                "choice",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "choice"
+                },
+                "choice": {
+                  "type": "string",
+                  "enum": [
+                    "excellent",
+                    "good",
+                    "mixed",
+                    "poor"
+                  ]
+                },
+                "probabilities": {
+                  "type": "object",
+                  "required": [
+                    "excellent",
+                    "good",
+                    "mixed",
+                    "poor"
+                  ],
+                  "additionalProperties": false,
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03,
+                  "properties": {
+                    "excellent": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "good": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "mixed": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "poor": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            },
+            "reviewer_confidence": {
+              "type": "object",
+              "required": [
+                "type",
+                "choice",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "choice"
+                },
+                "choice": {
+                  "type": "string",
+                  "enum": [
+                    "high",
+                    "medium",
+                    "low"
+                  ]
+                },
+                "probabilities": {
+                  "type": "object",
+                  "required": [
+                    "high",
+                    "medium",
+                    "low"
+                  ],
+                  "additionalProperties": false,
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03,
+                  "properties": {
+                    "high": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "medium": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "low": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            },
+            "task_completion_score": {
+              "type": "object",
+              "required": [
+                "type",
+                "score",
+                "legend",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "score"
+                },
+                "score": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 4
+                },
+                "legend": {
+                  "type": "object",
+                  "required": [
+                    "0",
+                    "1",
+                    "2",
+                    "3",
+                    "4"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "0": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1000,
+                      "const": "Largely unrealized"
+                    },
+                    "1": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1000,
+                      "const": "Major requirements unmet"
+                    },
+                    "2": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1000,
+                      "const": "Partially complete"
+                    },
+                    "3": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1000,
+                      "const": "Nearly complete"
+                    },
+                    "4": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1000,
+                      "const": "All requirements verified"
+                    }
+                  }
+                },
+                "probabilities": {
+                  "type": "object",
+                  "required": [
+                    "0",
+                    "1",
+                    "2",
+                    "3",
+                    "4"
+                  ],
+                  "additionalProperties": false,
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03,
+                  "properties": {
+                    "0": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "1": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "2": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "3": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "4": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            },
+            "validation_failure_cause": {
+              "type": "object",
+              "required": [
+                "type",
+                "choice",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "choice"
+                },
+                "choice": {
+                  "type": "string",
+                  "enum": [
+                    "test_failure",
+                    "type_or_lint_failure",
+                    "build_failure",
+                    "dependency_or_environment",
+                    "timeout_or_flaky",
+                    "implementation_logic",
+                    "unknown"
+                  ]
+                },
+                "probabilities": {
+                  "type": "object",
+                  "required": [
+                    "test_failure",
+                    "type_or_lint_failure",
+                    "build_failure",
+                    "dependency_or_environment",
+                    "timeout_or_flaky",
+                    "implementation_logic",
+                    "unknown"
+                  ],
+                  "additionalProperties": false,
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03,
+                  "properties": {
+                    "test_failure": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "type_or_lint_failure": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "build_failure": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "dependency_or_environment": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "timeout_or_flaky": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "implementation_logic": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "unknown": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            },
+            "validation_recovery_action": {
+              "type": "object",
+              "required": [
+                "type",
+                "choice",
+                "probabilities",
+                "confidence"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "choice"
+                },
+                "choice": {
+                  "type": "string",
+                  "enum": [
+                    "fix_implementation",
+                    "repair_environment",
+                    "retry_validation_once",
+                    "inspect_diagnostics"
+                  ]
+                },
+                "probabilities": {
+                  "type": "object",
+                  "required": [
+                    "fix_implementation",
+                    "repair_environment",
+                    "retry_validation_once",
+                    "inspect_diagnostics"
+                  ],
+                  "additionalProperties": false,
+                  "x-probabilitySum": 1,
+                  "x-probabilityTolerance": 0.03,
+                  "properties": {
+                    "fix_implementation": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "repair_environment": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "retry_validation_once": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "inspect_diagnostics": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "schemaVersion": "1",
+      "id": "run_operations_triage_v1",
+      "version": "1",
+      "name": "Run operations triage",
+      "description": "Assess retained Kaseki run operational metadata using Soyuz's approved projection.",
+      "owner": "soyuz",
+      "questionCount": 3,
+      "dynamicQuestions": false,
+      "maxEvidenceBytes": 12288,
+      "operations": [
+        "evaluate"
+      ],
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "needs_followup",
+          "likely_area",
+          "severity"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "needs_followup": {
+            "type": "object",
+            "required": [
+              "type",
+              "noul",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "noul"
+              },
+              "noul": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "false",
+                  "true"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "false": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "true": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": "null",
+                "const": null
+              }
+            }
+          },
+          "likely_area": {
+            "type": "object",
+            "required": [
+              "type",
+              "choice",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "choice"
+              },
+              "choice": {
+                "type": "string",
+                "enum": [
+                  "execution",
+                  "control_plane",
+                  "unknown"
+                ]
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "execution",
+                  "control_plane",
+                  "unknown"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "execution": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "control_plane": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "unknown": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
+          "severity": {
+            "type": "object",
+            "required": [
+              "type",
+              "score",
+              "legend",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "score"
+              },
+              "score": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "legend": {
+                "type": "object",
+                "required": [
+                  "0",
+                  "1",
+                  "2"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "0": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "const": "Routine"
+                  },
+                  "1": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "const": "Needs review"
+                  },
+                  "2": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "const": "Urgent"
+                  }
+                }
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "0",
+                  "1",
+                  "2"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "0": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "1": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "2": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          }
+        }
+      },
+      "limits": {
+        "requestBytes": 131072,
+        "maxEvidenceBytes": 12288,
+        "questionCount": 3
+      },
+      "evaluationEndpoint": "/v1/profiles/{profileId}/evaluate",
+      "allowedClients": [
+        "soyuz"
+      ]
+    },
+    {
+      "schemaVersion": "1",
+      "id": "run_retry_review_v1",
+      "version": "1",
+      "name": "Soyuz run retry review",
+      "description": "Compare bounded canonical records for a retry and its source run.",
+      "owner": "soyuz",
+      "questionCount": 3,
+      "dynamicQuestions": false,
+      "maxEvidenceBytes": 20480,
+      "operations": [
+        "evaluate"
+      ],
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "recovery",
+          "evidence_strength",
+          "needs_followup"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "recovery": {
+            "type": "object",
+            "required": [
+              "type",
+              "choice",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "choice"
+              },
+              "choice": {
+                "type": "string",
+                "enum": [
+                  "recovered",
+                  "partial",
+                  "not_recovered",
+                  "unclear"
+                ]
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "recovered",
+                  "partial",
+                  "not_recovered",
+                  "unclear"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "recovered": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "partial": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "not_recovered": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "unclear": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
+          "evidence_strength": {
+            "type": "object",
+            "required": [
+              "type",
+              "score",
+              "legend",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "score"
+              },
+              "score": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "legend": {
+                "type": "object",
+                "required": [
+                  "0",
+                  "1",
+                  "2"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "0": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "const": "Insufficient"
+                  },
+                  "1": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "const": "Some concrete detail"
+                  },
+                  "2": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                    "const": "Clear and specific"
+                  }
+                }
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "0",
+                  "1",
+                  "2"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "0": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "1": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "2": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
+          "needs_followup": {
+            "type": "object",
+            "required": [
+              "type",
+              "noul",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "noul"
+              },
+              "noul": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "false",
+                  "true"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "false": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "true": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": "null",
+                "const": null
+              }
+            }
+          }
+        }
+      },
+      "limits": {
+        "requestBytes": 131072,
+        "maxEvidenceBytes": 20480,
+        "questionCount": 3
+      },
+      "evaluationEndpoint": "/v1/profiles/{profileId}/evaluate",
+      "allowedClients": [
+        "soyuz"
+      ]
+    },
+    {
+      "schemaVersion": "1",
+      "id": "task_admission_v1",
+      "version": "1",
+      "name": "Task admission classification",
+      "description": "Provide advisory risk and routing classifications; Kaseki's deterministic admission policy remains authoritative.",
+      "owner": "kaseki",
+      "questionCount": 6,
+      "dynamicQuestions": false,
+      "maxEvidenceBytes": 32768,
+      "operations": [
+        "evaluate"
+      ],
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "contains_credentials",
+          "changes_permissions",
+          "crosses_security_boundary",
+          "risk_level",
+          "task_type",
+          "validation_focus"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "contains_credentials": {
+            "type": "object",
+            "required": [
+              "type",
+              "noul",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "noul"
+              },
+              "noul": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "false",
+                  "true"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "false": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "true": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": "null",
+                "const": null
+              }
+            }
+          },
+          "changes_permissions": {
+            "type": "object",
+            "required": [
+              "type",
+              "noul",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "noul"
+              },
+              "noul": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "false",
+                  "true"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "false": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "true": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": "null",
+                "const": null
+              }
+            }
+          },
+          "crosses_security_boundary": {
+            "type": "object",
+            "required": [
+              "type",
+              "noul",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "noul"
+              },
+              "noul": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "false",
+                  "true"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "false": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "true": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": "null",
+                "const": null
+              }
+            }
+          },
+          "risk_level": {
+            "type": "object",
+            "required": [
+              "type",
+              "choice",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "choice"
+              },
+              "choice": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "review",
+                  "high"
+                ]
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "low",
+                  "review",
+                  "high"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "low": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "review": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "high": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
+          "task_type": {
+            "type": "object",
+            "required": [
+              "type",
+              "choice",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "choice"
+              },
+              "choice": {
+                "type": "string",
+                "enum": [
+                  "feature",
+                  "bug_fix",
+                  "refactor",
+                  "documentation",
+                  "investigation",
+                  "test_only",
+                  "infrastructure"
+                ]
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "feature",
+                  "bug_fix",
+                  "refactor",
+                  "documentation",
+                  "investigation",
+                  "test_only",
+                  "infrastructure"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "feature": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "bug_fix": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "refactor": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "documentation": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "investigation": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "test_only": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "infrastructure": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
+          "validation_focus": {
+            "type": "object",
+            "required": [
+              "type",
+              "choice",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "choice"
+              },
+              "choice": {
+                "type": "string",
+                "enum": [
+                  "unit_tests",
+                  "integration_tests",
+                  "type_and_lint",
+                  "docs_checks",
+                  "repo_defined_checks"
+                ]
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "unit_tests",
+                  "integration_tests",
+                  "type_and_lint",
+                  "docs_checks",
+                  "repo_defined_checks"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "unit_tests": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "integration_tests": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "type_and_lint": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "docs_checks": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "repo_defined_checks": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          }
+        }
+      },
+      "limits": {
+        "requestBytes": 131072,
+        "maxEvidenceBytes": 32768,
+        "questionCount": 6
+      },
+      "evaluationEndpoint": "/v1/profiles/{profileId}/evaluate",
+      "allowedClients": [
+        "kaseki",
+        "rusty_fossil"
+      ]
+    },
+    {
+      "schemaVersion": "1",
+      "id": "validation_recovery_v1",
+      "version": "1",
+      "name": "Validation recovery classification",
+      "description": "Classify bounded validation failure evidence and recommend an advisory next step.",
+      "owner": "kaseki",
+      "questionCount": 2,
+      "dynamicQuestions": false,
+      "maxEvidenceBytes": 8192,
+      "operations": [
+        "evaluate"
+      ],
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "validation_failure_cause",
+          "validation_recovery_action"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "validation_failure_cause": {
+            "type": "object",
+            "required": [
+              "type",
+              "choice",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "choice"
+              },
+              "choice": {
+                "type": "string",
+                "enum": [
+                  "test_failure",
+                  "type_or_lint_failure",
+                  "build_failure",
+                  "dependency_or_environment",
+                  "timeout_or_flaky",
+                  "implementation_logic",
+                  "unknown"
+                ]
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "test_failure",
+                  "type_or_lint_failure",
+                  "build_failure",
+                  "dependency_or_environment",
+                  "timeout_or_flaky",
+                  "implementation_logic",
+                  "unknown"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "test_failure": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "type_or_lint_failure": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "build_failure": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "dependency_or_environment": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "timeout_or_flaky": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "implementation_logic": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "unknown": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
+          "validation_recovery_action": {
+            "type": "object",
+            "required": [
+              "type",
+              "choice",
+              "probabilities",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "choice"
+              },
+              "choice": {
+                "type": "string",
+                "enum": [
+                  "fix_implementation",
+                  "repair_environment",
+                  "retry_validation_once",
+                  "inspect_diagnostics"
+                ]
+              },
+              "probabilities": {
+                "type": "object",
+                "required": [
+                  "fix_implementation",
+                  "repair_environment",
+                  "retry_validation_once",
+                  "inspect_diagnostics"
+                ],
+                "additionalProperties": false,
+                "x-probabilitySum": 1,
+                "x-probabilityTolerance": 0.03,
+                "properties": {
+                  "fix_implementation": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "repair_environment": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "retry_validation_once": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "inspect_diagnostics": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              },
+              "confidence": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          }
+        }
+      },
+      "limits": {
+        "requestBytes": 131072,
+        "maxEvidenceBytes": 8192,
+        "questionCount": 2
+      },
+      "evaluationEndpoint": "/v1/profiles/{profileId}/evaluate",
+      "allowedClients": [
+        "kaseki",
+        "rusty_fossil"
+      ]
+    }
+  ]
+}

@@ -56,7 +56,7 @@ export async function handleJevAnalysisRequest(
       }
     }
     const input = buildSenkuInput(parsed.data.profileId, row, sourceRow);
-    const decision = await requestSenkuDecision(env, parsed.data.profileId, input, senkuBinding);
+    const decision = await requestSenkuDecision(env, parsed.data.profileId, input, senkuBinding, undefined, requestId);
     outcome = "success";
     model = decision.model;
     senkuRequestId = decision.requestId;
@@ -80,6 +80,11 @@ export async function handleJevAnalysisRequest(
           return errorResponse(requestId, 504, "JEV_PROVIDER_TIMEOUT", "JEV analysis timed out. Retry shortly.");
         case "PROVIDER_UNAVAILABLE":
           return errorResponse(requestId, 502, "JEV_PROVIDER_UNAVAILABLE", "JEV analysis could not reach Senku.");
+        case "PROVIDER_RATE_LIMITED":
+          return errorResponse(requestId, 429, "JEV_PROVIDER_RATE_LIMITED", "JEV analysis is temporarily rate limited. Retry shortly.", {
+            details: { correlationId: error.correlationId, senkuRequestId: error.senkuRequestId },
+            ...(error.retryAfterSeconds === undefined ? {} : { headers: { "retry-after": String(error.retryAfterSeconds) } }),
+          });
         case "INVALID_RESPONSE":
           return errorResponse(requestId, 502, "JEV_RESPONSE_INVALID", "Senku returned an unsupported decision response.");
         case "INVALID_REQUEST":
