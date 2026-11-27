@@ -38,7 +38,7 @@ test("Soyuz maps OpenRouter faults across the authenticated Senku Service Bindin
         vars: {
           SOYUZ_ENVIRONMENT: "development",
           SOYUZ_PUBLIC_URL: "https://soyuz.test",
-          SOYUZ_OAUTH_ALLOWED_GITHUB_IDS: "68898852,68898853",
+          SOYUZ_OAUTH_ALLOWED_GITHUB_IDS: "68898852,68898853,68898854",
         },
         secrets: {
           CLIENT_API_TOKEN: "soyuz-cross-worker-client-test-token-000000",
@@ -156,8 +156,13 @@ test("Soyuz maps OpenRouter faults across the authenticated Senku Service Bindin
       providerScenario = scenario.providerScenario;
       providerCalls = 0;
       providerRequest = undefined;
-      const scenarioAccessToken = scenario.providerScenario === "timeout"
-        ? await mintAccessToken(oauthFixture, soyuz, "68898853")
+      const isolatedGithubUserId = scenario.providerScenario === "http_429_retry"
+        ? "68898853"
+        : scenario.providerScenario === "timeout"
+          ? "68898854"
+          : undefined;
+      const scenarioAccessToken = isolatedGithubUserId
+        ? await mintAccessToken(oauthFixture, soyuz, isolatedGithubUserId)
         : accessToken;
 
       const decisionResponse = await soyuz.fetch("https://soyuz.test/dashboard/api/analysis/decisions", {
@@ -208,7 +213,7 @@ test("Soyuz maps OpenRouter faults across the authenticated Senku Service Bindin
     .map((log) => log.attemptCount)
     .sort();
   assert.deepEqual(completedProviderAttempts, [1, 2]);
-  assert.equal(successfulSenkuLogs[0].message.includes('"clientId":"soyuz"'), true);
+  assert.equal(successfulSenkuLogs.every((log) => log.message.includes('"clientId":"soyuz"')), true);
   assert.equal(JSON.stringify(logs).includes(SENKU_TOKEN), false, "machine credentials stay out of logs");
   assert.equal(JSON.stringify(logs).includes(PROVIDER_KEY), false, "provider credentials stay out of logs");
   assert.equal(JSON.stringify(logs).includes(OPENROUTER_TEST_FAILURE_MARKER), false, "upstream bodies stay out of logs");
