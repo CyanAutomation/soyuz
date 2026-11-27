@@ -15,6 +15,13 @@ export interface JevProfileContract {
   answers: Readonly<Record<string, AnswerContract>>;
 }
 
+export function validatePinnedProfileVersion(profileId: JevProfileId, version: unknown): "1" | "2" {
+  if (version !== "1" && version !== "2") {
+    throw new Error(`The pinned Senku contract for ${profileId} has an unsupported version: ${String(version)}.`);
+  }
+  return version;
+}
+
 type JsonRecord = Record<string, unknown>;
 
 function record(value: unknown): JsonRecord {
@@ -50,7 +57,7 @@ function pinnedContract(profileId: JevProfileId): JevProfileContract {
   if (!profile) throw new Error(`The pinned Senku contract does not allow Soyuz to use ${profileId}.`);
   const properties = record(record(profile.outputSchema).properties);
   return {
-    version: profile.version as "1" | "2",
+    version: validatePinnedProfileVersion(profileId, profile.version),
     answers: Object.fromEntries(Object.entries(properties).map(([answerId, schema]) => [answerId, answerContract(schema)])),
   };
 }

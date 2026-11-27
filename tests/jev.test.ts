@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { buildSenkuInput } from "../src/jev/analysis";
-import { JEV_PROFILE_CONTRACTS, type JevProfileId } from "../src/jev/profiles";
+import { JEV_PROFILE_CONTRACTS, validatePinnedProfileVersion, type JevProfileId } from "../src/jev/profiles";
 import { JEV_PROFILE_IDS } from "../src/jev/profile-ids";
 import pinnedProfiles from "../src/jev/senku-profiles.v1.json";
 import { requestSenkuDecision, SenkuDecisionError, SENKU_REQUEST_TIMEOUT_MS } from "../src/jev/senku-client";
@@ -134,6 +134,11 @@ function environment(overrides: Partial<Env> = {}): Env {
 }
 
 describe("Soyuz to Senku decision client", () => {
+  it("rejects unsupported pinned profile versions during contract construction", () => {
+    expect(() => validatePinnedProfileVersion("run_operations_triage_v1", "3"))
+      .toThrow(/unsupported version: 3/);
+  });
+
   it("keeps Soyuz profile IDs and answer contracts aligned with the pinned artifact", () => {
     const allowedProfiles = pinnedProfiles.profiles.filter((profile) => profile.allowedClients.includes("soyuz"));
     expect(allowedProfiles.map((profile) => profile.id).sort()).toEqual([...JEV_PROFILE_IDS].sort());
@@ -225,16 +230,19 @@ describe("Soyuz to Senku decision client", () => {
     expect(result.attemptCount).toBe(2);
   });
 
-  it("maps Senku rate limits to a 429 response with correlation and Retry-After metadata", async () => {
+  it.each([
+    { retryAfter: "7", seconds: 7 },
+    { retryAfter: "0", seconds: 0 },
+  ])("maps Senku rate limits to a 429 response with Retry-After $retryAfter metadata", async ({ retryAfter, seconds }) => {
     const binding = {
       fetch: vi.fn(async () => new Response(JSON.stringify({
         error: { code: "PROVIDER_RATE_LIMITED", message: "safe", requestId: "dec-00000000-0000-4000-8000-000000000002" },
-      }), { status: 429, headers: { "content-type": "application/json", "retry-after": "7" } })),
+      }), { status: 429, headers: { "content-type": "application/json", "retry-after": retryAfter } })),
     } as unknown as Fetcher;
     await expect(requestSenkuDecision(
       environment(), "run_operations_triage_v1", TRIAGE_INPUT, binding, undefined, "soyuz-rate-limit-9",
     )).rejects.toMatchObject({
-      code: "PROVIDER_RATE_LIMITED", correlationId: "soyuz-rate-limit-9", retryAfterSeconds: 7,
+      code: "PROVIDER_RATE_LIMITED", correlationId: "soyuz-rate-limit-9", retryAfterSeconds: seconds,
     });
   });
 
