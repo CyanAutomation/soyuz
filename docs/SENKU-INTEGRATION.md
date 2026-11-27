@@ -12,13 +12,13 @@ The client sends an approved profile identifier and the structured input require
 
 ## Profile mapping and evidence boundary
 
-Soyuz supports its configured decision profiles through the Senku REST contract. The static profile identifiers and response shapes are checked against the pinned contract artifact in this repository.
+Soyuz supports its configured decision profiles through the Senku REST contract. The static profile identifiers and response shapes are checked against the pinned contract artifact in this repository. Update the artifact and `.senku-contract.sha256` together when reviewing a Senku contract change; CI checks the pinned bytes.
 
-Each request carries a correlation ID and a bounded deadline. Request bodies and provider work are constrained by the configured budgets. The response parser accepts additive envelope fields while validating the fields Soyuz relies on.
+Each Senku request carries a correlation ID and an absolute deadline. Soyuz uses a 35-second outer timeout, reserves response-processing time, and gives Senku at most its 30-second provider timeout. Soyuz makes one HTTP call and does not retry it. Senku may make one additional provider attempt after a qualifying 429, so `attemptCount` can be 1 or 2; the response parser accepts unknown top-level envelope fields and any positive attempt count while checking the fields Soyuz consumes. Nested answer and profile metadata remain strictly validated.
 
 ## Timeout and error mapping
 
-The client reserves time for local response validation and transport. Senku and provider failures map to stable Soyuz-facing error categories:
+The client reserves time for local response validation and transport. Senku and provider failures map to stable Soyuz-facing error categories. A service-level `RATE_LIMITED` response is distinct from the provider's `PROVIDER_RATE_LIMITED` response:
 
 | Senku result | Soyuz result |
 | --- | --- |

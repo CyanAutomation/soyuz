@@ -79,6 +79,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Verify pinned Senku profile artifact
+        run: sha256sum --check .senku-contract.sha256
+
       - name: Lint GitHub Actions workflows
         # actionlint v1.7.12, pinned to the published image digest.
         run: |

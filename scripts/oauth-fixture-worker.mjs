@@ -26,6 +26,9 @@ export default {
   async fetch(request, env) {
     if (new URL(request.url).pathname !== "/mint") return new Response(null, { status: 404 });
 
+    const githubUserId = new URL(request.url).searchParams.get("githubUserId") ?? "68898852";
+    if (!/^\d{1,20}$/.test(githubUserId)) return new Response(null, { status: 400 });
+
     const oauth = getOAuthApi(options, env);
     const client = await oauth.createClient({
       clientName: "Soyuz cross-worker integration test",
@@ -49,9 +52,9 @@ export default {
     const parsed = await oauth.parseAuthRequest(new Request(authorization));
     const approved = await oauth.completeAuthorization({
       request: parsed,
-      userId: "github-68898852",
+      userId: `github-${githubUserId}`,
       metadata: { githubLogin: "cross-worker-test" },
-      props: { githubUserId: "68898852", githubLogin: "cross-worker-test" },
+      props: { githubUserId, githubLogin: "cross-worker-test" },
       scope: ["soyuz:read"],
     });
     const code = new URL(approved.redirectTo).searchParams.get("code");

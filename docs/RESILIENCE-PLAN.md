@@ -8,23 +8,23 @@ This plan covers the failure paths between Soyuz and its upstream providers and 
 - Reuse test-only fault primitives around the real clients and stateful fakes. Keep application state changes in the fake handler so a response can be lost after the simulated commit.
 - Assert one request where a client must not retry, and assert stable callback/publication identities where a caller may retry or reconcile.
 - Check safe public error codes, bounded response handling, credential and body redaction, and state invariants in the same scenarios.
-- Keep retries in the owning durable workflow. HTTP clients expose retryability and deadlines; they do not add hidden retries.
+- Keep consumer retries in the owning durable workflow. Senku owns its narrowly bounded provider retry; consumer HTTP clients expose retryability and deadlines but do not repeat Senku calls.
 
 ## Work and acceptance criteria
 
 | Area | Work | Acceptance |
 | --- | --- | --- |
-| Soyuz → Senku → OpenRouter | Run the real local Soyuz and Senku Workers through the Service Binding while replacing OpenRouter with scripted 503, malformed JSON, and abort-on-timeout outcomes. Preserve the success scenario. | One provider attempt per request; dashboard maps errors to stable codes; request/run state is unchanged; prompt, provider body, and credentials do not appear in responses or logs. |
-| Senku provider client | Use a reusable scripted `fetch` primitive for status, network rejection, timeout, content type, malformed and oversized bodies. | Existing provider classifications remain explicit, bodies stay bounded and private, and the adapter makes one attempt. |
+| Soyuz → Senku → OpenRouter | Run the real local Soyuz and Senku Workers through the Service Binding while replacing OpenRouter with scripted 429, 503, malformed JSON, and abort-on-timeout outcomes. Preserve the success scenario. | The consumer makes one Senku request; Senku makes at most two provider attempts and retries only a qualifying 429; dashboard maps errors to stable codes; request/run state is unchanged; prompt, provider body, and credentials do not appear in responses or logs. |
+| Senku provider client | Use a reusable scripted `fetch` primitive for 429/retry-after, other status responses, network rejection, timeout, content type, malformed and oversized bodies. | Provider classifications remain explicit, the 429 retry is bounded by the deadline, other failures are not retried, and bodies stay bounded and private. |
 | Kaseki Agent ↔ Soyuz | Apply reusable before/after-handler HTTP faults to the stateful Soyuz fake; cover delayed and interrupted response reads. | A committed claim with a lost response is reconciled by its stable claim ID; uncertain queue acknowledgements do not create duplicate jobs; body read errors are safe and bounded. |
-| Rusty-Fossil ↔ Senku/Soyuz | Share a scripted local HTTP scenario helper across both Rust client integration suites. | 429/503, timeout, malformed JSON, and oversized bodies map to typed errors; retryability and one-attempt behavior are asserted; unsafe upstream text is not returned. |
+| Rusty-Fossil ↔ Senku/Soyuz | Share a scripted local HTTP scenario helper across both Rust client integration suites. | 429/503, timeout, malformed JSON, and oversized bodies map to typed errors; retryability and one-request consumer behavior are asserted; unsafe upstream text is not returned. |
 | Kirisame ↔ GitHub | Wrap the stateful GitHub fake with scripted before/after-mutation faults. Verify Retry-After and reconciliation after uncertain ref and pull-request writes. | Pre-mutation rate limits preserve retry delay; post-mutation response loss does not duplicate a branch or pull request; malformed and oversized GitHub responses remain bounded and safely classified. |
 
 ## Rollout gates
 
 1. Run focused test suites in each repository on its declared Node or Rust toolchain, then run the repository-wide checks.
 2. Keep the Soyuz → Senku cross-Worker test opt-in through `SENKU_WRANGLER_CONFIG`; it must block outbound HTTP outside the local OpenRouter stub.
-3. Before enabling any production retry behavior, confirm the owning durable queue/outbox preserves callback IDs, idempotency keys, deadlines, and retry-after schedules across process restarts.
+3. For retries that can repeat queued or state-changing operations, confirm the owning durable queue/outbox preserves callback IDs, idempotency keys, deadlines, and retry-after schedules across restarts. Senku's bounded provider retry stays within one non-mutating evaluation request and is separately bounded by its deadline.
 4. Treat Rusty-Fossil production service wiring as a separate release gate: its compatibility and client suites do not prove that production worker coordination currently invokes those clients.
 5. After deployment, compare bounded success/failure counts and latency by dependency, then verify that alerts and operator guidance distinguish timeout, rate limit, malformed response, and uncertain mutation outcomes.
 
