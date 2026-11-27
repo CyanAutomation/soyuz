@@ -18,7 +18,7 @@ export function parseSenkuResponse(value: unknown, profileId: JevProfileId): Sen
       answers: value.answers,
       requestId: value.requestId,
       durationMs: value.durationMs,
-      attemptCount: 1,
+      attemptCount: value.attemptCount as number,
       ...(Object.hasOwn(value, "usage") ? { usage: value.usage as SenkuUsage } : {}),
     },
   };
@@ -34,8 +34,7 @@ function isValidResponse(
     "schemaVersion", "requestId", "status", "profileId", "profileVersion", "provider",
     "model", "answers", "result", "durationMs", "attemptCount",
   ];
-  return hasOnlyKeys(value, [...required, "usage"])
-    && required.every((key) => Object.hasOwn(value, key))
+  return required.every((key) => Object.hasOwn(value, key))
     && hasValidResponseMetadata(value, profileId, contract.version)
     && hasValidResponseAnswers(value, profileId)
     && (!Object.hasOwn(value, "usage") || validateUsage(value.usage));
@@ -58,7 +57,8 @@ function hasValidEnvelopeIdentity(value: Record<string, unknown>): boolean {
     && safeSenkuRequestId(value.requestId) !== undefined
     && value.status === "completed"
     && value.provider === "jev"
-    && value.attemptCount === 1;
+    && Number.isSafeInteger(value.attemptCount)
+    && (value.attemptCount as number) >= 1;
 }
 
 function isValidModelName(value: unknown): value is string {

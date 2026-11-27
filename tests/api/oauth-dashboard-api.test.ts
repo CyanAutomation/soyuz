@@ -345,8 +345,8 @@ beforeEach(clearDatabase);
     const runId = created.body.data.id as string;
     await bindings.DB.prepare("UPDATE runs SET repo_url = ?, result_json = ?, started_at = ?, completed_at = ?, exit_code = ? WHERE id = ?")
       .bind(
-        "https://user:embedded-secret@github.com/example/private-project?access_token=embedded-token",
-        JSON.stringify({ summary: "Completed safely", publishedUrl: "https://user:embedded-secret@github.com/example/private-project?token=embedded-token", changedFileCount: 3 }),
+        "https://code.example.invalid/org/repository",
+        JSON.stringify({ summary: "Completed safely", publishedUrl: "https://preview.example.invalid/output", changedFileCount: 3 }),
         "2026-10-18T12:01:00.000Z",
         "2026-10-18T12:02:00.000Z",
         0,
@@ -359,9 +359,9 @@ beforeEach(clearDatabase);
     expect(detail.body.data).toMatchObject({
       runId,
       displayId: created.body.data.displayId,
-      repoUrl: "https://github.com/example/private-project",
+      repoUrl: "https://code.example.invalid/org/repository",
       outcomeSummary: "Completed safely",
-      publishedUrl: "https://github.com/example/private-project",
+      publishedUrl: "https://preview.example.invalid/output",
       changedFileCount: 3,
       startedAt: "2026-10-18T12:01:00.000Z",
       completedAt: "2026-10-18T12:02:00.000Z",
@@ -491,7 +491,7 @@ beforeEach(clearDatabase);
       expect(jevDecisionLimiter.limit).toHaveBeenCalledWith({ key: "123" });
       expect(senku.fetch).toHaveBeenCalledTimes(1);
       const serviceRequest = senku.fetch.mock.calls[0][0] as Request;
-      expect(serviceRequest.url).toBe("https://senku.internal/v1/profiles/run_operations_triage_v1/evaluate");
+      expect(serviceRequest.url).toBe("https://service.example.invalid/v1/profiles/run_operations_triage_v1/evaluate");
       expect(serviceRequest.headers.get("authorization")).toBe("Bearer " + SENKU_TOKEN);
       const requestBody = await serviceRequest.clone().json() as Record<string, unknown>;
       expect(requestBody.schemaVersion).toBe("1");
@@ -565,7 +565,7 @@ beforeEach(clearDatabase);
     expect(response.body.data.answers.recorded_outcome.score).toBe(2);
     expect(senku.fetch).toHaveBeenCalledTimes(1);
     const serviceRequest = senku.fetch.mock.calls[0][0] as Request;
-    expect(serviceRequest.url).toBe("https://senku.internal/v1/profiles/kaseki_output_review_v2/evaluate");
+    expect(serviceRequest.url).toBe("https://service.example.invalid/v1/profiles/kaseki_output_review_v2/evaluate");
     expect(serviceRequest.headers.get("authorization")).toBe("Bearer " + SENKU_TOKEN);
     const requestBody = await serviceRequest.clone().json() as {
       schemaVersion: string;

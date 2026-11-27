@@ -11,7 +11,7 @@ const TASK_MARKER = "SYNTHETIC_TASK_PROMPT_MUST_STAY_IN_SOYUZ";
 const OPENROUTER_URL = "https://openrouter.ai/api/alpha/decisions";
 const senkuConfig = process.env.SENKU_WRANGLER_CONFIG;
 
-type ProviderScenario = "success" | "http_503" | "malformed_json" | "timeout";
+type ProviderScenario = "success" | "http_503" | "http_429" | "malformed_json" | "timeout";
 
 let server: ReturnType<typeof createTestHarness> | undefined;
 let originalFetch: typeof fetch | undefined;
@@ -127,6 +127,8 @@ test("Soyuz maps OpenRouter faults across the authenticated Senku Service Bindin
     providerCalls += 1;
     providerRequest = await request.clone().json() as Record<string, unknown>;
     switch (providerScenario) {
+      case "http_429":
+        return new Response(null, { status: 429, headers: { "retry-after": "7" } });
       case "http_503":
       case "malformed_json":
       case "timeout":
@@ -143,12 +145,14 @@ test("Soyuz maps OpenRouter faults across the authenticated Senku Service Bindin
     name: string;
     providerScenario: ProviderScenario;
     status: number;
+    expectedProviderCalls: number;
     errorCode?: string;
   }> = [
-    { name: "success returns the compatible dashboard shape", providerScenario: "success", status: 200 },
-    { name: "provider 503 maps to a safe unavailable response", providerScenario: "http_503", status: 502, errorCode: "JEV_PROVIDER_UNAVAILABLE" },
-    { name: "malformed provider JSON maps to an invalid response", providerScenario: "malformed_json", status: 502, errorCode: "JEV_RESPONSE_INVALID" },
-    { name: "provider timeout aborts and maps to a timeout response", providerScenario: "timeout", status: 504, errorCode: "JEV_PROVIDER_TIMEOUT" },
+    { name: "success returns the compatible dashboard shape", providerScenario: "success", status: 200, expectedProviderCalls: 1 },
+    { name: "provider 429 maps to a rate-limited response with Retry-After", providerScenario: "http_429", status: 429, expectedProviderCalls: 1, errorCode: "JEV_PROVIDER_RATE_LIMITED" },
+    { name: "provider 503 maps to a safe unavailable response", providerScenario: "http_503", status: 502, expectedProviderCalls: 1, errorCode: "JEV_PROVIDER_UNAVAILABLE" },
+    { name: "malformed provider JSON maps to an invalid response", providerScenario: "malformed_json", status: 502, expectedProviderCalls: 1, errorCode: "JEV_RESPONSE_INVALID" },
+    { name: "provider timeout aborts and maps to a timeout response", providerScenario: "timeout", status: 504, expectedProviderCalls: 1, errorCode: "JEV_PROVIDER_TIMEOUT" },
   ];
 
   for (const scenario of scenarios) {
@@ -177,11 +181,12 @@ test("Soyuz maps OpenRouter faults across the authenticated Senku Service Bindin
       assert.equal(decisionResponse.status, scenario.status, JSON.stringify(decisionBody));
       if (scenario.errorCode) {
         assert.equal(decisionBody.error?.code, scenario.errorCode);
+        if (scenario.providerScenario === "http_429") assert.equal(decisionResponse.headers.get("retry-after"), "7");
       } else {
         assert.equal(decisionBody.data?.model, "typesafe/jev-cross-worker-test");
         assert.deepEqual(Object.keys(decisionBody.data ?? {}).sort(), ["answers", "model"]);
       }
-      assert.equal(providerCalls, 1, "the provider is attempted exactly once for each dashboard request");
+      assert.equal(providerCalls, scenario.expectedProviderCalls);
       const sentProviderRequest = latestProviderRequest();
       assert.ok(sentProviderRequest);
       assert.equal(sentProviderRequest.model, "~typesafe/jev-latest");

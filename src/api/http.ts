@@ -4,6 +4,7 @@ const MAX_JSON_BODY_BYTES = 96 * 1024;
 
 export interface ApiErrorOptions {
   details?: unknown;
+  headers?: Record<string, string>;
 }
 
 export function jsonResponse(status: number, body: unknown, extraHeaders?: Record<string, string>): Response {
@@ -30,7 +31,7 @@ export function errorResponse(
 ): Response {
   const error: Record<string, unknown> = { code, message, requestId };
   if (options.details !== undefined) error.details = options.details;
-  return jsonResponse(status, { error });
+  return jsonResponse(status, { error }, options.headers);
 }
 
 export function rateLimitedResponse(requestId: string): Response {
