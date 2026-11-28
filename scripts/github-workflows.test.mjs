@@ -6,6 +6,7 @@ const ci = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url
 const codeql = await readFile(new URL("../.github/workflows/codeql.yml", import.meta.url), "utf8");
 const scorecard = await readFile(new URL("../.github/workflows/scorecard.yml", import.meta.url), "utf8");
 const deploymentDocs = await readFile(new URL("../docs/DEPLOYMENT.md", import.meta.url), "utf8");
+const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
 function jobBlock(workflow, name) {
   return workflow
@@ -98,6 +99,22 @@ test("the deploy artifact is attested after main validation and verified before 
   assert.ok(deploy.indexOf("gh attestation verify") < deploy.indexOf("tar -xzf"));
   assert.match(deploy, /--signer-workflow "github\.com\/\$GITHUB_REPOSITORY\/\.github\/workflows\/ci\.yml"/);
   assert.match(deploy, /--source-ref "\$GITHUB_REF"/);
+});
+
+test("the attested Worker bundle carries validated source provenance into the deployment annotation", () => {
+  const validate = jobBlock(ci, "validate");
+  const deploy = jobBlock(ci, "deploy");
+  const provenance = validate.match(/- name: Create Worker deployment provenance[\s\S]*?(?=\n      - name:|\n  [\w-]+:|$)/)?.[0] ?? "";
+  const readProvenance = deploy.match(/- name: Read Worker deployment provenance[\s\S]*?(?=\n      - name:|\n  [\w-]+:|$)/)?.[0] ?? "";
+
+  assert.match(provenance, /SOURCE_SHA:\s*\$\{\{ github\.sha \}\}/);
+  assert.match(provenance, /node scripts\/worker-provenance\.mjs \.wrangler\/deploy\/provenance\.json/);
+  assert.ok(validate.indexOf("Create Worker deployment provenance") < validate.indexOf("tar -czf"));
+  assert.match(readProvenance, /node scripts\/worker-provenance\.mjs read \.wrangler\/deploy\/provenance\.json/);
+  assert.match(deploy, /deploy \.wrangler\/deploy\/index\.js --no-bundle --keep-vars --message/);
+  assert.match(deploy, /steps\.worker-provenance\.outputs\.message/);
+  assert.match(deploymentDocs, /source SHA, app version, publication contract version, and UTC build timestamp/i);
+  assert.match(packageJson.scripts.deploy, /npm run build && node scripts\/worker-provenance\.mjs && node scripts\/deploy-worker\.mjs/);
 });
 
 test("CodeQL scans merge queue candidates", () => {

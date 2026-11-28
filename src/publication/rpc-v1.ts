@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { UUID7 } from "./contract-v1";
+import { PUBLICATION_CONTRACT_VERSION, UUID7 } from "./contract-v1";
 
 const Repository = z.object({ owner: z.string().min(1).max(39), name: z.string().min(1).max(100) }).strict();
 const ErrorCode = z.enum([
@@ -24,7 +24,7 @@ export const KirisameErrorSchema = z.object({
 });
 
 export const PublicationIntentSchema = z.object({
-  contractVersion: z.literal("1"),
+  contractVersion: z.literal(PUBLICATION_CONTRACT_VERSION),
   artifactId: z.string().regex(UUID7),
   artifactDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   mode: z.enum(["branch", "pr"]),
@@ -40,7 +40,7 @@ export const PublicationIntentSchema = z.object({
 });
 
 export const PublicationResultSchema = z.object({
-  contractVersion: z.literal("1"),
+  contractVersion: z.literal(PUBLICATION_CONTRACT_VERSION),
   publicationId: z.string().regex(UUID7),
   runId: z.string().regex(UUID7),
   repository: Repository,

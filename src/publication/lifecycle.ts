@@ -9,6 +9,15 @@ import { createUuidV7 } from "./uuid-v7";
 const PUBLICATION_MAX_ATTEMPTS = 8;
 export const PUBLICATION_DISPATCH_BATCH_SIZE = 10;
 export const PUBLICATION_LEASE_MS = 2 * 60_000;
+type PublicationClock = () => Date;
+
+/** Keep synthetic test timestamps deterministic while advancing after each awaited operation. */
+function publicationClock(at?: Date): PublicationClock {
+  if (!at) return () => new Date();
+  const baseAt = at.getTime();
+  const wallStart = Date.now();
+  return () => new Date(baseAt + (Date.now() - wallStart));
+}
 
 export interface PublicationRow {
   publication_id: string;
@@ -136,14 +145,16 @@ async function abandonIntent(env: Env, row: PublicationIntentRow, at: string): P
 }
 
 /** Injection selects the RPC transport; only the explicit dispatch switch authorizes publication. */
-export async function reconcilePublications(env: Env, at = new Date(), injectedPublisher?: PublisherEntrypoint): Promise<void> {
-  await reconcilePublicationEligibility(env, undefined, at);
+export async function reconcilePublications(env: Env, at?: Date, injectedPublisher?: PublisherEntrypoint): Promise<void> {
+  const sweepAt = at ?? new Date();
+  const clock = publicationClock(at);
+  await reconcilePublicationEligibility(env, undefined, sweepAt);
   const publisher = env.PUBLICATION_DISPATCH_ENABLED === "true"
     ? injectedPublisher ?? env.KIRISAME
     : undefined;
   if (!publisher) return;
 
-  const now = at.toISOString();
+  const now = sweepAt.toISOString();
   const due = await env.DB.prepare(`
     SELECT * FROM publications
     WHERE expires_at > ? AND ((state = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= ?))
@@ -152,7 +163,7 @@ export async function reconcilePublications(env: Env, at = new Date(), injectedP
     ORDER BY COALESCE(next_attempt_at, created_at), publication_id LIMIT ?
   `).bind(now, now, now, now, PUBLICATION_DISPATCH_BATCH_SIZE).all<PublicationRow>();
   for (const row of due.results ?? []) {
-    await dispatchPublication(env, row, publisher, at);
+    await dispatchPublication(env, row, publisher, clock(), 30_000, clock);
   }
 }
 
@@ -160,36 +171,59 @@ export async function dispatchPublication(
   env: Env,
   current: PublicationRow,
   publisher: PublisherEntrypoint,
-  at = new Date(),
+  at?: Date,
   timeoutMs = 30_000,
+  injectedClock?: PublicationClock,
 ): Promise<boolean> {
+  const clock = injectedClock ?? publicationClock(at);
+  const dispatchAt = clock();
   if (env.PUBLICATION_DISPATCH_ENABLED !== "true") return false;
-  if (Date.parse(current.expires_at) <= at.getTime() + timeoutMs) return false;
-  if (isExpiredFinalAttempt(current, at)) {
-    return await recoverExpiredFinalAttempt(env, current, at);
+  if (Date.parse(current.expires_at) <= dispatchAt.getTime() + timeoutMs) return false;
+  if (isExpiredFinalAttempt(current, dispatchAt)) {
+    return await recoverExpiredFinalAttempt(env, current, clock());
   }
-  const attemptId = await reservePublicationAttempt(env, current, at);
+  const attemptId = await reservePublicationAttempt(env, current, clock(), timeoutMs);
   if (!attemptId) return false;
-  await appendPublicationStartedEvent(env, current, attemptId, at);
+  await appendPublicationStartedEvent(env, current, attemptId, clock());
 
-  const preparation = await prepareReservedPublication(env, current, attemptId, at, timeoutMs);
+  const preparation = await prepareReservedPublication(env, current, attemptId, clock, timeoutMs);
   if (preparation.status === "superseded" || preparation.status === "released") return false;
   if (preparation.status === "terminal") return true;
 
+  const latest = await env.DB.prepare("SELECT * FROM publications WHERE publication_id = ?")
+    .bind(current.publication_id).first<PublicationRow>();
+  const outboundAt = clock();
+  if (!isCurrentReservedAttempt(current, latest, attemptId)) return false;
+  if (env.PUBLICATION_DISPATCH_ENABLED !== "true" || !hasDispatchLease(latest, outboundAt.getTime(), timeoutMs)) {
+    await releasePublicationAttempt(env, current, attemptId, outboundAt);
+    return false;
+  }
+  if (await blockIfPolicyRevoked(env, current, latest, attemptId, outboundAt)) return true;
+
   const response = await callPublisher(env, publisher, preparation.request, timeoutMs);
+  return await recordDispatchResponse(env, current, attemptId, response, clock());
+}
+
+async function recordDispatchResponse(
+  env: Env,
+  current: PublicationRow,
+  attemptId: string,
+  response: Awaited<ReturnType<typeof callPublisher>>,
+  completedAt: Date,
+): Promise<boolean> {
   if (!response.ok) {
     if (response.errorCode === "KIRISAME_CALLER_CONFIGURATION_INVALID") {
       await finishAttempt(env, current, attemptId, {
-        state: "blocked", errorCode: response.errorCode, eventType: "publication.blocked", at,
+        state: "blocked", errorCode: response.errorCode, eventType: "publication.blocked", at: completedAt,
         operatorAction: "Verify KIRISAME_CALLER_ID=soyuz and configure the KIRISAME_API_KEY secret; authorize any retry explicitly.",
       });
     } else {
-      await scheduleRetry(env, current, attemptId, response.errorCode, undefined, at,
+      await scheduleRetry(env, current, attemptId, response.errorCode, undefined, completedAt,
         response.errorCode === "GITHUB_TIMEOUT" || response.errorCode === "GITHUB_UNAVAILABLE");
     }
     return true;
   }
-  await recordPublisherResponse(env, current, attemptId, response.raw, at);
+  await recordPublisherResponse(env, current, attemptId, response.raw, completedAt);
   return true;
 }
 
@@ -208,37 +242,49 @@ async function prepareReservedPublication(
   env: Env,
   current: PublicationRow,
   attemptId: string,
-  at: Date,
+  clock: PublicationClock,
   timeoutMs: number,
 ): Promise<ReservedPublicationPreparation> {
-  const request = await verifiedPublicationRequest(env, current, attemptId, at);
+  const request = await verifiedPublicationRequest(env, current, attemptId, clock);
   if (!request) return { status: "terminal" };
 
   const latest = await env.DB.prepare("SELECT * FROM publications WHERE publication_id = ?")
     .bind(current.publication_id).first<PublicationRow>();
   if (!isCurrentReservedAttempt(current, latest, attemptId)) return { status: "superseded" };
-  if (env.PUBLICATION_DISPATCH_ENABLED !== "true" || !hasDispatchLease(latest, at.getTime(), timeoutMs)) {
-    await releasePublicationAttempt(env, current, attemptId, at);
+  const checkedAt = clock();
+  if (env.PUBLICATION_DISPATCH_ENABLED !== "true" || !hasDispatchLease(latest, checkedAt.getTime(), timeoutMs)) {
+    await releasePublicationAttempt(env, current, attemptId, checkedAt);
     return { status: "released" };
   }
-  if (!isPublicationAllowed(env, { owner: latest.repository_owner, name: latest.repository_name }, latest.base_ref, latest.mode)) {
-    const priorAttemptUncertain = isPriorAttemptUncertain(current);
-    await finishAttempt(env, current, attemptId, {
-      state: "blocked", errorCode: "PUBLICATION_POLICY_REVOKED", eventType: "publication.blocked", at,
-      operatorReviewRequired: priorAttemptUncertain,
-      priorAttemptOutcomeUnknown: priorAttemptUncertain,
-      operatorAction: "Policy revocation stops future writes; inspect GitHub for an earlier accepted mutation before any manual recovery.",
-    });
-    return { status: "terminal" };
-  }
+  if (await blockIfPolicyRevoked(env, current, latest, attemptId, checkedAt)) return { status: "terminal" };
   const finalRequest = buildPublicationRequest(latest, request.artifact);
   if (await requestFingerprint(finalRequest) !== latest.request_fingerprint) {
     await finishAttempt(env, current, attemptId, {
-      state: "blocked", errorCode: "REQUEST_FINGERPRINT_MISMATCH", eventType: "publication.blocked", at,
+      state: "blocked", errorCode: "REQUEST_FINGERPRINT_MISMATCH", eventType: "publication.blocked", at: clock(),
     });
     return { status: "terminal" };
   }
   return { status: "ready", request: finalRequest };
+}
+
+async function blockIfPolicyRevoked(
+  env: Env,
+  current: PublicationRow,
+  latest: PublicationRow,
+  attemptId: string,
+  at: Date,
+): Promise<boolean> {
+  if (isPublicationAllowed(env, { owner: latest.repository_owner, name: latest.repository_name }, latest.base_ref, latest.mode)) {
+    return false;
+  }
+  const priorAttemptUncertain = isPriorAttemptUncertain(current);
+  await finishAttempt(env, current, attemptId, {
+    state: "blocked", errorCode: "PUBLICATION_POLICY_REVOKED", eventType: "publication.blocked", at,
+    operatorReviewRequired: priorAttemptUncertain,
+    priorAttemptOutcomeUnknown: priorAttemptUncertain,
+    operatorAction: "Policy revocation stops future writes; inspect GitHub for an earlier accepted mutation before any manual recovery.",
+  });
+  return true;
 }
 
 function isCurrentReservedAttempt(
@@ -311,8 +357,9 @@ async function releasePublicationAttempt(env: Env, current: PublicationRow, atte
       current.publication_id, current.request_fingerprint, attemptId).run();
 }
 
-async function reservePublicationAttempt(env: Env, current: PublicationRow, at: Date): Promise<string | null> {
+async function reservePublicationAttempt(env: Env, current: PublicationRow, at: Date, timeoutMs: number): Promise<string | null> {
   const now = at.toISOString();
+  const dispatchDeadline = new Date(at.getTime() + timeoutMs).toISOString();
   const attemptId = createUuidV7(at.getTime());
   const leaseUntil = new Date(at.getTime() + PUBLICATION_LEASE_MS).toISOString();
   const eventId = createUuidV7(at.getTime());
@@ -326,7 +373,7 @@ async function reservePublicationAttempt(env: Env, current: PublicationRow, at: 
         OR (state = 'retryable_failure' AND (next_attempt_at IS NULL OR next_attempt_at <= ?))
         OR (state = 'publishing' AND lease_expires_at <= ?)
       )
-    `).bind(attemptId, leaseUntil, now, current.publication_id, current.request_fingerprint, now, PUBLICATION_MAX_ATTEMPTS, now, now),
+    `).bind(attemptId, leaseUntil, now, current.publication_id, current.request_fingerprint, dispatchDeadline, PUBLICATION_MAX_ATTEMPTS, now, now),
     env.DB.prepare(`
       INSERT INTO publication_events (publication_id, event_id, run_id, event_type, state, attempt_id, occurred_at, metadata_json)
       SELECT publication_id, ?, run_id, 'publication.attempt_reserved', 'publishing', ?, ?, ?
@@ -355,12 +402,12 @@ async function verifiedPublicationRequest(
   env: Env,
   current: PublicationRow,
   attemptId: string,
-  at: Date,
+  clock: PublicationClock,
 ): Promise<PublicationRequest | null> {
-  const manifest = await loadAndVerifyManifest(env, current);
+  const manifest = await loadAndVerifyManifest(env, current, clock());
   if (!manifest) {
     await finishAttempt(env, current, attemptId, {
-      state: "blocked", errorCode: "ARTIFACT_INVALID", eventType: "publication.blocked", at,
+      state: "blocked", errorCode: "ARTIFACT_INVALID", eventType: "publication.blocked", at: clock(),
     });
     return null;
   }
@@ -369,7 +416,7 @@ async function verifiedPublicationRequest(
   const fingerprint = await digestHex(new TextEncoder().encode(canonicalJson(request)));
   if (fingerprint !== current.request_fingerprint) {
     await finishAttempt(env, current, attemptId, {
-      state: "blocked", errorCode: "REQUEST_FINGERPRINT_MISMATCH", eventType: "publication.blocked", at,
+      state: "blocked", errorCode: "REQUEST_FINGERPRINT_MISMATCH", eventType: "publication.blocked", at: clock(),
     });
     return null;
   }
@@ -499,8 +546,8 @@ async function handleStandalonePublisherError(
   return true;
 }
 
-async function loadAndVerifyManifest(env: Env, row: PublicationRow): Promise<PublicationArtifact | null> {
-  if (!env.ARTIFACTS || Date.parse(row.expires_at) <= Date.now()) return null;
+async function loadAndVerifyManifest(env: Env, row: PublicationRow, at: Date): Promise<PublicationArtifact | null> {
+  if (!env.ARTIFACTS || Date.parse(row.expires_at) <= at.getTime()) return null;
   try {
     const object = await env.ARTIFACTS.get(row.artifact_object_key);
     if (!object || object.size > 9 * 1024 * 1024) return null;
@@ -581,8 +628,9 @@ async function scheduleRetry(
       UPDATE publications SET state = 'retryable_failure', last_error_code = ?, next_attempt_at = ?, lease_expires_at = NULL,
         branch_sha = COALESCE(?, branch_sha), pr_number = COALESCE(?, pr_number), pr_url = COALESCE(?, pr_url),
         updated_at = ? WHERE publication_id = ? AND request_fingerprint = ? AND state = 'publishing' AND attempt_id = ?
+          AND lease_expires_at > ? AND expires_at > ?
     `).bind(errorCode, nextAt, branchSha ?? null, prNumber ?? null, prUrl ?? null, at.toISOString(),
-      row.publication_id, row.request_fingerprint, attemptId),
+      row.publication_id, row.request_fingerprint, attemptId, at.toISOString(), at.toISOString()),
     env.DB.prepare(`
       INSERT INTO publication_events (publication_id, event_id, run_id, event_type, state, attempt_id, occurred_at, metadata_json)
       SELECT publication_id, ?, run_id, 'publication.retry_scheduled', 'retryable_failure', ?, ?, ?
@@ -614,12 +662,15 @@ async function finishAttempt(env: Env, row: PublicationRow, attemptId: string, o
         pr_number = COALESCE(?, pr_number), pr_url = COALESCE(?, pr_url),
         completed_at = ?, retained_until = ?, next_attempt_at = NULL, lease_expires_at = NULL, updated_at = ?
       WHERE publication_id = ? AND request_fingerprint = ? AND state = 'publishing' AND attempt_id = ?
+        AND lease_expires_at > ? AND expires_at > ?
     `).bind(outcome.state, outcome.errorCode ?? null, outcome.branchSha ?? null, outcome.prNumber ?? null,
-      outcome.prUrl ?? null, now, retainedUntil, now, row.publication_id, row.request_fingerprint, attemptId),
+      outcome.prUrl ?? null, now, retainedUntil, now, row.publication_id, row.request_fingerprint, attemptId, now, now),
   ];
   if (outcome.state === "published") {
     statements.push(env.DB.prepare(`UPDATE publication_intents SET retained_until = ?, updated_at = ?
-      WHERE publication_id = ? AND state = 'consumed'`).bind(retainedUntil, now, row.publication_id));
+      WHERE publication_id = ? AND state = 'consumed' AND EXISTS (
+        SELECT 1 FROM publications WHERE publication_id = ? AND state = 'published' AND attempt_id = ? AND completed_at = ?
+      )`).bind(retainedUntil, now, row.publication_id, row.publication_id, attemptId, now));
   }
   if (outcome.eventType) {
     statements.push(env.DB.prepare(`

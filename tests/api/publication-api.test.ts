@@ -511,6 +511,137 @@ beforeEach(clearDatabase);
     expect(states.filter((row) => row?.state === "pending")).toHaveLength(1);
   });
 
+  it("uses a fresh timestamp for each sequential dispatch in one scheduler sweep", async () => {
+    vi.useFakeTimers();
+    const sweepAt = new Date("2026-11-28T12:00:00.000Z");
+    vi.setSystemTime(sweepAt);
+    try {
+      const r2 = memoryArtifactBucket();
+      const { bindings } = testEnv({ artifacts: r2.bucket });
+      const inputs = [
+        { workerId: "fresh-clock-host-a", claimCallbackId: crypto.randomUUID(), artifactId: "018f0000-0000-7000-8000-000000000301" },
+        { workerId: "fresh-clock-host-b", claimCallbackId: crypto.randomUUID(), artifactId: "018f0000-0000-7000-8000-000000000302" },
+      ];
+      for (const input of inputs) {
+        const data = await registerPublicationInputs(bindings, input);
+        await completeExecution(bindings, { runId: data.runId, workerId: input.workerId, claimCallbackId: input.claimCallbackId });
+      }
+
+      const inner = new MockPublisherEntrypoint();
+      let calls = 0;
+      const publisher = {
+        async publish(requestJson: string, callerId: string, apiKey: string) {
+          const result = await inner.publish(requestJson, callerId, apiKey);
+          calls += 1;
+          if (calls === 1) vi.setSystemTime(new Date(sweepAt.getTime() + 90_000));
+          return result;
+        },
+      };
+
+      await reconcilePublications(bindings, sweepAt, publisher);
+
+      const reservations = await bindings.DB.prepare(`SELECT occurred_at FROM publication_events
+        WHERE event_type = 'publication.attempt_reserved' ORDER BY occurred_at, event_id`).all<{ occurred_at: string }>();
+      expect(calls).toBe(2);
+      expect(reservations.results?.map((event) => event.occurred_at)).toEqual([
+        sweepAt.toISOString(), new Date(sweepAt.getTime() + 90_000).toISOString(),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases a reservation when manifest preparation leaves too little lease for the RPC", async () => {
+    vi.useFakeTimers();
+    const at = new Date("2026-11-28T12:00:00.000Z");
+    vi.setSystemTime(at);
+    try {
+      const r2 = memoryArtifactBucket();
+      const { bindings } = testEnv({ artifacts: r2.bucket });
+      const workerId = "preparation-near-lease-expiry-host";
+      const claimCallbackId = crypto.randomUUID();
+      const data = await registerPublicationInputs(bindings, {
+        workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000303",
+      });
+      await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
+      const originalGet = r2.get.getMockImplementation()!;
+      r2.get.mockImplementationOnce(async (...args) => {
+        const object = await originalGet(...args);
+        vi.setSystemTime(new Date(at.getTime() + PUBLICATION_LEASE_MS - 20_000));
+        return object;
+      });
+      const publisher = new MockPublisherEntrypoint();
+
+      await reconcilePublications(bindings, at, publisher);
+
+      const publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+        .bind(data.runId).first<PublicationRow>();
+      expect(publisher.calls).toHaveLength(0);
+      expect(publication).toMatchObject({ state: "pending", attempt_count: 0, attempt_id: null, lease_expires_at: null });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bases retry scheduling on the time Kirisame returns its retryable result", async () => {
+    vi.useFakeTimers();
+    const at = new Date("2026-11-28T12:00:00.000Z");
+    vi.setSystemTime(at);
+    try {
+      const r2 = memoryArtifactBucket();
+      const { bindings } = testEnv({ artifacts: r2.bucket });
+      const workerId = "delayed-retry-result-host";
+      const claimCallbackId = crypto.randomUUID();
+      const data = await registerPublicationInputs(bindings, {
+        workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000304",
+      });
+      await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
+      const inner = new MockPublisherEntrypoint(["retryable_error"]);
+      const publisher = {
+        async publish(requestJson: string, callerId: string, apiKey: string) {
+          const result = await inner.publish(requestJson, callerId, apiKey);
+          vi.setSystemTime(new Date(at.getTime() + 60_000));
+          return result;
+        },
+      };
+
+      await reconcilePublications(bindings, at, publisher);
+
+      const publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+        .bind(data.runId).first<PublicationRow>();
+      expect(publication?.state).toBe("retryable_failure");
+      expect(Date.parse(publication!.next_attempt_at!)).toBeGreaterThan(at.getTime() + 60_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not start dispatch inside the RPC timeout window at the canonical run deadline", async () => {
+    const r2 = memoryArtifactBucket();
+    const { bindings } = testEnv({ artifacts: r2.bucket });
+    const workerId = "publication-at-deadline-host";
+    const claimCallbackId = crypto.randomUUID();
+    const data = await registerPublicationInputs(bindings, {
+      workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000305",
+    });
+    await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
+    const publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+      .bind(data.runId).first<PublicationRow>();
+    const run = await bindings.DB.prepare("SELECT expires_at FROM runs WHERE id = ?")
+      .bind(data.runId).first<{ expires_at: string }>();
+    const canonicalDeadline = new Date(run!.expires_at);
+    const nearDeadline = new Date(canonicalDeadline.getTime() - 10_000);
+    const publisher = new MockPublisherEntrypoint();
+
+    await dispatchPublication(bindings, publication!, publisher, nearDeadline);
+
+    const unchanged = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+      .bind(data.runId).first<PublicationRow>();
+    expect(publication?.expires_at).toBe(run?.expires_at);
+    expect(unchanged).toMatchObject({ state: "pending", attempt_count: 0, attempt_id: null });
+    expect(publisher.calls).toHaveLength(0);
+  });
+
   it("[PUBLICATION-RETRY-LIMIT-01] blocks after the eighth reserved attempt without stranding a retry", async () => {
     const r2 = memoryArtifactBucket();
     const { bindings } = testEnv({ artifacts: r2.bucket });
