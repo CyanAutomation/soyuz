@@ -1,5 +1,5 @@
 import { CONTRACT_VERSION, type QueuedRun } from "../contracts/queue-message";
-import { calculateStaleDurationMs, listExpiredClaims, listStaleAdmissions, listStaleQueuedRuns, listStaleRunningRuns, markRunSuspectedStalled, parseRequest, reserveAdmissionRetry, reserveQueuedRunRecovery, transitionRun } from "../db/runs";
+import { calculateStaleDurationMs, listExpiredClaims, listStaleAdmissions, listStaleQueuedRuns, listStaleRunningRuns, markRunSuspectedStalled, parseRequest, reserveAdmissionRetry, reserveQueuedRunRecovery, RunTransitionError, transitionRun } from "../db/runs";
 import type { Env } from "../env";
 
 const RETRY_AFTER_MS = 60_000;
@@ -38,10 +38,62 @@ async function reconcileExpiredClaims(env: Env, now: string, cutoff: string): Pr
         recordedAt: now,
         payload: { previousWorkerId: row.worker_id },
       });
-    } catch {
-      // A cancellation or start transition may have won the race.
+    } catch (error) {
+      if (error instanceof RunTransitionError) continue;
+
+      const eventLimitReached = isRunEventLimitReached(error);
+      console.warn(JSON.stringify({
+        event: "soyuz_expired_claim_reconciliation_failed",
+        runId: row.id,
+        workerId: row.worker_id,
+        claimExpiresAt: row.claim_expires_at,
+        reasonCode: eventLimitReached ? "RUN_EVENT_LIMIT_REACHED" : "CLAIM_RECONCILIATION_FAILED",
+        errorClass: error instanceof Error ? error.name : "Error",
+      }));
+
+      if (eventLimitReached) await failExpiredClaimAtEventLimit(env, row, now);
     }
   }
+}
+
+async function failExpiredClaimAtEventLimit(
+  env: Env,
+  row: Awaited<ReturnType<typeof listExpiredClaims>>[number],
+  now: string,
+): Promise<void> {
+  const failureMessage = "The expired worker claim could not be reconciled because the run event limit was reached. Operator review is required before resubmission.";
+  try {
+    await transitionRun(env.DB, row.id, "failed", {
+      completed_at: now,
+      failure_class: "run_event_limit_reached",
+      failure_message: failureMessage,
+    }, {
+      eventId: `system:claim-expired:terminal:${row.claim_expires_at}`,
+      type: "run.failed",
+      occurredAt: now,
+      recordedAt: now,
+      payload: {
+        failureClass: "run_event_limit_reached",
+        failureMessage,
+        claimExpiresAt: row.claim_expires_at,
+        previousWorkerId: row.worker_id,
+      },
+    }, { expectedStatus: "claimed" });
+  } catch (error) {
+    if (error instanceof RunTransitionError) return;
+    console.error(JSON.stringify({
+      event: "soyuz_expired_claim_terminalization_failed",
+      runId: row.id,
+      workerId: row.worker_id,
+      claimExpiresAt: row.claim_expires_at,
+      reasonCode: "RUN_EVENT_LIMIT_REACHED",
+      errorClass: error instanceof Error ? error.name : "Error",
+    }));
+  }
+}
+
+function isRunEventLimitReached(error: unknown): boolean {
+  return (error instanceof Error ? error.message : String(error)).includes("RUN_EVENT_LIMIT_REACHED");
 }
 
 async function retryStaleAdmissions(env: Env, now: string, cutoff: string): Promise<void> {
