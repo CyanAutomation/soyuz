@@ -511,12 +511,41 @@ async function recordSuccessfulPublication(
   const eventTypes = success.mode === "pr"
     ? ["publication.branch_confirmed", "publication.pull_request_confirmed", "publication.published"] as const
     : ["publication.branch_confirmed", "publication.published"] as const;
-  await finishAttempt(env, current, attemptId, {
+  const recorded = await finishAttempt(env, current, attemptId, {
     state: "published", eventTypes, at,
     branchSha: success.branch?.commitSha ?? null,
     prNumber: success.pullRequest?.number ?? null,
     prUrl: success.pullRequest?.url ?? null,
+    requireLiveLease: true,
   });
+  if (!recorded) await blockExpiredAttemptOutcome(env, current, attemptId, at);
+}
+
+async function blockExpiredAttemptOutcome(
+  env: Env,
+  current: PublicationRow,
+  attemptId: string,
+  at: Date,
+): Promise<void> {
+  const now = at.toISOString();
+  const eventId = createUuidV7(at.getTime());
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE publications SET state = 'blocked', last_error_code = 'PUBLICATION_OUTCOME_UNKNOWN',
+      completed_at = ?, retained_until = NULL, next_attempt_at = NULL, lease_expires_at = NULL, updated_at = ?
+      WHERE publication_id = ? AND request_fingerprint = ? AND state = 'publishing' AND attempt_id = ?
+        AND lease_expires_at <= ? AND expires_at > ?`)
+      .bind(now, now, current.publication_id, current.request_fingerprint, attemptId, now, now),
+    env.DB.prepare(`INSERT OR IGNORE INTO publication_events (
+      publication_id, event_id, run_id, event_type, state, attempt_id, occurred_at, metadata_json
+    ) SELECT publication_id, ?, run_id, 'publication.blocked', 'blocked', ?, ?, ? FROM publications
+      WHERE publication_id = ? AND request_fingerprint = ? AND state = 'blocked'
+        AND last_error_code = 'PUBLICATION_OUTCOME_UNKNOWN' AND attempt_id = ? AND completed_at = ?`)
+      .bind(eventId, attemptId, now, stableStringify({
+        errorCode: "PUBLICATION_OUTCOME_UNKNOWN", attempt: current.attempt_count + 1,
+        operatorReviewRequired: true, priorAttemptOutcomeUnknown: true,
+        operatorAction: "Inspect GitHub for an accepted mutation before any retry.",
+      }), current.publication_id, current.request_fingerprint, attemptId, now),
+  ]);
 }
 
 async function handleStandalonePublisherError(
@@ -651,10 +680,12 @@ async function finishAttempt(env: Env, row: PublicationRow, attemptId: string, o
   operatorReviewRequired?: boolean;
   priorAttemptOutcomeUnknown?: boolean;
   operatorAction?: string;
+  requireLiveLease?: boolean;
   at: Date;
-}): Promise<void> {
+}): Promise<boolean> {
   const now = outcome.at.toISOString();
   const retainedUntil = outcome.state === "published" ? row.expires_at : null;
+  const requireLiveLease = Number(Boolean(outcome.requireLiveLease));
   const finalEventId = createUuidV7(outcome.at.getTime());
   const statements: D1PreparedStatement[] = [
     env.DB.prepare(`
@@ -662,9 +693,10 @@ async function finishAttempt(env: Env, row: PublicationRow, attemptId: string, o
         pr_number = COALESCE(?, pr_number), pr_url = COALESCE(?, pr_url),
         completed_at = ?, retained_until = ?, next_attempt_at = NULL, lease_expires_at = NULL, updated_at = ?
       WHERE publication_id = ? AND request_fingerprint = ? AND state = 'publishing' AND attempt_id = ?
-        AND expires_at > ?
+        AND expires_at > ? AND (? = 0 OR lease_expires_at > ?)
     `).bind(outcome.state, outcome.errorCode ?? null, outcome.branchSha ?? null, outcome.prNumber ?? null,
-      outcome.prUrl ?? null, now, retainedUntil, now, row.publication_id, row.request_fingerprint, attemptId, now),
+      outcome.prUrl ?? null, now, retainedUntil, now, row.publication_id, row.request_fingerprint, attemptId, now,
+      requireLiveLease, now),
   ];
   if (outcome.state === "published") {
     statements.push(env.DB.prepare(`UPDATE publication_intents SET retained_until = ?, updated_at = ?
@@ -696,7 +728,8 @@ async function finishAttempt(env: Env, row: PublicationRow, attemptId: string, o
       attemptId, now, stableStringify({ ...(outcome.branchSha ? { branchSha: outcome.branchSha } : {}), ...(outcome.prNumber ? { prNumber: outcome.prNumber } : {}) }),
       row.publication_id, row.request_fingerprint, attemptId, now, outcome.errorCode ?? null));
   }
-  await env.DB.batch(statements);
+  const result = await env.DB.batch(statements);
+  return Number(result[0]!.meta.changes) === 1;
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
