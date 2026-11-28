@@ -628,9 +628,9 @@ async function scheduleRetry(
       UPDATE publications SET state = 'retryable_failure', last_error_code = ?, next_attempt_at = ?, lease_expires_at = NULL,
         branch_sha = COALESCE(?, branch_sha), pr_number = COALESCE(?, pr_number), pr_url = COALESCE(?, pr_url),
         updated_at = ? WHERE publication_id = ? AND request_fingerprint = ? AND state = 'publishing' AND attempt_id = ?
-          AND lease_expires_at > ? AND expires_at > ?
+          AND expires_at > ?
     `).bind(errorCode, nextAt, branchSha ?? null, prNumber ?? null, prUrl ?? null, at.toISOString(),
-      row.publication_id, row.request_fingerprint, attemptId, at.toISOString(), at.toISOString()),
+      row.publication_id, row.request_fingerprint, attemptId, at.toISOString()),
     env.DB.prepare(`
       INSERT INTO publication_events (publication_id, event_id, run_id, event_type, state, attempt_id, occurred_at, metadata_json)
       SELECT publication_id, ?, run_id, 'publication.retry_scheduled', 'retryable_failure', ?, ?, ?
@@ -662,9 +662,9 @@ async function finishAttempt(env: Env, row: PublicationRow, attemptId: string, o
         pr_number = COALESCE(?, pr_number), pr_url = COALESCE(?, pr_url),
         completed_at = ?, retained_until = ?, next_attempt_at = NULL, lease_expires_at = NULL, updated_at = ?
       WHERE publication_id = ? AND request_fingerprint = ? AND state = 'publishing' AND attempt_id = ?
-        AND lease_expires_at > ? AND expires_at > ?
+        AND expires_at > ?
     `).bind(outcome.state, outcome.errorCode ?? null, outcome.branchSha ?? null, outcome.prNumber ?? null,
-      outcome.prUrl ?? null, now, retainedUntil, now, row.publication_id, row.request_fingerprint, attemptId, now, now),
+      outcome.prUrl ?? null, now, retainedUntil, now, row.publication_id, row.request_fingerprint, attemptId, now),
   ];
   if (outcome.state === "published") {
     statements.push(env.DB.prepare(`UPDATE publication_intents SET retained_until = ?, updated_at = ?
@@ -677,22 +677,24 @@ async function finishAttempt(env: Env, row: PublicationRow, attemptId: string, o
       INSERT INTO publication_events (publication_id, event_id, run_id, event_type, state, attempt_id, occurred_at, metadata_json)
       SELECT publication_id, ?, run_id, ?, ?, ?, ?, ? FROM publications
       WHERE publication_id = ? AND state = ? AND request_fingerprint = ? AND attempt_id = ?
+        AND completed_at = ? AND last_error_code IS ?
     `).bind(finalEventId, outcome.eventType, outcome.state, attemptId, now,
       stableStringify({
         errorCode: outcome.errorCode,
         ...(outcome.operatorReviewRequired ? { operatorReviewRequired: true } : {}),
         ...(outcome.priorAttemptOutcomeUnknown ? { priorAttemptOutcomeUnknown: true } : {}),
         ...(outcome.operatorAction ? { operatorAction: outcome.operatorAction } : {}),
-      }), row.publication_id, outcome.state, row.request_fingerprint, attemptId));
+      }), row.publication_id, outcome.state, row.request_fingerprint, attemptId, now, outcome.errorCode ?? null));
   }
   for (const [index, eventType] of (outcome.eventTypes ?? []).entries()) {
     statements.push(env.DB.prepare(`
       INSERT INTO publication_events (publication_id, event_id, run_id, event_type, state, attempt_id, occurred_at, metadata_json)
       SELECT publication_id, ?, run_id, ?, 'published', ?, ?, ? FROM publications
       WHERE publication_id = ? AND state = 'published' AND request_fingerprint = ? AND attempt_id = ?
+        AND completed_at = ? AND last_error_code IS ?
     `).bind(index === (outcome.eventTypes?.length ?? 0) - 1 ? finalEventId : createUuidV7(outcome.at.getTime()), eventType,
       attemptId, now, stableStringify({ ...(outcome.branchSha ? { branchSha: outcome.branchSha } : {}), ...(outcome.prNumber ? { prNumber: outcome.prNumber } : {}) }),
-      row.publication_id, row.request_fingerprint, attemptId));
+      row.publication_id, row.request_fingerprint, attemptId, now, outcome.errorCode ?? null));
   }
   await env.DB.batch(statements);
 }

@@ -600,7 +600,7 @@ beforeEach(clearDatabase);
       const publisher = {
         async publish(requestJson: string, callerId: string, apiKey: string) {
           const result = await inner.publish(requestJson, callerId, apiKey);
-          vi.setSystemTime(new Date(at.getTime() + 60_000));
+          vi.setSystemTime(new Date(at.getTime() + PUBLICATION_LEASE_MS + 1));
           return result;
         },
       };
@@ -610,7 +610,43 @@ beforeEach(clearDatabase);
       const publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
         .bind(data.runId).first<PublicationRow>();
       expect(publication?.state).toBe("retryable_failure");
-      expect(Date.parse(publication!.next_attempt_at!)).toBeGreaterThan(at.getTime() + 60_000);
+      expect(Date.parse(publication!.next_attempt_at!)).toBeGreaterThan(at.getTime() + PUBLICATION_LEASE_MS + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("records a successful result after lease expiry while the attempt still owns the publication", async () => {
+    vi.useFakeTimers();
+    const at = new Date("2026-11-28T12:00:00.000Z");
+    vi.setSystemTime(at);
+    try {
+      const r2 = memoryArtifactBucket();
+      const { bindings } = testEnv({ artifacts: r2.bucket });
+      const workerId = "late-current-publication-response-host";
+      const claimCallbackId = crypto.randomUUID();
+      const data = await registerPublicationInputs(bindings, {
+        workerId, claimCallbackId, artifactId: "018f0000-0000-7000-8000-000000000306",
+      });
+      await completeExecution(bindings, { runId: data.runId, workerId, claimCallbackId });
+      const inner = new MockPublisherEntrypoint();
+      const publisher = {
+        async publish(requestJson: string, callerId: string, apiKey: string) {
+          const result = await inner.publish(requestJson, callerId, apiKey);
+          vi.setSystemTime(new Date(at.getTime() + PUBLICATION_LEASE_MS + 1));
+          return result;
+        },
+      };
+
+      await reconcilePublications(bindings, at, publisher);
+
+      const publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
+        .bind(data.runId).first<PublicationRow>();
+      const event = await bindings.DB.prepare(`SELECT event_type FROM publication_events
+        WHERE publication_id = ? AND event_type = 'publication.published'`).bind(publication!.publication_id)
+        .first<{ event_type: string }>();
+      expect(publication).toMatchObject({ state: "published", attempt_count: 1, branch_sha: "b".repeat(40) });
+      expect(event?.event_type).toBe("publication.published");
     } finally {
       vi.useRealTimers();
     }
