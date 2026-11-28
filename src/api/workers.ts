@@ -245,7 +245,6 @@ async function failed(request: Request, env: Env, runId: string, requestId: stri
     const payload = await parseCallbackBody(
       request, requestId, WorkerFailedSchema, "INVALID_WORKER_CALLBACK", "Failed callback failed validation",
     );
-    const row = await requireWorkerOwnership(env, runId, payload.data.workerId, payload.data.claimCallbackId);
     const result = terminalOutcomeResult(payload.data);
     const eventPayload = {
       failureClass: payload.data.failureClass,
@@ -253,6 +252,14 @@ async function failed(request: Request, env: Env, runId: string, requestId: stri
       ...(payload.data.exitCode !== undefined ? { exitCode: payload.data.exitCode } : {}),
       ...result,
     };
+    const current = await requireRun(env, runId);
+    const priorCallback = await findRunEvent(env.DB, runId, payload.data.callbackId);
+    if (current.status === "failed"
+      && callbackReplayMatches(priorCallback, "run.failed", payload.data.workerId, eventPayload)) {
+      return successResponse(requestId, publicRun(current));
+    }
+
+    const row = await requireWorkerOwnership(env, runId, payload.data.workerId, payload.data.claimCallbackId);
     await ensureCallbackIdAvailable(env, runId, payload.data.callbackId, "run.failed", payload.data.workerId, eventPayload);
     if (row.status === "failed") return successResponse(requestId, publicRun(row));
     const now = new Date().toISOString();

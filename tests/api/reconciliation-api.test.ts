@@ -301,6 +301,125 @@ beforeEach(clearDatabase);
     expect(stored?.claim_expires_at).toBeNull();
   });
 
+  it("[WORKER-CLAIM-RECOVERY-02] records a terminal failure when the run event limit blocks claim expiry", async () => {
+    const { bindings, sent } = testEnv();
+    const now = new Date();
+    const old = new Date(now.getTime() - 5 * 60_000).toISOString();
+    const id = "00000000-0000-4000-8000-000000000090";
+    const workerId = "docker-host-event-limit";
+    const request = {
+      repoUrl: "https://github.com/example/project",
+      ref: "main",
+      taskPrompt: "Exercise the expired-claim event limit recovery path.",
+      taskMode: "patch" as const,
+      publishMode: "none" as const,
+    };
+    await insertRun(bindings.DB, {
+      id,
+      request,
+      requestHash: "test-fingerprint-event-limit",
+      idempotencyKey: null,
+      correlationId: "00000000-0000-4000-8000-000000000091",
+      requestId: "00000000-0000-4000-8000-000000000092",
+      createdAt: old,
+    });
+    await transitionRun(bindings.DB, id, "queued", { queued_at: old }, {
+      eventId: "system:admission:queued",
+      type: "run.queued",
+      occurredAt: old,
+      recordedAt: old,
+      payload: { queue: "soyuz-runs" },
+    });
+    await claimRun(bindings, id, workerId, "00000000-0000-4000-8000-000000000093");
+    await bindings.DB.prepare("UPDATE runs SET claim_expires_at = ? WHERE id = ?")
+      .bind(new Date(now.getTime() - 60_000).toISOString(), id).run();
+
+    const fillerEvents = Array.from({ length: 1_997 }, (_, index) => bindings.DB.prepare(`
+      INSERT INTO run_events (
+        run_id, contract_version, event_id, type, worker_id, stage, step,
+        occurred_at, recorded_at, payload_json
+      ) VALUES (?, '1', ?, 'stage.changed', ?, NULL, NULL, ?, ?, '{}')
+    `).bind(id, `test:event-limit:${index}`, workerId, old, old));
+    for (let index = 0; index < fillerEvents.length; index += 100) {
+      await bindings.DB.batch(fillerEvents.slice(index, index + 100));
+    }
+    const before = await bindings.DB.prepare("SELECT COUNT(*) AS count FROM run_events WHERE run_id = ?")
+      .bind(id).first<{ count: number }>();
+    expect(before?.count).toBe(2_000);
+
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await reconcileAdmissions(bindings, now);
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining('"reasonCode":"RUN_EVENT_LIMIT_REACHED"'));
+    } finally {
+      warning.mockRestore();
+    }
+
+    const stored = await getRun(bindings.DB, id);
+    expect(sent).toHaveLength(0);
+    expect(stored).toMatchObject({
+      status: "failed",
+      failure_class: "run_event_limit_reached",
+      worker_id: workerId,
+    });
+    expect(await countRunEvents(bindings, id, "run.failed")).toBe(1);
+  });
+
+  it("[WORKER-FAIL-REPLAY-01] accepts an exact terminal callback replay after claim replacement", async () => {
+    const { bindings } = testEnv();
+    const created = await submit(bindings);
+    const runId = created.body.data.id as string;
+    const workerId = "docker-host-admission-replay";
+    const oldClaimId = "00000000-0000-4000-8000-000000000094";
+    const newClaimId = "00000000-0000-4000-8000-000000000095";
+    const callbackId = "00000000-0000-4000-8000-000000000096";
+    await claimRun(bindings, runId, workerId, oldClaimId);
+    await bindings.DB.prepare("UPDATE runs SET claim_expires_at = ? WHERE id = ?")
+      .bind(new Date(Date.now() - 60_000).toISOString(), runId).run();
+    await reconcileAdmissions(bindings, new Date());
+    const replacement = await claimRun(bindings, runId, workerId, newClaimId);
+    expect(replacement.response.status).toBe(200);
+
+    const completedAt = new Date().toISOString();
+    const failureBody = {
+      contractVersion: "1",
+      callbackId,
+      claimCallbackId: oldClaimId,
+      workerId,
+      completedAt,
+      exitCode: 9,
+      failureClass: "kaseki_admission_rejected",
+      failureMessage: "Kaseki rejected this run during local admission.",
+    };
+    await transitionRun(bindings.DB, runId, "failed", {
+      completed_at: completedAt,
+      exit_code: 9,
+      failure_class: failureBody.failureClass,
+      failure_message: failureBody.failureMessage,
+    }, {
+      eventId: callbackId,
+      type: "run.failed",
+      workerId,
+      occurredAt: completedAt,
+      recordedAt: new Date().toISOString(),
+      payload: {
+        failureClass: failureBody.failureClass,
+        failureMessage: failureBody.failureMessage,
+        exitCode: 9,
+      },
+    });
+
+    const replay = await call(bindings, `/v1/worker/runs/${runId}/failed`, {
+      method: "POST",
+      token: WORKER_TOKEN,
+      body: failureBody,
+    });
+
+    expect(replay.response.status).toBe(200);
+    expect(replay.body.data.status).toBe("failed");
+    expect(await countRunEvents(bindings, runId, "run.failed")).toBe(1);
+  });
+
   it("[LIFECYCLE-RACE-01] commits only one terminal event when worker outcomes race", async () => {
     const { bindings } = testEnv();
     const now = new Date().toISOString();
