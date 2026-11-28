@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { stableStringify } from "../lib/canonical-json";
 
+export const PUBLICATION_CONTRACT_VERSION = "1" as const;
 export const UUID7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const GIT_SHA = /^[a-f0-9]{40}$/;
 const BASE_REF = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?(?:\/[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?)*$/;
@@ -27,7 +28,7 @@ const FileChangeSchema = z.discriminatedUnion("operation", [
 ]);
 
 const PublicationArtifactSchema = z.object({
-  contractVersion: z.literal("1"),
+  contractVersion: z.literal(PUBLICATION_CONTRACT_VERSION),
   artifactId: z.string().regex(UUID7),
   runId: z.string().regex(UUID7),
   repository: RepositorySchema,
@@ -40,7 +41,7 @@ const PublicationArtifactSchema = z.object({
 
 export type PublicationArtifact = z.infer<typeof PublicationArtifactSchema>;
 export type PublicationRequest = {
-  contractVersion: "1";
+  contractVersion: typeof PUBLICATION_CONTRACT_VERSION;
   publicationId: string;
   runId: string;
   repository: { owner: string; name: string };

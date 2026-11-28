@@ -106,7 +106,7 @@ jobs:
           cache: npm
 
       - name: Test repository consistency gates
-        run: node --test scripts/production-d1-preflight.test.mjs scripts/github-workflows.test.mjs scripts/validate-skill-references.test.mjs scripts/wrangler-version.test.mjs
+        run: node --test scripts/production-d1-preflight.test.mjs scripts/github-workflows.test.mjs scripts/validate-skill-references.test.mjs scripts/wrangler-version.test.mjs scripts/worker-provenance.test.mjs
 
       - name: Validate repository skill references
         run: npm run skills:check
@@ -133,6 +133,11 @@ jobs:
 
       - name: Validate Wrangler deployment bundle
         run: npx wrangler deploy --dry-run --outdir .wrangler/deploy
+
+      - name: Create Worker deployment provenance
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: node scripts/worker-provenance.mjs .wrangler/deploy/provenance.json
 
       - name: Generate dependency SBOM
         if: github.event_name == 'push'
@@ -281,6 +286,10 @@ jobs:
           BUNDLE_ARCHIVE: soyuz-worker-${{ github.sha }}.tar.gz
         run: tar -xzf "$BUNDLE_ARCHIVE"
 
+      - name: Read Worker deployment provenance
+        id: worker-provenance
+        run: node scripts/worker-provenance.mjs read .wrangler/deploy/provenance.json >> "$GITHUB_OUTPUT"
+
       - name: Read Wrangler version from package-lock
         id: wrangler-version
         run: node scripts/wrangler-version.mjs >> "$GITHUB_OUTPUT"
@@ -299,7 +308,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy .wrangler/deploy/index.js --no-bundle
+          command: deploy .wrangler/deploy/index.js --no-bundle --keep-vars --message "${{ steps.worker-provenance.outputs.message }}"
           wranglerVersion: ${{ steps.wrangler-version.outputs.version }}
         env:
           WRANGLER_LOG: debug
