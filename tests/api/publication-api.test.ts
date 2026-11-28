@@ -616,7 +616,7 @@ beforeEach(clearDatabase);
     }
   });
 
-  it("records a successful result after lease expiry while the attempt still owns the publication", async () => {
+  it("blocks a successful result received after lease expiry for operator review", async () => {
     vi.useFakeTimers();
     const at = new Date("2026-11-28T12:00:00.000Z");
     vi.setSystemTime(at);
@@ -642,11 +642,17 @@ beforeEach(clearDatabase);
 
       const publication = await bindings.DB.prepare("SELECT * FROM publications WHERE run_id = ?")
         .bind(data.runId).first<PublicationRow>();
-      const event = await bindings.DB.prepare(`SELECT event_type FROM publication_events
-        WHERE publication_id = ? AND event_type = 'publication.published'`).bind(publication!.publication_id)
-        .first<{ event_type: string }>();
-      expect(publication).toMatchObject({ state: "published", attempt_count: 1, branch_sha: "b".repeat(40) });
-      expect(event?.event_type).toBe("publication.published");
+      const events = await bindings.DB.prepare(`SELECT event_type FROM publication_events
+        WHERE publication_id = ? AND event_type IN ('publication.published', 'publication.blocked')`)
+        .bind(publication!.publication_id)
+        .all<{ event_type: string }>();
+      expect(publication).toMatchObject({
+        state: "blocked", attempt_count: 1, last_error_code: "PUBLICATION_OUTCOME_UNKNOWN",
+        branch_sha: null,
+      });
+      expect(events.results.map(({ event_type }) => event_type)).toEqual(["publication.blocked"]);
+      await reconcilePublications(bindings, new Date(at.getTime() + PUBLICATION_LEASE_MS * 2), inner);
+      expect(inner.calls).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
